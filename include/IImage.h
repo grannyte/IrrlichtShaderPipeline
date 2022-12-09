@@ -45,6 +45,9 @@ public:
 	//! Returns bytes per pixel
 	virtual u32 getBytesPerPixel() const = 0;
 
+	//! Returns mipmaps count
+	virtual u32 getMipMapsCount() const =0;
+
 	//! Returns image data size in bytes
 	virtual u32 getImageDataSizeInBytes() const = 0;
 
@@ -151,6 +154,9 @@ public:
 			return 64;
 		case ECF_A32B32G32R32F:
 			return 128;
+		case ECF_BC7_S:
+		case ECF_BC7_U:
+			return 8;
 		default:
 			return 0;
 		}
@@ -166,6 +172,8 @@ public:
 			case ECF_DXT3:
 			case ECF_DXT4:
 			case ECF_DXT5:
+			case ECF_BC7_S:
+			case ECF_BC7_U:
 				return true;
 			default:
 				return false;
@@ -180,6 +188,7 @@ public:
 			case ECF_D16:
 			case ECF_D32:
 			case ECF_D24S8:
+			case ECF_DF32S8:
 				return true;
 			default:
 				return false;
@@ -203,6 +212,8 @@ public:
 			case ECF_DXT3:
 			case ECF_DXT4:
 			case ECF_DXT5:
+			case ECF_BC7_S:
+			case ECF_BC7_U:
 				return false;
 			default:
 				return true;

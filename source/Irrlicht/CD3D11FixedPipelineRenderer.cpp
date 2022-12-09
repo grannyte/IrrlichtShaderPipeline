@@ -187,7 +187,7 @@ namespace video
 		"};\n"\
 		"\n"\
 		"// adding constant buffer for transform matrices\n"\
-		"cbuffer cbPerFrame : register(c0)\n"\
+		"cbuffer cbPerFrame : register(b0)\n"\
 		"{\n"\
 		"	float4x4 mWorld;\n"\
 		"	float4x4 mView;\n"\
@@ -196,7 +196,7 @@ namespace video
 		"};\n"\
 		"\n"\
 		"// adding constant buffer for fog, clip planes and point draw\n"\
-		"cbuffer cbPerTechnique : register(c1)\n"\
+		"cbuffer cbPerTechnique : register(b1)\n"\
 		"{\n"\
 		"   float4 fogColor;\n"\
 		"	int fogMode = FOGMODE_NONE;\n"\
@@ -220,7 +220,7 @@ namespace video
 		"};\n"\
 		"\n"\
 		"// adding constant buffer for lightning information\n"\
-		"cbuffer cbLights : register(c2)\n"\
+		"cbuffer cbLights : register(b2)\n"\
 		"{\n"\
 		"	float4 clipPlanes[3];\n"\
 		"	Light lights[MAX_LIGHTS];\n"\
@@ -315,7 +315,7 @@ namespace video
 		"       output.planeDist.z = 1;\n"\
 		"	}\n"\
 		"\n"\
-		"	float4 diffuseSwizzle = input.color.bgra; // swizzle the input rgba channels into D3D11 order\n"\
+		"	float4 diffuseSwizzle = input.color.rgba; // swizzle the input rgba channels into D3D11 order\n"\
 		"\n"\
 		"	[branch]\n"\
 		"	if( enableLighting )\n"\
@@ -369,7 +369,7 @@ namespace video
 		"       output.planeDist.z = 1;\n"\
 		"   }\n"\
 		"\n"\
-		"	float4 diffuseSwizzle = input.color.bgra; // swizzle the input rgba channels into D3D10 order\n"\
+		"	float4 diffuseSwizzle = input.color.rgba; // swizzle the input rgba channels into D3D10 order\n"\
 		"\n"\
 		"	[branch]\n"\
 		"	if( enableLighting )\n"\
@@ -424,7 +424,7 @@ namespace video
 		"       output.planeDist.z = 1;\n"\
 		"   }\n"\
 		"\n"\
-		"	float4 diffuseSwizzle = input.color.bgra; // swizzle the input rgba channels into D3D10 order\n"\
+		"	float4 diffuseSwizzle = input.color.rgba; // swizzle the input rgba channels into D3D10 order\n"\
 		"\n"\
 		"	[branch]\n"\
 		"	if( enableLighting )\n"\
@@ -458,8 +458,8 @@ namespace video
 		"float4 standardPS( PS_INPUT input ) : SV_Target\n"\
 		"{\n"\
 		"	float4 normalColor = float4(0, 0, 0, 1);\n"\
-		"	float4 tex1C = tex1.Sample( sampler1, input.tex0 ).bgra;\n"\
-		"	float4 tex2C = tex2.Sample( sampler2, input.tex0 ).bgra;\n"\
+		"	float4 tex1C = tex1.Sample( sampler1, input.tex0 ).rgba;\n"\
+		"	float4 tex2C = tex2.Sample( sampler2, input.tex0 ).rgba;\n"\
 		"\n"\
 		"	// check material type, and add color operation correctly\n"\
 		"	[branch]\n"\
@@ -511,7 +511,7 @@ namespace video
 		"		break;\n"\
 		"	case EMT_TRANSPARENT_VERTEX_ALPHA:\n"\
 		"		//normalColor = tex1C + input.colorS;\n"\
-		"		normalColor = float4(tex1C.bgr,input.colorS.a );\n"\
+		"		normalColor = float4(tex1C.rgb,input.colorS.a );\n"\
 		"		//normalColor = (float4(tex1C.rgb, input.colorD.a) /** input.colorD*/) + input.colorS;\n"\
 		"		break;\n"\
 		"	case EMT_TRANSPARENT_ALPHA_CHANNEL:\n"\
@@ -544,8 +544,8 @@ namespace video
 		"float4 coords2TPS( PS_INPUT_2COORDS input ) : SV_Target\n"\
 		"{\n"\
 		"	float4 normalColor = float4(0, 0, 0, 1);\n"\
-		"	float4 tex1C = tex1.Sample( sampler1, input.tex0 ).bgra;\n"\
-		"	float4 tex2C = tex2.Sample( sampler2, input.tex1 ).bgra;\n"\
+		"	float4 tex1C = tex1.Sample( sampler1, input.tex0 ).rgba;\n"\
+		"	float4 tex2C = tex2.Sample( sampler2, input.tex1 ).rgba;\n"\
 		"\n"\
 		"	// check material type, and add color operation correctly\n"\
 		"	[branch]\n"\
@@ -616,7 +616,7 @@ namespace video
 		"float4 tangentsPS( PS_INPUT_TANGENTS input ) : SV_Target\n"\
 		"{\n"\
 		"	float4 normalColor = float4(0, 0, 0, 1);\n"\
-		"	float4 tex1C = tex1.Sample( sampler1, input.tex0 ).bgra;\n"\
+		"	float4 tex1C = tex1.Sample( sampler1, input.tex0 ).rgba;\n"\
 		"\n"\
 		"	// Only use EMT_SOLID for now\n"\
 		"	normalColor = (tex1C * input.colorD) + input.colorS;\n"\
@@ -794,9 +794,9 @@ CD3D11FixedPipelineRenderer::~CD3D11FixedPipelineRenderer()
 		coords2TBuffer->Release();
 }
 
-bool CD3D11FixedPipelineRenderer::OnRender(IMaterialRendererServices* service, E_VERTEX_TYPE vtxtype)
+bool CD3D11FixedPipelineRenderer::OnRender(IMaterialRendererServices* service, IVertexDescriptor* vtxtype)
 {
-	switch (vtxtype)
+	switch (vtxtype->getID())
 	{
 	case EVT_STANDARD:
 		shaders[EST_VERTEX_SHADER] = vsStandardShader;
@@ -817,6 +817,7 @@ bool CD3D11FixedPipelineRenderer::OnRender(IMaterialRendererServices* service, E
 		shaders[EST_VERTEX_SHADER] = NULL;
 		shaders[EST_PIXEL_SHADER] = NULL;
 		os::Printer::log("Error: vertextype is not supported by FixedPipelineRenderer", ELL_ERROR);
+		return false;
 		break;
 	}
 
@@ -903,6 +904,8 @@ void CD3D11FixedPipelineRenderer::OnSetConstants( IMaterialRendererServices* ser
 void CD3D11FixedPipelineRenderer::OnSetMaterial( const SMaterial& material )
 {
 	CurrentMaterial = material;
+	if (CallBack&& CallBack != this)
+		CallBack->OnSetMaterial(material);
 }
 
 }

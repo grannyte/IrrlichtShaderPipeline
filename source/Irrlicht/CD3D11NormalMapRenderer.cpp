@@ -5,7 +5,7 @@
 #include "IrrCompileConfig.h"
 #ifdef _IRR_COMPILE_WITH_DIRECT3D_11_
 
-#define _IRR_DONT_DO_MEMORY_DEBUGGING_HERE
+
 
 #include "CD3D11NormalMapRenderer.h"
 #include "IVideoDriver.h"
@@ -19,7 +19,7 @@ namespace video
 {
 	const char NORMAL_MAP_SHADER[] = 
 		"// adding constant buffer for transform matrices\n"\
-		"cbuffer cbPerFrame : register(c0)\n"\
+		"cbuffer cbPerFrame : register(b0)\n"\
 		"{\n"\
 		"   float4x4 g_mWorld;\n"\
 		"   float4x4 g_mWorldViewProj;\n"\
@@ -109,8 +109,8 @@ namespace video
 		"float4 PS(PS_INPUT input) : SV_Target\n"\
 		"{\n"\
 		"	// sample textures\n"\
-		"	float4 colorMap = g_tex1.Sample( g_sampler1, input.colorMapCoord ).bgra;\n"\
-		"	float4 normalMap = g_tex2.Sample( g_sampler2, input.normalMapCoord ).bgra *  2.0 - 1.0;\n"\
+		"	float4 colorMap = g_tex1.Sample( g_sampler1, input.colorMapCoord ).rgba;\n"\
+		"	float4 normalMap = g_tex2.Sample( g_sampler2, input.normalMapCoord ).rgba *  2.0 - 1.0;\n"\
 		"\n"\
 		"	// calculate color of light 0\n"\
 		"	float4 color = clamp(input.lightColor1, 0.0, 1.0) * dot(normalMap.xyz, normalize(input.lightVector1.xyz));\n"\
@@ -185,9 +185,9 @@ CD3D11NormalMapRenderer::~CD3D11NormalMapRenderer()
 		CallBack = NULL;
 }
 
-bool CD3D11NormalMapRenderer::OnRender(IMaterialRendererServices* service, E_VERTEX_TYPE vtxtype)
+bool CD3D11NormalMapRenderer::OnRender(IMaterialRendererServices* service, IVertexDescriptor* vtxtype)
 {
-	if (vtxtype != video::EVT_TANGENTS)
+	if (vtxtype->getID() != video::EVT_TANGENTS)
 	{
 		os::Printer::log("Error: Normal map renderer only supports vertices of type EVT_TANGENTS", ELL_ERROR);
 		return false;

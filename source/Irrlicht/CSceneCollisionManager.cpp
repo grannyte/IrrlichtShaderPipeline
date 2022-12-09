@@ -42,11 +42,11 @@ CSceneCollisionManager::~CSceneCollisionManager()
 ISceneNode* CSceneCollisionManager::getSceneNodeFromScreenCoordinatesBB(
 		const core::position2d<s32>& pos, s32 idBitMask, bool noDebugObjects, scene::ISceneNode* root)
 {
-	const core::line3d<f32> ln = getRayFromScreenCoordinates(pos, 0);
+	core::line3d<f32> ln = getRayFromScreenCoordinates(pos, 0);
 
 	if ( ln.start == ln.end )
 		return 0;
-
+	ln.end += (ln.getVector().normalize()*10000);
 	return getSceneNodeFromRayBB(ln, idBitMask, noDebugObjects, root);
 }
 

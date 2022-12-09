@@ -122,11 +122,16 @@ struct SD3D11_DEPTH_STENCIL_DESC : public D3D11_DEPTH_STENCIL_DESC
 		return memcmp(this, &other, sizeof(SD3D11_DEPTH_STENCIL_DESC) ) < 0;
 	}
 
+	inline bool operator>(const SD3D11_DEPTH_STENCIL_DESC& other) const
+	{
+		return memcmp(this, &other, sizeof(SD3D11_DEPTH_STENCIL_DESC)) > 0;
+	}
+
 	inline void reset()
 	{
 		DepthEnable = true;
-		DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
-		DepthFunc = D3D11_COMPARISON_LESS;
+		DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+		DepthFunc = D3D11_COMPARISON_GREATER_EQUAL;
 		StencilEnable = false;
 		StencilReadMask = D3D11_DEFAULT_STENCIL_READ_MASK;
 		StencilWriteMask = D3D11_DEFAULT_STENCIL_WRITE_MASK;
@@ -166,10 +171,10 @@ struct SD3D11_SAMPLER_DESC : public D3D11_SAMPLER_DESC
 
 	inline void reset()
 	{
-		Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-		AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
-		AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
-		AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+		Filter = D3D11_FILTER_ANISOTROPIC;
+		AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
+		AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
+		AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
 		MipLODBias = 0;
 		MaxAnisotropy = 16;
 		ComparisonFunc = D3D11_COMPARISON_NEVER;
@@ -237,9 +242,9 @@ private:
 	D3D11_PRIMITIVE_TOPOLOGY Topology;
 
 	IVertexDescriptor* VtxDescriptor;
-	core::map<u32, ID3D11InputLayout*> LayoutMap;
+	core::map<size_t, ID3D11InputLayout*> LayoutMap;
 	void* ShaderByteCode;
-	u32 ShaderByteCodeSize;
+	size_t ShaderByteCodeSize;
 
 	core::rect<s32> ViewPort;
 };

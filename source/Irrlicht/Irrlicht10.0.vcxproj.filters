@@ -103,6 +103,12 @@
     <Filter Include="Irrlicht\gui">
       <UniqueIdentifier>{da421793-4674-481c-be46-f7a44e78aee5}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Irrlicht\video\Direct3D11">
+      <UniqueIdentifier>{ca522d5f-264b-46f5-944e-1d2143f747fb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Irrlicht\video\Direct3D12">
+      <UniqueIdentifier>{391cfb15-3e04-42d1-ae41-8247dfd188a7}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\include\IEventReceiver.h">
@@ -459,19 +465,7 @@
     <ClInclude Include="..\..\include\SMesh.h">
       <Filter>include\scene</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\include\SMeshBuffer.h">
-      <Filter>include\scene</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\include\SMeshBufferLightMap.h">
-      <Filter>include\scene</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\include\SMeshBufferTangents.h">
-      <Filter>include\scene</Filter>
-    </ClInclude>
     <ClInclude Include="..\..\include\SParticle.h">
-      <Filter>include\scene</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\include\SSkinMeshBuffer.h">
       <Filter>include\scene</Filter>
     </ClInclude>
     <ClInclude Include="..\..\include\SViewFrustum.h">
@@ -1339,6 +1333,44 @@
     <ClInclude Include="CProfiler.h">
       <Filter>Irrlicht\irr</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\include\SSharedMeshBuffer.h" />
+    <ClInclude Include="CInstancedMeshSceneNode.h">
+      <Filter>Irrlicht\scene\sceneNodes</Filter>
+    </ClInclude>
+    <ClInclude Include="CD3D11CallBridge.h">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClInclude>
+    <ClInclude Include="CD3D11Driver.h">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClInclude>
+    <ClInclude Include="CD3D11FixedPipelineRenderer.h">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClInclude>
+    <ClInclude Include="CD3D11HardwareBuffer.h">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClInclude>
+    <ClInclude Include="CD3D11MaterialRenderer.h">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClInclude>
+    <ClInclude Include="CD3D11NormalMapRenderer.h">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClInclude>
+    <ClInclude Include="CD3D11ParallaxMapRenderer.h">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClInclude>
+    <ClInclude Include="CD3D11Texture.h">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClInclude>
+    <ClInclude Include="CD3D11VertexDescriptor.h">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClInclude>
+    <ClInclude Include="CD3D12Driver.h">
+      <Filter>Irrlicht\video\Direct3D12</Filter>
+    </ClInclude>
+    <ClInclude Include="CCommandBufferDriver.h" />
+    <ClInclude Include="DDSTextureLoader.h">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="..\..\changes.txt">
@@ -1347,6 +1379,7 @@
     <None Include="..\..\readme.txt">
       <Filter>doc</Filter>
     </None>
+    <None Include="cpp.hint" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="CDefaultSceneNodeAnimatorFactory.cpp">
@@ -2290,6 +2323,43 @@
     </ClCompile>
     <ClCompile Include="leakHunter.cpp">
       <Filter>Irrlicht\irr</Filter>
+    </ClCompile>
+    <ClCompile Include="CInstancedMeshSceneNode.cpp">
+      <Filter>Irrlicht\scene\sceneNodes</Filter>
+    </ClCompile>
+    <ClCompile Include="CD3D11CallBridge.cpp">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClCompile>
+    <ClCompile Include="CD3D11Driver.cpp">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClCompile>
+    <ClCompile Include="CD3D11FixedPipelineRenderer.cpp">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClCompile>
+    <ClCompile Include="CD3D11HardwareBuffer.cpp">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClCompile>
+    <ClCompile Include="CD3D11MaterialRenderer.cpp">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClCompile>
+    <ClCompile Include="CD3D11NormalMapRenderer.cpp">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClCompile>
+    <ClCompile Include="CD3D11ParallaxMapRenderer.cpp">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClCompile>
+    <ClCompile Include="CD3D11Texture.cpp">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClCompile>
+    <ClCompile Include="CD3D11VertexDescriptor.cpp">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClCompile>
+    <ClCompile Include="CD3D12Driver.cpp">
+      <Filter>Irrlicht\video\Direct3D12</Filter>
+    </ClCompile>
+    <ClCompile Include="CCommandBufferDriver.cpp" />
+    <ClCompile Include="DDSTextureLoader.cpp">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

@@ -53,9 +53,9 @@ namespace video
 			: Texture(0),
 				TextureWrapU(ETC_REPEAT),
 				TextureWrapV(ETC_REPEAT),
-				BilinearFilter(true),
+				BilinearFilter(false),
 				TrilinearFilter(false),
-				AnisotropicFilter(0),
+				AnisotropicFilter(16),
 				LODBias(0),
 				TextureMatrix(0)
 			{}
@@ -104,8 +104,6 @@ namespace video
 					TextureMatrix = MatrixAllocator.allocate(1);
 					MatrixAllocator.construct(TextureMatrix,*other.TextureMatrix);
 				}
-				else
-					TextureMatrix = 0;
 			}
 			TextureWrapU = other.TextureWrapU;
 			TextureWrapV = other.TextureWrapV;

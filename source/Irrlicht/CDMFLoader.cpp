@@ -155,7 +155,7 @@ IAnimatedMesh* CDMFLoader::createMesh(io::IReadFile* file)
 			bool use2TCoords = false;
 			
 			if(materiali[faces[i].materialID].lightmapName.size())
-				bool use2TCoords = true;
+				use2TCoords = true;
 
 			if (use2TCoords && meshBuffer->getVertexBuffer(0)->getVertexSize() != sizeof(video::S3DVertex2TCoords))
 			{

@@ -1174,6 +1174,54 @@ namespace scene
 		by existing scene node animators, culling of scene nodes is done, etc. */
 		virtual void drawAll() = 0;
 
+		//! Explicitly clear material, transforms and other states.
+		virtual void SetupDraw() = 0;
+
+		//! Explicitly Animate All Scenenodes.
+		/** this should only be called when using custom render path and and you need to animate once befor doing custom rendering*/ 
+		virtual void Animate() = 0;
+
+		//! Explicitly Animate All Scenenodes.
+		/** this should only be called when using custom render path and and you need to animate once befor doing custom rendering*/
+		virtual void Animate(u32 timeMs) = 0;
+
+		//!Explicitly render active Camera
+		virtual void RenderCamera() = 0;
+
+
+		//!Explicitly call scenenodes registering
+		virtual void RegisterScenenodes() = 0;
+
+		//!Explicitly call OnPreRender on the light manager
+		virtual void PreRenderLightManager() = 0;
+
+		//!Explicitly call OnPostRender on the light manager
+		virtual void PostRenderLightManager() = 0;
+
+		//!Explicitly Render all camera
+		virtual void RenderCameraScenes() = 0;
+
+		//!Explicitly Render all light
+		virtual void RenderLightsScenes() = 0;
+
+		//!Explicitly Render all Skyboxes
+		virtual void RenderSkyboxes() = 0;
+
+		//!Explicitly Render all Solid Scenenodes
+		virtual void RenderSolid() = 0;
+
+		//!Explicitly Render all Shadow Scenenodes
+		virtual void RenderShadow() = 0;
+
+		//!Explicitly Render transparent Scenenodes
+		virtual void RenderTransparent() = 0;
+
+		//!Explicitly Render transparent Effect Scenenodes
+		virtual void RenderTransparentEffect() = 0;
+
+		//! Explicitly clear material, transforms and other states.
+		virtual void CleanupDraw() = 0;
+
 		//! Creates a rotation animator, which rotates the attached scene node around itself.
 		/** \param rotationSpeed Specifies the speed of the animation in degree per 10 milliseconds.
 		\return The animator. Attach it to a scene node with ISceneNode::addAnimator()
@@ -1537,7 +1585,7 @@ namespace scene
 		If you no longer need the new scene manager, you should call
 		ISceneManager::drop().
 		See IReferenceCounted::drop() for more information. */
-		virtual ISceneManager* createNewSceneManager(bool cloneContent=false) = 0;
+		virtual ISceneManager* createNewSceneManager(bool cloneContent = false, bool autoreg = true) = 0;
 
 		//! Saves the current scene into a file.
 		/** Scene nodes with the option isDebugObject set to true are

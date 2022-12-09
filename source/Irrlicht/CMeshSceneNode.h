@@ -12,8 +12,8 @@ namespace irr
 {
 namespace scene
 {
-
-	class CMeshSceneNode : public IMeshSceneNode
+	//oups you have been promoted as an involontary member of the api
+	class IRRLICHT_API CMeshSceneNode : public IMeshSceneNode
 	{
 	public:
 

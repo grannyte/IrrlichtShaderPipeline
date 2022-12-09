@@ -4,6 +4,7 @@
 
 #include "CWriteFile.h"
 #include <stdio.h>
+#include <iostream>
 
 namespace irr
 {
@@ -17,6 +18,8 @@ CWriteFile::CWriteFile(const io::path& fileName, bool append)
 	#ifdef _DEBUG
 	setDebugName("CWriteFile");
 	#endif
+
+	std::cout << fileName.c_str() << std::endl;
 
 	Filename = fileName;
 	openFile(append);
@@ -81,12 +84,14 @@ void CWriteFile::openFile(bool append)
 		return;
 	}
 
+
+	std::cout << "filename size accepted" << std::endl;
 #if defined(_IRR_WCHAR_FILESYSTEM)
 	File = _wfopen(Filename.c_str(), append ? L"ab" : L"wb");
 #else
 	File = fopen(Filename.c_str(), append ? "ab" : "wb");
 #endif
-
+		
 	if (File)
 	{
 		// get FileSize
@@ -94,6 +99,11 @@ void CWriteFile::openFile(bool append)
 		fseek(File, 0, SEEK_END);
 		FileSize = ftell(File);
 		fseek(File, 0, SEEK_SET);
+	}
+	else
+	{
+
+		std::cout << "failed to open file : " <<errno<< std::endl;
 	}
 }
 

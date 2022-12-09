@@ -519,8 +519,7 @@ void CSoftwareDriver::drawClippedIndexedTriangleListT(const VERTEXTYPE* vertices
 	core::array<VERTEXTYPE> tClpBuf;
 	int t;
 
-	int i;
-	for (i=0; i<triangleCount; ++i) // for all input triangles
+	for (int i=0; i<triangleCount; ++i) // for all input triangles
 	{
 		// add next triangle to tempClipBuffer
 		for (t=0; t<3; ++t)
@@ -709,7 +708,7 @@ void CSoftwareDriver::drawClippedIndexedTriangleListT(const VERTEXTYPE* vertices
 	s32 ViewTransformWidth = (ViewPortSize.Width>>1);
 	s32 ViewTransformHeight = (ViewPortSize.Height>>1);
 
-	for (i=0; i<(int)clippedVertices.size(); ++i)
+	for (u32 i = 0; i<(int)clippedVertices.size(); ++i)
 	{
 		transformedPos[0] = currentVertex->Pos.X;
 		transformedPos[1] = currentVertex->Pos.Y;

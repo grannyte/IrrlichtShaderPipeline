@@ -39,19 +39,37 @@ CD3D9VertexDescriptor::~CD3D9VertexDescriptor()
 	clear();
 }
 
-IVertexAttribute* CD3D9VertexDescriptor::addAttribute(const core::stringc& name, u32 elementCount, E_VERTEX_ATTRIBUTE_SEMANTIC semantic, E_VERTEX_ATTRIBUTE_TYPE type, u32 bufferID)
+bool CD3D9VertexDescriptor::addAttribute(const core::stringc& name, u32 elementCount, E_VERTEX_ATTRIBUTE_SEMANTIC semantic, E_VERTEX_ATTRIBUTE_TYPE type, u32 bufferID)
 {
-	IVertexAttribute* attribute = CVertexDescriptor::addAttribute(name, elementCount, semantic, type, bufferID);
+	bool Status = false;
 
-	if (attribute != 0)
+	if (CVertexDescriptor::addAttribute(name, elementCount, semantic, type, bufferID))
+	{
 		clear();
 
-	return attribute;
+		Status = true;
+	}
+
+	return Status;	
 }
 
-void CD3D9VertexDescriptor::clearAttribute()
+bool CD3D9VertexDescriptor::removeAttribute(u32 id)
 {
-	CVertexDescriptor::clearAttribute();
+	bool Status = false;
+
+	if (CVertexDescriptor::removeAttribute(id))
+	{
+		clear();
+
+		Status = true;
+	}
+
+	return Status;	
+}
+
+void CD3D9VertexDescriptor::removeAllAttribute()
+{
+	CVertexDescriptor::removeAllAttribute();
 
 	clear();
 }
@@ -83,7 +101,7 @@ void CD3D9VertexDescriptor::rebuild()
 		VertexElement[j].Usage = D3DDECLUSAGE_TEXCOORD;
 		VertexElement[j].UsageIndex = 0;
 
-		u32 count = getAttribute(j)->getElementCount();
+		u32 Elementcount = getAttribute(j)->getElementCount();
 
 		switch (getAttribute(j)->getType())
 		{
@@ -93,7 +111,7 @@ void CD3D9VertexDescriptor::rebuild()
 			break;
 		case EVAT_SHORT:
 			{
-				if(count == 2)
+				if (Elementcount == 2)
 					VertexElement[j].Type = D3DDECLTYPE_SHORT2N;
 				else
 					VertexElement[j].Type = D3DDECLTYPE_SHORT4N;
@@ -101,7 +119,7 @@ void CD3D9VertexDescriptor::rebuild()
 			break;
 		case EVAT_USHORT:
 			{
-				if(count == 2)
+				if (Elementcount == 2)
 					VertexElement[j].Type = D3DDECLTYPE_USHORT2N;
 				else
 					VertexElement[j].Type = D3DDECLTYPE_USHORT4N;
@@ -112,11 +130,11 @@ void CD3D9VertexDescriptor::rebuild()
 		case EVAT_FLOAT:
 		case EVAT_DOUBLE:
 			{
-				if(count == 1)
+				if (Elementcount == 1)
 					VertexElement[j].Type = D3DDECLTYPE_FLOAT1;
-				else if(count == 2)
+				else if (Elementcount == 2)
 					VertexElement[j].Type = D3DDECLTYPE_FLOAT2;
-				else if(count == 3)
+				else if (Elementcount == 3)
 					VertexElement[j].Type = D3DDECLTYPE_FLOAT3;
 				else
 					VertexElement[j].Type = D3DDECLTYPE_FLOAT4;
@@ -225,8 +243,7 @@ CD3D9HardwareBuffer::CD3D9HardwareBuffer(scene::IIndexBuffer* indexBuffer, CD3D9
 
 		if (update(indexBuffer->getHardwareMappingHint(), indexBuffer->getIndexSize()*indexBuffer->getIndexCount(), indexBuffer->getIndices()))
 			indexBuffer->setHardwareBuffer(this);
-		else
-			LinkedBuffer = 0;
+		
 	}
 }
 
@@ -246,8 +263,7 @@ CD3D9HardwareBuffer::CD3D9HardwareBuffer(scene::IVertexBuffer* vertexBuffer, CD3
 
 		if (update(vertexBuffer->getHardwareMappingHint(), vertexBuffer->getVertexSize()*vertexBuffer->getVertexCount(), vertexBuffer->getVertices()))
 			vertexBuffer->setHardwareBuffer(this);
-		else
-			LinkedBuffer = 0;
+	
 	}
 }
 
@@ -347,6 +363,7 @@ bool CD3D9HardwareBuffer::updateIndexBuffer(const scene::E_HARDWARE_MAPPING mapp
 		memcpy(lockedBuffer, data, Size);
 		IndexBuffer->Unlock();
 	}
+	RequiredUpdate = false;
 
 	RequiredUpdate = false;
 
@@ -396,6 +413,7 @@ bool CD3D9HardwareBuffer::updateVertexBuffer(const scene::E_HARDWARE_MAPPING map
 		memcpy(lockedBuffer, data, Size);
 		VertexBuffer->Unlock();
 	}
+	RequiredUpdate = false;
 
 	return true;
 }
@@ -845,7 +863,7 @@ bool CD3D9Driver::initDriver(HWND hwnd, bool pureSoftware)
 	// create materials
 	createMaterialRenderers();
 
-	MaxTextureUnits = core::min_((u32)Caps.MaxSimultaneousTextures, MATERIAL_MAX_TEXTURES);
+	MaxTextureUnits = (MATERIAL_MAX_TEXTURES);
 	MaxUserClipPlanes = (u32)Caps.MaxUserClipPlanes;
 	MaxMRTs = (s32)Caps.NumSimultaneousRTs;
 	OcclusionQuerySupport=(pID3DDevice->CreateQuery(D3DQUERYTYPE_OCCLUSION, NULL) == S_OK);
@@ -1190,7 +1208,10 @@ video::ITexture* CD3D9Driver::createDeviceDependentTexture(IImage* surface,const
 {
 	return new CD3D9Texture(surface, this, TextureCreationFlags, name, mipmapData);
 }
-
+video::ITexture* CD3D9Driver::createDeviceDependentTexture(const core::array<ITexture*> &surfaces, const E_TEXTURE_TYPE Type, const io::path& name, void* mipmapData)
+{
+	return new CD3D9Texture(this, &surfaces, Type, name, mipmapData);
+}
 
 //! Enables or disables a texture creation flag.
 void CD3D9Driver::setTextureCreationFlag(E_TEXTURE_CREATION_FLAG flag,
@@ -1726,9 +1747,7 @@ void CD3D9Driver::drawMeshBuffer(const scene::IMeshBuffer* mb)
 				pID3DDevice->SetStreamSourceFreq(i, D3DSTREAMSOURCE_INSTANCEDATA | 1ul);
 		}
 	}
-
 	// Update Index Buffer.
-
 	CD3D9HardwareBuffer* indexBufferObject = (CD3D9HardwareBuffer*)indexBuffer->getHardwareBuffer();
 
 	if (indexBufferObject)
@@ -3360,7 +3379,7 @@ bool CD3D9Driver::reset()
 			// so take first one
 			if (((CD3D9Texture*)(Textures[j].Surface))->DepthSurface==DepthBuffers[i])
 			{
-				((CD3D9Texture*)(Textures[j].Surface))->Texture->GetLevelDesc(0,&desc2);
+				((CD3D9Texture*)(Textures[j].Surface))->Texture.Texture->GetLevelDesc(0,&desc2);
 				break;
 			}
 		}
@@ -3419,7 +3438,7 @@ bool CD3D9Driver::reset()
 	ResetRenderStates = true;
 	LastVertexDescriptor = 0;
 
-	for (u32 i=0; i<MATERIAL_MAX_TEXTURES; ++i)
+	for (i=0; i<MATERIAL_MAX_TEXTURES; ++i)
 		CurrentTexture[i] = 0;
 
 	setVertexDescriptor(VertexDescriptor[0]);
@@ -3572,18 +3591,41 @@ s32 CD3D9Driver::addShaderMaterial(const c8* vertexShaderProgram,
 //! language.
 s32 CD3D9Driver::addHighLevelShaderMaterial(
 		const c8* vertexShaderProgram,
+
+
 		const c8* vertexShaderEntryPointName,
+
+
 		E_VERTEX_SHADER_TYPE vsCompileTarget,
+
+
 		const c8* pixelShaderProgram,
+
+
 		const c8* pixelShaderEntryPointName,
+
+
 		E_PIXEL_SHADER_TYPE psCompileTarget,
+
+
 		const c8* geometryShaderProgram,
+
+
 		const c8* geometryShaderEntryPointName,
+
+
 		E_GEOMETRY_SHADER_TYPE gsCompileTarget,
-		scene::E_PRIMITIVE_TYPE inType, scene::E_PRIMITIVE_TYPE outType,
+
+		scene::E_PRIMITIVE_TYPE inType,
+
+ scene::E_PRIMITIVE_TYPE outType,
+
+
 		u32 verticesOut,
+
+
 		IShaderConstantSetCallBack* callback,
-		E_MATERIAL_TYPE baseMaterial, s32 userData, E_GPU_SHADING_LANGUAGE shadingLang)
+		E_MATERIAL_TYPE baseMaterial, IVertexDescriptor* vertexTypeOut, s32 userData, E_GPU_SHADING_LANGUAGE shadingLang)
 {
 	s32 nr = -1;
 
@@ -3638,7 +3680,7 @@ ITexture* CD3D9Driver::addRenderTargetTexture(const core::dimension2d<u32>& size
 	CD3D9Texture* tex = new CD3D9Texture(this, size, name, format);
 	if (tex)
 	{
-		if (!tex->Texture)
+		if (!tex->Texture.BaseTexture)
 		{
 			tex->drop();
 			return 0;
@@ -3920,7 +3962,7 @@ void CD3D9Driver::checkDepthBuffer(ITexture* tex)
 		DepthBuffers[0]->Surface->GetDesc(&desc);
 		// the multisampling needs to match the RTT
 		D3DSURFACE_DESC desc2;
-		((CD3D9Texture*)tex)->Texture->GetLevelDesc(0,&desc2);
+		((CD3D9Texture*)tex)->Texture.Texture->GetLevelDesc(0,&desc2);
 		DepthBuffers.push_back(new SDepthSurface());
 		HRESULT hr=pID3DDevice->CreateDepthStencilSurface(optSize.Width,
 				optSize.Height,

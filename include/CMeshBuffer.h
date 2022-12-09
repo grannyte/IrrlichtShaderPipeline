@@ -314,15 +314,16 @@ namespace scene
 		*/
 		virtual void append(IVertexBuffer* vertexBuffer, u32 vertexBufferID, IIndexBuffer* indexBuffer)
 		{
+			u32 indexOffset;
 			if (vertexBufferID < VertexBuffer.size() && VertexDescriptor && vertexBuffer &&
 				vertexBuffer->getVertexSize() == VertexDescriptor->getVertexSize(vertexBufferID) &&
 				vertexBuffer->getVertexSize() == VertexBuffer[vertexBufferID]->getVertexSize())
 			{
 				const u32 vertexCount = vertexBuffer->getVertexCount();
 				const u32 vertexSize = vertexBuffer->getVertexSize();
+				indexOffset = VertexBuffer[vertexBufferID]->getVertexCount();
 
 				VertexBuffer[vertexBufferID]->reallocate(VertexBuffer[vertexBufferID]->getVertexCount() + vertexCount);
-
 				video::IVertexAttribute* attribute = VertexDescriptor->getAttributeBySemantic(video::EVAS_POSITION);
 
 				u8* offset = static_cast<u8*>(vertexBuffer->getVertices());
@@ -353,7 +354,7 @@ namespace scene
 				IndexBuffer->reallocate(IndexBuffer->getIndexCount() + indexCount);
 
 				for (u32 i = 0; i < indexCount; ++i)
-					IndexBuffer->addIndex(indexBuffer->getIndex(i));
+					IndexBuffer->addIndex(indexBuffer->getIndex(i)+ indexOffset);
 			}
 		}
 

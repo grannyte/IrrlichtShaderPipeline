@@ -49,6 +49,31 @@ namespace scene
 			delete Indices;
 		}
 
+		CIndexBuffer& operator=(const CIndexBuffer& other)
+		{
+			if (Indices != NULL)
+			{
+				delete Indices;
+			}
+			Type = other.Type;
+
+			HardwareMappingHint = other.HardwareMappingHint;
+
+			if (Type == video::EIT_32BIT)
+				Indices = new CIndexList<u32>();
+			else // EIT_16BIT
+				Indices = new CIndexList<u16>();
+
+			const u32 ibCount = other.Indices->size();
+
+			Indices->reallocate(ibCount);
+
+			for (u32 i = 0; i < ibCount; ++i)
+				addIndex(other.getIndex(i));
+			return *this;
+		}
+
+
 		virtual void clear()
 		{
 			Indices->clear();

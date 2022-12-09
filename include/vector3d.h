@@ -6,7 +6,9 @@
 #define __IRR_POINT_3D_H_INCLUDED__
 
 #include "irrMath.h"
-
+#ifdef _IRR_SSE
+#include <intrin.h>
+#endif
 namespace irr
 {
 namespace core
@@ -22,14 +24,25 @@ namespace core
 	class vector3d
 	{
 	public:
+#ifdef IRR_EXP_SSE
 		//! Default constructor (null vector).
-		vector3d() : X(0), Y(0), Z(0) {}
+		vector3d() : X(0), Y(0), Z(0), W(0){}
 		//! Constructor with three different values
-		vector3d(T nx, T ny, T nz) : X(nx), Y(ny), Z(nz) {}
+		vector3d(T nx, T ny, T nz) : X(nx), Y(ny), Z(nz), W(0){}
 		//! Constructor with the same value for all elements
-		explicit vector3d(T n) : X(n), Y(n), Z(n) {}
+		explicit vector3d(T n) : X(n), Y(n), Z(n), W(0){}
 		//! Copy constructor
-		vector3d(const vector3d<T>& other) : X(other.X), Y(other.Y), Z(other.Z) {}
+		vector3d(const vector3d<T>& other) : X(other.X), Y(other.Y), Z(other.Z), W(0){}
+#else
+		//! Default constructor (null vector).
+		vector3d() : X(0), Y(0), Z(0){}
+		//! Constructor with three different values
+		vector3d(T nx, T ny, T nz) : X(nx), Y(ny), Z(nz){}
+		//! Constructor with the same value for all elements
+		explicit vector3d(T n) : X(n), Y(n), Z(n){}
+		//! Copy constructor
+		vector3d(const vector3d<T>& other) : X(other.X), Y(other.Y), Z(other.Z){}
+#endif
 
 		// operators
 
@@ -404,8 +417,6 @@ namespace core
 			array[1] = Y;
 			array[2] = Z;
 		}
-
-
 		//! X coordinate of the vector
 		T X;
 
@@ -414,6 +425,10 @@ namespace core
 
 		//! Z coordinate of the vector
 		T Z;
+#ifdef IRR_EXP_SSE
+		T W;
+#endif
+
 	};
 
 	//! partial specialization for integer vectors
@@ -445,7 +460,113 @@ namespace core
 
 	//! Typedef for a f32 3d vector.
 	typedef vector3d<f32> vector3df;
+#ifdef _IRR_SSE
+	
+	template<>
+	vector3d<f32> vector3d<f32>::operator+(const vector3d<f32>& other) const { 
+		vector3d<f32> out;
+		__m128 me,Other,result;
+		me =  _mm_set_ps(X,Y,Z,0);
+		Other = _mm_set_ps(other.X,other.Y,other.Z,0);
+		result =  _mm_add_ps(me,Other);
+		_MM_EXTRACT_FLOAT(out.X, result, 3);
+		_MM_EXTRACT_FLOAT(out.Y, result, 2);
+		_MM_EXTRACT_FLOAT(out.Z, result, 1);
 
+		return out;
+	}
+	template<>
+	vector3d<f32> vector3d<f32>::operator+(const f32 val) const {
+		vector3d<f32> out;
+		__m128 me,Other,result;
+		me =  _mm_set_ps(X,Y,Z,0);
+		Other = _mm_load1_ps(&val);
+		result = _mm_add_ps(me, Other);
+		_MM_EXTRACT_FLOAT(out.X, result, 3);
+		_MM_EXTRACT_FLOAT(out.Y, result, 2);
+		_MM_EXTRACT_FLOAT(out.Z, result, 1);
+
+		return out;
+	}
+	template<>
+	vector3d<f32> vector3d<f32>::operator-(const vector3d<f32>& other) const {
+		vector3d<f32> out;
+		__m128 me,Other,result;
+		me =  _mm_set_ps(X,Y,Z,0);
+		Other = _mm_set_ps(other.X,other.Y,other.Z,0);
+		result = _mm_sub_ps(me, Other);
+		_MM_EXTRACT_FLOAT(out.X, result, 3);
+		_MM_EXTRACT_FLOAT(out.Y, result, 2);
+		_MM_EXTRACT_FLOAT(out.Z, result, 1);
+
+		return out;
+	}
+	template<>
+	vector3d<f32> vector3d<f32>::operator-(const f32 val) const {
+		vector3d<f32> out;
+		__m128 me,Other,result;
+		me =  _mm_set_ps(X,Y,Z,0);
+		Other = _mm_load1_ps(&val);
+		result = _mm_sub_ps(me, Other);
+		_MM_EXTRACT_FLOAT(out.X, result, 3);
+		_MM_EXTRACT_FLOAT(out.Y, result, 2);
+		_MM_EXTRACT_FLOAT(out.Z, result, 1);
+
+		return out;
+	}
+	template<>
+	vector3d<f32> vector3d<f32>::operator*(const vector3d<f32>& other) const {
+		vector3d<f32> out;
+		__m128 me,Other,result;
+		me =  _mm_set_ps(X,Y,Z,0);
+		Other = _mm_set_ps(other.X,other.Y,other.Z,0);
+		result = _mm_mul_ps(me, Other);
+		_MM_EXTRACT_FLOAT(out.X, result, 3);
+		_MM_EXTRACT_FLOAT(out.Y, result, 2);
+		_MM_EXTRACT_FLOAT(out.Z, result, 1);
+
+		return out;
+	}
+	template<>
+	vector3d<f32> vector3d<f32>::operator*(const f32 val) const {
+		vector3d<f32> out;
+		__m128 me,Other,result;
+		me =  _mm_set_ps(X,Y,Z,0);
+		Other = _mm_load1_ps(&val);
+		result = _mm_mul_ps(me, Other);
+		_MM_EXTRACT_FLOAT(out.X, result, 3);
+		_MM_EXTRACT_FLOAT(out.Y, result, 2);
+		_MM_EXTRACT_FLOAT(out.Z, result, 1);
+
+		return out;
+	}
+	template<>
+	vector3d<f32> vector3d<f32>::operator/(const vector3d<f32>& other) const {
+		vector3d<f32> out;
+		__m128 me,Other,result;
+		me =  _mm_set_ps(X,Y,Z,0);
+		Other = _mm_set_ps(other.X,other.Y,other.Z,0);
+		result = _mm_div_ps(me, Other);
+		_MM_EXTRACT_FLOAT(out.X, result, 3);
+		_MM_EXTRACT_FLOAT(out.Y, result, 2);
+		_MM_EXTRACT_FLOAT(out.Z, result, 1);
+
+		return out;
+	}
+	template<>
+	vector3d<f32> vector3d<f32>::operator/(const f32 val) const {
+		vector3d<f32> out;
+		__m128 me,Other,result;
+		me =  _mm_set_ps(X,Y,Z,0);
+		Other = _mm_load1_ps(&val);
+		result = _mm_div_ps(me, Other);
+		_MM_EXTRACT_FLOAT(out.X, result, 3);
+		_MM_EXTRACT_FLOAT(out.Y, result, 2);
+		_MM_EXTRACT_FLOAT(out.Z, result, 1);
+
+		return out;
+	}
+#endif
 	//! Typedef for an integer 3d vector.
 	typedef vector3d<s32> vector3di;
 

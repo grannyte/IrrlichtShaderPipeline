@@ -53,6 +53,11 @@ namespace irr
 			io::IFileSystem* io, HWND window);
 		#endif
 
+		#ifdef _IRR_COMPILE_WITH_DIRECT3D_12_
+		IVideoDriver* createDirectX12Driver(const irr::SIrrlichtCreationParameters& params,
+			io::IFileSystem* io, HWND window);
+		#endif
+
 		#ifdef _IRR_COMPILE_WITH_OPENGL_
 		IVideoDriver* createOpenGLDriver(const irr::SIrrlichtCreationParameters& params,
 			io::IFileSystem* io, CIrrDeviceWin32* device);
@@ -1212,6 +1217,20 @@ void CIrrDeviceWin32::createDriver()
 
 		break;
 
+			case video::EDT_DIRECT3D12:
+#ifdef _IRR_COMPILE_WITH_DIRECT3D_12_
+
+				VideoDriver = video::createDirectX12Driver(CreationParams, FileSystem, HWnd);
+
+				if (!VideoDriver)
+				{
+					os::Printer::log("Could not create DIRECT3D11 Driver.", ELL_ERROR);
+				}
+#else
+				os::Printer::log("DIRECT3D11 Driver was not compiled into this dll. Try another one.", ELL_ERROR);
+#endif // _IRR_COMPILE_WITH_DIRECT3D_11_
+
+				break;
 	case video::EDT_OPENGL:
 
 		#ifdef _IRR_COMPILE_WITH_OPENGL_

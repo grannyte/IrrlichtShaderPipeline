@@ -38,6 +38,9 @@ namespace scene
 		virtual ~CVertexBuffer()
 		{
 			Vertices.clear();
+
+			if (HardwareBuffer)
+				HardwareBuffer->drop();
 		}
 
 		virtual void clear()
@@ -149,6 +152,8 @@ namespace scene
 				HardwareBuffer->requestUpdate();
 
 			++ChangedID;
+			if (this->HardwareBuffer)
+				HardwareBuffer->requestUpdate();
 		}
 
 		virtual u32 getChangedID() const
@@ -167,6 +172,8 @@ namespace scene
 	typedef CVertexBuffer<video::S3DVertex> SVertexBuffer;
 	typedef CVertexBuffer<video::S3DVertex2TCoords> SVertexBufferLightMap;
 	typedef CVertexBuffer<video::S3DVertexTangents> SVertexBufferTangents;
+
+
 }
 }
 

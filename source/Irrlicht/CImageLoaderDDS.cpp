@@ -21,6 +21,7 @@
 #include "CColorConverter.h"
 #include "CImage.h"
 #include "irrString.h"
+#include <dxgiformat.h>
 
 // Header flag values
 #define DDSD_CAPS			0x00000001
@@ -61,11 +62,21 @@ namespace irr
 namespace video
 {
 
+
+	typedef struct {
+		DXGI_FORMAT              dxgiFormat;
+		u32 resourceDimension;
+		u32                     miscFlag;
+		u32                     arraySize;
+		u32                     miscFlags2;
+	} DDS_HEADER_DXT10;
+
+
 /*
 DDSGetInfo()
 extracts relevant info from a dds texture, returns 0 on success
 */
-s32 DDSGetInfo(ddsHeader* dds, s32* width, s32* height, eDDSPixelFormat* pf)
+	__declspec(noinline) s32 DDSGetInfo(ddsHeader* dds, s32* width, s32* height, eDDSPixelFormat* pf, io::IReadFile* file)
 {
 	/* dummy test */
 	if( dds == NULL )
@@ -105,6 +116,21 @@ s32 DDSGetInfo(ddsHeader* dds, s32* width, s32* height, eDDSPixelFormat* pf)
 		*pf = DDS_PF_DXT4;
 	else if( fourCC == *((u32*) "DXT5") )
 		*pf = DDS_PF_DXT5;
+	else if (fourCC == *((u32*)"DX10"))
+	{
+		DDS_HEADER_DXT10 d10header;
+		file->read(&d10header, sizeof(DDS_HEADER_DXT10));
+		if (d10header.dxgiFormat == DXGI_FORMAT_BC7_UNORM)
+			*pf = DDS_PF_BC7_U;
+		else if (d10header.dxgiFormat == DXGI_FORMAT_BC7_UNORM)
+			*pf = DDS_PF_BC7_S;
+		else if (d10header.dxgiFormat == DXGI_FORMAT_BC6H_UF16)
+			*pf = DDS_PF_BC6_U;
+		else if (d10header.dxgiFormat == DXGI_FORMAT_BC6H_SF16)
+			*pf = DDS_PF_BC6_S;
+		else
+			__debugbreak();
+	}
 	else
 		*pf = DDS_PF_UNKNOWN;
 
@@ -683,7 +709,7 @@ bool CImageLoaderDDS::isALoadableFileFormat(io::IReadFile* file) const
 
 	return (MagicWord[0] == 'D' && MagicWord[1] == 'D' && MagicWord[2] == 'S');
 }
-
+#define minmipsize 16
 
 //! creates a surface from the file
 IImage* CImageLoaderDDS::loadImage(io::IReadFile* file) const
@@ -701,7 +727,7 @@ IImage* CImageLoaderDDS::loadImage(io::IReadFile* file) const
 	file->seek(0);
 	file->read(&header, sizeof(ddsHeader));
 
-	if (0 == DDSGetInfo(&header, &width, &height, &pixelFormat))
+	if (0 == DDSGetInfo(&header, &width, &height, &pixelFormat,file))
 	{
 		is3D = header.Depth > 0 && (header.Flags & DDSD_DEPTH);
 
@@ -825,7 +851,7 @@ IImage* CImageLoaderDDS::loadImage(io::IReadFile* file) const
 
 						dataSize += ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 8;
 					}
-					while (curWidth != 1 || curWidth != 1);
+					while (curWidth != 1 || curHeight != 1);
 
 					format = ECF_DXT1;
 					break;
@@ -848,7 +874,7 @@ IImage* CImageLoaderDDS::loadImage(io::IReadFile* file) const
 
 						dataSize += ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
 					}
-					while (curWidth != 1 || curWidth != 1);
+					while (curWidth != 1 || curHeight != 1);
 
 					format = ECF_DXT3;
 					break;
@@ -871,23 +897,117 @@ IImage* CImageLoaderDDS::loadImage(io::IReadFile* file) const
 
 						dataSize += ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
 					}
-					while (curWidth != 1 || curWidth != 1);
+					while (curWidth != 1 || curHeight != 1);
 
 					format = ECF_DXT5;
 					break;
 				}
+				case DDS_PF_BC6_U:
+				{
+					u32 curHeight = header.Height;
+					u32 curWidth = header.Height;
+					dataSize = curHeight * curHeight;
+					do
+					{
+						if (curWidth > 1)
+							curWidth >>= 1;
+
+						if (curHeight > 1)
+							curHeight >>= 1;
+
+						dataSize += ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
+					} while (curWidth != 1 || curHeight != 1);
+					format = ECF_BC6_U;
+				}
+				break;
+				case DDS_PF_BC6_S:
+				{
+					u32 curHeight = header.Height;
+					u32 curWidth = header.Height;
+					dataSize = curHeight * curHeight;
+					do
+					{
+						if (curWidth > 1)
+							curWidth >>= 1;
+
+						if (curHeight > 1)
+							curHeight >>= 1;
+
+						dataSize += ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
+					} while (curWidth != 1 || curHeight != 1);
+					format = ECF_BC6_S;
+				}
+				break;
+				case DDS_PF_BC7_U:
+				{
+					u32 curHeight = header.Height;
+					u32 curWidth = header.Height;
+					dataSize = curHeight * curHeight; 
+					do
+					{
+						if (curWidth > 1)
+							curWidth >>= 1;
+
+						if (curHeight > 1)
+							curHeight >>= 1;
+
+						dataSize += ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
+					} while (curWidth != 1 || curHeight != 1);
+					format = ECF_BC7_U;
+				}
+					break;
+				case DDS_PF_BC7_S:
+				{
+					u32 curHeight = header.Height;
+					u32 curWidth = header.Height;
+					dataSize = curHeight * curHeight;
+					do
+					{
+						if (curWidth > 1)
+							curWidth >>= 1;
+
+						if (curHeight > 1)
+							curHeight >>= 1;
+
+						dataSize += ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
+					} while (curWidth != 1 || curHeight != 1);
+					format = ECF_BC7_S;
+				}
+					break;
 			}
+
 
 			if( format != ECF_UNKNOWN )
 			{
 				if (!is3D) // Currently 3D textures are unsupported.
 				{
+
+					if (format == ECF_BC7_S || format == ECF_BC7_U || format == ECF_BC6_S || format == ECF_BC6_U)
+					{
+						dataSize += sizeof(DDS_HEADER_DXT10);
+						dataSize += sizeof(ddsHeader);
+						file->seek(0);
+					}
+					else if (header.PixelFormat.Flags & DDPF_FOURCC)
+					{
+
+						dataSize += sizeof(DDS_HEADER_DXT10);
+						file->seek(0);
+					}
+
+
 					u8* data = new u8[dataSize];
-					file->read(data, dataSize);
+					u32 readsize = file->read(data, dataSize);
 
 					bool hasMipMap = (mipMapCount > 0) ? true : false;
 
-					image = new CImage(format, core::dimension2d<u32>(header.Width, header.Height), data, true, true, true, hasMipMap);
+
+					image = new CImage(format, core::dimension2d<u32>(header.Width, header.Height), data, true, true, true, mipMapCount);
+
+					((CImage*)image)->CompressedSize = readsize;
+
+
+
 				}
 			}
 		}

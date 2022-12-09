@@ -181,6 +181,14 @@ bool CD3D9HLSLMaterialRenderer::createHLSLPixelShader(const char* pixelShaderPro
 		// instead they'll silently compile 1_x as 2_x when using this flag
 		flags |= D3DXSHADER_ENABLE_BACKWARDS_COMPATIBILITY;
 #endif
+	flags |= D3DXSHADER_OPTIMIZATION_LEVEL3;
+	if(strcmp("pixelNoiseMain",shaderEntryPointName))
+	{
+		flags |= D3DXSHADER_AVOID_FLOW_CONTROL;
+	}else 
+	{
+		flags |= D3DXSHADER_PREFER_FLOW_CONTROL;
+	}
 #if defined(_IRR_D3D_USE_LEGACY_HLSL_COMPILER) && defined(D3DXSHADER_USE_LEGACY_D3DX9_31_DLL)
 #ifdef D3DXSHADER_ENABLE_BACKWARDS_COMPATIBILITY
 	else

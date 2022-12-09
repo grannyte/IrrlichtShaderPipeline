@@ -117,6 +117,7 @@ protected:
 	scene::E_HARDWARE_MAPPING Mapping;
 	u32 Flags;
 	u32 Size;
+	u32 Stride;
 	E_HARDWARE_BUFFER_TYPE Type;
 	E_DRIVER_TYPE DriverType;
 

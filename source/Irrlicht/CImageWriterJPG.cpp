@@ -13,6 +13,7 @@
 
 #ifdef _IRR_COMPILE_WITH_LIBJPEG_
 #include <stdio.h> // required for jpeglib.h
+#include<iostream>
 extern "C"
 {
 #ifndef _IRR_USE_NON_SYSTEM_JPEG_LIB_
@@ -128,9 +129,11 @@ static bool writeJPEGFile(io::IWriteFile* file, IImage* image, u32 quality)
 	}
 
 	// couldn't find a color converter
-	if ( 0 == format )
+	if (0 == format)
+	{
+		std::cout << "Format not reconised" << std::endl;
 		return false;
-
+	}
 	const core::dimension2du dim = image->getDimension();
 
 	struct jpeg_compress_struct cinfo;

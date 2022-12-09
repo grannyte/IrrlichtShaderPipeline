@@ -9,6 +9,7 @@
 #include "ICursorControl.h"
 #include "ICameraSceneNode.h"
 #include "ISceneNodeAnimatorCollisionResponse.h"
+#include "os.h"
 
 namespace irr
 {
@@ -216,7 +217,35 @@ void CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node, u32 timeMs)
 		pos += movedir * timeDiff * MoveSpeed;
 
 	if (CursorKeys[EKA_MOVE_BACKWARD])
+	{
+#if _DEBUG
+		irr::core::stringc posout ="Camera pre move pos X: ";
+		posout += pos.X; 
+		posout += " Y: ";
+		posout += pos.Y;
+		posout += " Z: ";
+		posout += pos.Z;
+		posout += " timeMs: ";
+		posout += timeMs;
+		os::Printer::log(posout.c_str(), irr::ELL_DEBUG);
+#endif
 		pos -= movedir * timeDiff * MoveSpeed;
+#if _DEBUG
+		posout = "Camera post move pos X: ";
+		posout += pos.X;
+		posout += " Y: ";
+		posout += pos.Y;
+		posout += " Z: ";
+		posout += pos.Z;
+		posout += " timeDiff: ";
+		posout += timeDiff;
+		posout += " MoveSpeed: ";
+		posout += MoveSpeed;
+
+		os::Printer::log(posout.c_str(), irr::ELL_DEBUG);
+#endif
+
+	}
 
 	// strafing
 

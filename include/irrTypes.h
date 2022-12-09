@@ -226,12 +226,12 @@ Compiler version defines: VC6.0 : 1200, VC7.0 : 1300, VC7.1 : 1310, VC8.0 : 1400
 #if defined(_DEBUG) && defined(IRRLICHT_EXPORTS) && defined(_MSC_VER) && \
 	(_MSC_VER > 1299) && !defined(_IRR_DONT_DO_MEMORY_DEBUGGING_HERE) && !defined(_WIN32_WCE)
 
-	#define CRTDBG_MAP_ALLOC
-	#define _CRTDBG_MAP_ALLOC
-	#define DEBUG_CLIENTBLOCK new( _CLIENT_BLOCK, __FILE__, __LINE__)
-	#include <stdlib.h>
-	#include <crtdbg.h>
-	#define new DEBUG_CLIENTBLOCK
+	//#define CRTDBG_MAP_ALLOC
+	//#define _CRTDBG_MAP_ALLOC
+	//#define DEBUG_CLIENTBLOCK new( _CLIENT_BLOCK, __FILE__, __LINE__)
+	//#include <stdlib.h>
+	//#include <crtdbg.h>
+//	#define new DEBUG_CLIENTBLOCK
 #endif
 
 // disable truncated debug information warning in visual studio 6 by default

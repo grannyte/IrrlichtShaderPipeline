@@ -547,7 +547,8 @@ void COpenGLExtensionHandler::initExtensions(bool stencilBuffer)
 	pGlEndOcclusionQueryNV = (PFNGLENDOCCLUSIONQUERYNVPROC) IRR_OGL_LOAD_EXTENSION("glEndOcclusionQueryNV");
 	pGlGetOcclusionQueryivNV = (PFNGLGETOCCLUSIONQUERYIVNVPROC) IRR_OGL_LOAD_EXTENSION("glGetOcclusionQueryivNV");
 	pGlGetOcclusionQueryuivNV = (PFNGLGETOCCLUSIONQUERYUIVNVPROC) IRR_OGL_LOAD_EXTENSION("glGetOcclusionQueryuivNV");
-
+	PFNGLTEXIMAGE3D = (PFNGLTEXIMAGE3DPROC)IRR_OGL_LOAD_EXTENSION("glTexImage3D");
+	PFNGLTEXSUBIMAGE3D = (PFNGLTEXSUBIMAGE3DPROC)IRR_OGL_LOAD_EXTENSION("glTexSubImage3D");
 	// blend
 	pGlBlendFuncSeparateEXT = (PFNGLBLENDFUNCSEPARATEEXTPROC) IRR_OGL_LOAD_EXTENSION("glBlendFuncSeparateEXT");
 	pGlBlendFuncSeparate = (PFNGLBLENDFUNCSEPARATEPROC) IRR_OGL_LOAD_EXTENSION("glBlendFuncSeparate");
@@ -783,6 +784,8 @@ bool COpenGLExtensionHandler::queryFeature(E_VIDEO_DRIVER_FEATURE feature) const
 		// extra test for now!
 		// return (FeatureAvailable[IRR_ARB_texture_non_power_of_two]||Version>=200);
 		return (FeatureAvailable[IRR_ARB_texture_non_power_of_two]);
+	case EVDF_TEXTURE_ARRAY:
+		return FeatureAvailable[IRR_EXT_texture_array];
 	case EVDF_FRAMEBUFFER_OBJECT:
 		return FeatureAvailable[IRR_EXT_framebuffer_object] || FeatureAvailable[IRR_ARB_framebuffer_object];
 	case EVDF_VERTEX_BUFFER_OBJECT:

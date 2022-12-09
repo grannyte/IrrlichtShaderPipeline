@@ -4,6 +4,7 @@
 
 #include "CEmptySceneNode.h"
 #include "ISceneManager.h"
+#include "IVideoDriver.h"
 
 namespace irr
 {
@@ -11,7 +12,7 @@ namespace scene
 {
 
 //! constructor
-CEmptySceneNode::CEmptySceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id)
+CEmptySceneNode::CEmptySceneNode(ISceneNode* parent, ISceneManager* mgr, irr::s32 id)
 : ISceneNode(parent, mgr, id)
 {
 	#ifdef _DEBUG
@@ -35,12 +36,29 @@ void CEmptySceneNode::OnRegisterSceneNode()
 //! render
 void CEmptySceneNode::render()
 {
+	Box.reset(0, 0, 0);
+	Box.addInternalPoint(RelativeScale);
+	Box.addInternalPoint(-RelativeScale);
+
+
+		if (DebugDataVisible & scene::EDS_BBOX)
+		{
+			video::SMaterial m;
+			m.Lighting = false;
+			auto driver = SceneManager->getVideoDriver();
+			driver->setMaterial(m);
+			driver->setTransform(video::ETS_WORLD, AbsoluteTransformation);
+			driver->draw3DBox(Box, video::SColor(255, 255, 255, 255));
+		}
+	
+
+
 	// do nothing
 }
 
 
 //! returns the axis aligned bounding box of this node
-const core::aabbox3d<f32>& CEmptySceneNode::getBoundingBox() const
+const irr::core::aabbox3d<f32>& CEmptySceneNode::getBoundingBox() const
 {
 	return Box;
 }

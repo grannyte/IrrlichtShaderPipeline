@@ -291,12 +291,12 @@ bool CGUIContextMenu::OnEvent(const SEvent& event)
 					IGUIElement * p =  EventParent ? EventParent : Parent;
 					setEventParent(p);
 
-					SEvent event;
-					event.EventType = EET_GUI_EVENT;
-					event.GUIEvent.Caller = this;
-					event.GUIEvent.Element = 0;
-					event.GUIEvent.EventType = EGET_ELEMENT_CLOSED;
-					if ( !p->OnEvent(event) )
+					SEvent outevent;
+					outevent.EventType = EET_GUI_EVENT;
+					outevent.GUIEvent.Caller = this;
+					outevent.GUIEvent.Element = 0;
+					outevent.GUIEvent.EventType = EGET_ELEMENT_CLOSED;
+					if (!p->OnEvent(outevent))
 					{
 						if ( CloseHandling & ECMC_HIDE )
 						{

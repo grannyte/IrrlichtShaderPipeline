@@ -37,7 +37,10 @@ namespace scene
 		EPT_TRIANGLES,
 
 		//! The single vertices are expanded to quad billboards on the GPU.
-		EPT_POINT_SPRITES
+		EPT_POINT_SPRITES,
+
+		//! Tesselation control point
+		EPT_CONTROL_POINT
 	};
 
 } // end namespace scene

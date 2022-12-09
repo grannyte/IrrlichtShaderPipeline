@@ -8,7 +8,7 @@
 #include "ITexture.h"
 #include "IImage.h"
 #include "SMaterialLayer.h"
-
+#include "irrArray.h"
 #include "IrrCompileConfig.h"
 #ifdef _IRR_COMPILE_WITH_OPENGL_
 
@@ -189,6 +189,20 @@ protected:
 	COpenGLTexture* DepthTexture;
 };
 
+class COpenGLTextureArray: public COpenGLTexture
+{
+public:
+	COpenGLTextureArray(const core::array<ITexture*> &surfaces, const io::path& name,
+				void *mipmapData = 0, COpenGLDriver *drv = 0);
+
+	virtual ~COpenGLTextureArray();
+
+	//! returns the opengl texture type
+	virtual GLenum getOpenGLTextureType() const;
+
+protected:
+	void uploadTexture(const core::array<ITexture*> &surfaces);
+};
 
 //! OpenGL Render Buffer.
 class COpenGLRenderBuffer : public COpenGLTexture
