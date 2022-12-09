@@ -10,6 +10,7 @@
 
 #include "ITexture.h"
 #include "IImage.h"
+#include "irrArray.h"
 #if defined(__BORLANDC__) || defined (__BCPLUSPLUS__)
 #include "irrMath.h"    // needed by borland for sqrtf define
 #endif
@@ -38,6 +39,10 @@ public:
 	CD3D9Texture(CD3D9Driver* driver, const core::dimension2d<u32>& size, const io::path& name,
 		const ECOLOR_FORMAT format = ECF_UNKNOWN);
 
+	//!Array,3d and cube constructor 
+	CD3D9Texture(CD3D9Driver *driver, const core::array<ITexture*> *surfaces, E_TEXTURE_TYPE Type, const io::path& name,
+		void *mipmapData = 0);
+
 	//! destructor
 	virtual ~CD3D9Texture();
 
@@ -56,6 +61,8 @@ public:
 
 	//! Returns pointer to the render target surface
 	IDirect3DSurface9* getRenderTargetSurface();
+	//! Returns the type of texture
+	virtual E_TEXTURE_TYPE getTextureType();
 
 private:
 	friend class CD3D9Driver;
@@ -65,8 +72,14 @@ private:
 	//! creates the hardware texture
 	bool createTexture(u32 flags, IImage * image);
 
+	//! creates the hardware texture
+	bool createTexture(const core::array<ITexture*> *surfaces, E_TEXTURE_TYPE Type);
+
 	//! copies the image to the texture
-	bool copyTexture(IImage * image);
+	bool copyTexture(IImage * image, int layer = 0);
+
+	//! copies the texture to the texture layer
+	bool copyTexture(ITexture * image, int layer = 0);
 
 	//! Helper function for mipmap generation.
 	bool createMipMaps(u32 level=1);
@@ -86,8 +99,15 @@ private:
 	//! set Pitch based on the d3d format
 	void setPitch(D3DFORMAT d3dformat);
 
-	IDirect3DDevice9* Device;
-	IDirect3DTexture9* Texture;
+	IDirect3DDevice9* Device; 
+	union
+	{
+		IDirect3DTexture9* Texture;
+		IDirect3DVolumeTexture9* VolumeTexture;
+		IDirect3DCubeTexture9* CubeTexture;
+
+		IDirect3DBaseTexture9* BaseTexture;
+	}Texture;
 	IDirect3DSurface9* RTTSurface;
 	CD3D9Driver* Driver;
 	SDepthSurface* DepthSurface;
@@ -96,6 +116,7 @@ private:
 	bool HardwareMipMaps;
 	bool IsCompressed;
 };
+
 
 
 } // end namespace video

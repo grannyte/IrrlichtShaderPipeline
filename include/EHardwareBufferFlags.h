@@ -34,7 +34,10 @@ namespace scene
 		//! Change the index mapping
 		EBT_INDEX,
 		//! Change both vertex and index mapping to the same value
-		EBT_VERTEX_AND_INDEX
+		EBT_VERTEX_AND_INDEX,
+
+		EBT_STREAM
+
 	};
 
 } // end namespace scene

@@ -6,6 +6,7 @@
 #define __I_IREFERENCE_COUNTED_H_INCLUDED__
 
 #include "irrTypes.h"
+#include <atomic>
 
 #ifdef _IRR_COMPILE_WITH_LEAK_HUNTER_
 	#include "leakHunter.h"
@@ -165,13 +166,13 @@ namespace irr
 			DebugName = newName;
 		}
 
-	private:
+	protected:
 
 		//! The debug name.
 		const c8* DebugName;
 
 		//! The reference counter. Mutable to do reference counting on const objects.
-		mutable s32 ReferenceCounter;
+		mutable std::atomic<s32> ReferenceCounter;
 	};
 
 } // end namespace irr

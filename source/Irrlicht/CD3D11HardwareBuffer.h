@@ -7,8 +7,11 @@
 #ifdef _IRR_WINDOWS_
 
 #ifdef _IRR_COMPILE_WITH_DIRECT3D_11_
-
+#include "IIndexBuffer.h"
+#include "IVertexBuffer.h"
 #include "IHardwareBuffer.h"
+
+#include "CD3D11CallBridge.h"
 
 namespace irr
 {
@@ -23,8 +26,10 @@ class CD3D11HardwareBuffer : public IHardwareBuffer
 public:
 	CD3D11HardwareBuffer(CD3D11Driver* driver, E_HARDWARE_BUFFER_TYPE type, scene::E_HARDWARE_MAPPING mapping,
 		u32 size, u32 flags, const void* initialData = 0);
-	CD3D11HardwareBuffer(scene::IIndexBuffer* indexBuffer, CD3D11Driver* driver);
+	CD3D11HardwareBuffer(irr::scene::IIndexBuffer* indexBuffer, CD3D11Driver* driver);
 	CD3D11HardwareBuffer(scene::IVertexBuffer* vertexBuffer, CD3D11Driver* driver);
+
+
 	~CD3D11HardwareBuffer();
 
 	bool update(const scene::E_HARDWARE_MAPPING mapping, const u32 size, const void* data) _IRR_OVERRIDE_;

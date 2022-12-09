@@ -146,21 +146,21 @@ struct S3DVertex2TCoords : public S3DVertex
 	//! Equality operator
 	bool operator==(const S3DVertex2TCoords& other) const
 	{
-		return ((static_cast<S3DVertex>(*this)==other) &&
+		return ((static_cast<S3DVertex>(*this)== static_cast<S3DVertex>(other)) &&
 			(TCoords2 == other.TCoords2));
 	}
 
 	//! Inequality operator
 	bool operator!=(const S3DVertex2TCoords& other) const
 	{
-		return ((static_cast<S3DVertex>(*this)!=other) ||
+		return ((static_cast<S3DVertex>(*this)!= static_cast<S3DVertex>(other)) ||
 			(TCoords2 != other.TCoords2));
 	}
 
 	bool operator<(const S3DVertex2TCoords& other) const
 	{
-		return ((static_cast<S3DVertex>(*this) < other) ||
-				((static_cast<S3DVertex>(*this) == other) && (TCoords2 < other.TCoords2)));
+		return ((static_cast<S3DVertex>(*this) < static_cast<S3DVertex>(other)) ||
+				((static_cast<S3DVertex>(*this) == static_cast<S3DVertex>(other)) && (TCoords2 < other.TCoords2)));
 	}
 
 	E_VERTEX_TYPE getType() const

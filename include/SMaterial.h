@@ -259,7 +259,7 @@ namespace video
 		: MaterialType(EMT_SOLID), AmbientColor(255,255,255,255), DiffuseColor(255,255,255,255),
 			EmissiveColor(0,0,0,0), SpecularColor(255,255,255,255),
 			Shininess(0.0f), MaterialTypeParam(0.0f), MaterialTypeParam2(0.0f), Thickness(1.0f),
-			ZBuffer(ECFN_LESSEQUAL), AntiAliasing(EAAM_SIMPLE), ColorMask(ECP_ALL),
+			ZBuffer(ECFN_GREATER), AntiAliasing(EAAM_SIMPLE), ColorMask(ECP_ALL),
 			ColorMaterial(ECM_DIFFUSE), BlendOperation(EBO_NONE), BlendFactor(0.0f),
 			PolygonOffsetFactor(0), PolygonOffsetDirection(EPO_FRONT),
 			Wireframe(false), PointCloud(false), GouraudShading(true),
@@ -562,7 +562,7 @@ namespace video
 				{
 					if (value)
 						for (u32 i=0; i<MATERIAL_MAX_TEXTURES; ++i)
-							TextureLayer[i].AnisotropicFilter = 0xFF;
+							TextureLayer[i].AnisotropicFilter = 0x10;
 					else
 						for (u32 i=0; i<MATERIAL_MAX_TEXTURES; ++i)
 							TextureLayer[i].AnisotropicFilter = 0;

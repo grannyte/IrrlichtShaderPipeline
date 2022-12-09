@@ -495,6 +495,9 @@ namespace video
 		dropped. See IReferenceCounted::drop() for more information. */
 		virtual ITexture* getTextureByIndex(u32 index) =0;
 
+		//! Load these files, in order, to a texture array
+		virtual ITexture* getTexture(const core::array<io::path> &files, E_TEXTURE_TYPE Type) = 0;
+
 		//! Returns amount of textures currently loaded
 		/** \return Amount of textures currently loaded */
 		virtual u32 getTextureCount() const = 0;
@@ -542,6 +545,13 @@ namespace video
 		IReferenceCounted::drop() for more information. */
 		virtual ITexture* addRenderTargetTexture(const core::dimension2d<u32>& size,
 				const io::path& name = "rt", const ECOLOR_FORMAT format = ECF_UNKNOWN) =0;
+
+		virtual ITexture* addRenderTargetTexture(const core::dimension2d<u32>& size,
+			const io::path& name, const ECOLOR_FORMAT format,
+			u32 sampleCount, u32 sampleQuality, u32 arraySlices) {
+			return nullptr;
+		};
+
 
 		//! Removes a texture from the texture cache and deletes it.
 		/** This method can free a lot of memory!
@@ -699,14 +709,14 @@ namespace video
 
 		//! Sets new multiple render targets. (this prototype will be removed in future)
 		virtual bool setRenderTarget(const core::array<video::IRenderTarget>& texture,
-			bool clearBackBuffer=true, bool clearZBuffer=true,
+			const core::array<bool>& clearBackBuffer, bool clearZBuffer=true,
 			SColor color=video::SColor(0,0,0,0),
 			video::ITexture* depthStencil = 0) =0;
 
 		//! Sets new multiple render targets.
 		virtual bool setRenderTarget(const core::array<video::IRenderTarget>& texture,
 			video::ITexture* depthStencil,
-			bool clearBackBuffer=true, bool clearZBuffer=true,
+			core::array<bool>& clearBackBuffer, bool clearZBuffer=true,
 			SColor color=video::SColor(0,0,0,0))
 		{
 			return setRenderTarget(texture, clearBackBuffer, clearZBuffer, color, depthStencil);
@@ -727,6 +737,9 @@ namespace video
 		virtual bool setRenderTarget(E_RENDER_TARGET target, bool clearTarget=true,
 					bool clearZBuffer=true,
 					SColor color=video::SColor(0,0,0,0)) =0;
+
+		//! set StreamOutput buffer 
+		virtual bool setStreamOutputBuffer(scene::IVertexBuffer* buffer) = 0;
 
 		//! Sets a new viewport.
 		/** Every rendering operation is done into this new area.

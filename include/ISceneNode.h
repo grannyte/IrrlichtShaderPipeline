@@ -17,6 +17,7 @@
 #include "matrix4.h"
 #include "irrList.h"
 #include "IAttributes.h"
+#include <ppl.h>
 
 namespace irr
 {
@@ -48,7 +49,7 @@ namespace scene
 				const core::vector3df& scale = core::vector3df(1.0f, 1.0f, 1.0f))
 			: RelativeTranslation(position), RelativeRotation(rotation), RelativeScale(scale),
 				Parent(0), SceneManager(mgr), TriangleSelector(0), ID(id),
-				AutomaticCullingState(EAC_BOX), DebugDataVisible(EDS_OFF),
+				AutomaticCullingState(EAC_FRUSTUM_BOX), DebugDataVisible(EDS_OFF),
 				IsVisible(true), IsDebugObject(false)
 		{
 			if (parent)
@@ -129,10 +130,18 @@ namespace scene
 				updateAbsolutePosition();
 
 				// perform the post render process on all children
-
-				ISceneNodeList::Iterator it = Children.begin();
-				for (; it != Children.end(); ++it)
-					(*it)->OnAnimate(timeMs);
+				if (Children.size() < 250)
+				{
+					ISceneNodeList::Iterator it = Children.begin();
+					for (; it != Children.end(); ++it)
+						(*it)->OnAnimate(timeMs);
+				}
+				else
+				{
+					concurrency::parallel_for_each(Children.begin(), Children.end(), [timeMs](ISceneNode* it) {
+						it->OnAnimate(timeMs);
+						});
+				}
 			}
 		}
 
@@ -450,7 +459,7 @@ namespace scene
 		/** \param textureLayer Layer of texture to be set. Must be a
 		value smaller than MATERIAL_MAX_TEXTURES.
 		\param texture New texture to be used. */
-		void setMaterialTexture(u32 textureLayer, video::ITexture* texture)
+		virtual void setMaterialTexture(u32 textureLayer, video::ITexture* texture)
 		{
 			if (textureLayer >= video::MATERIAL_MAX_TEXTURES)
 				return;
@@ -462,7 +471,7 @@ namespace scene
 
 		//! Sets the material type of all materials in this scene node to a new material type.
 		/** \param newType New type of material to be set. */
-		void setMaterialType(video::E_MATERIAL_TYPE newType)
+		virtual void setMaterialType(video::E_MATERIAL_TYPE newType)
 		{
 			for (u32 i=0; i<getMaterialCount(); ++i)
 				getMaterial(i).MaterialType = newType;
@@ -767,7 +776,7 @@ namespace scene
 		/** \return The node's scene manager. */
 		virtual ISceneManager* getSceneManager(void) const { return SceneManager; }
 
-	protected:
+	public:
 
 		//! A clone function for the ISceneNode members.
 		/** This method can be used by clone() implementations of

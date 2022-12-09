@@ -99,6 +99,34 @@ enum E_TEXTURE_SOURCE
 	ETS_FROM_FILE
 };
 
+//! Enumeration describing the type of ITexture
+enum E_TEXTURE_TYPE
+{
+	// 1D Texture 
+	ETT_1D,
+
+	//! Standard Texture
+	ETT_2D,
+
+	//! 3D Texture
+	ETT_3D,
+
+	//! Cube Texture
+	ETT_CUBE,
+
+	//! 2d texture array
+	ETT_2D_ARRAY,
+
+	//! 3D Texture array
+	ETT_3D_ARRAY,
+
+	//! Cube Texture array
+	ETT_CUBE_ARRAY,
+	//! This flag is never used, it only forces the compiler to 
+	//! compile these enumeration values to 32 bit.
+	ETT_FORCE_32BIT = 0x7fffffff
+};
+
 //! Interface of a Video Driver dependent Texture.
 /** An ITexture is created by an IVideoDriver by using IVideoDriver::addTexture
 or IVideoDriver::getTexture. After that, the texture may only be used by this
@@ -114,7 +142,7 @@ public:
 
 	//! constructor
 	ITexture(const io::path& name) : NamedPath(name), DriverType(EDT_NULL), ColorFormat(ECF_UNKNOWN),
-		Pitch(0), HasMipMaps(false), HasAlpha(false), IsRenderTarget(false), Source(ETS_UNKNOWN)
+		Pitch(0), MipMaps(false), HasAlpha(false), IsRenderTarget(false), IsDepthStencil(false), Source(ETS_UNKNOWN), DPitch(0)
 	{
 	}
 
@@ -187,7 +215,7 @@ public:
 
 	//! Check whether the texture has MipMaps
 	/** \return True if texture has MipMaps, else false. */
-	bool hasMipMaps() const { return HasMipMaps; }
+	bool hasMipMaps() const { return MipMaps; }
 
 	//! Returns if the texture has an alpha channel
 	bool hasAlpha() const { return HasAlpha; }
@@ -199,6 +227,7 @@ public:
 	\return True if this is a render target, otherwise false. */
 	bool isRenderTarget() const { return IsRenderTarget; }
 
+	bool isDeptStencil() const { return IsDepthStencil; }
 	//! Get name of texture (in most cases this is the filename)
 	const io::SNamedPath& getName() const { return NamedPath; }
 
@@ -208,6 +237,8 @@ public:
 	//! Used internally by the engine to update Source status on IVideoDriver::getTexture calls.
 	void updateSource(E_TEXTURE_SOURCE source) { Source = source; }
 
+	//! Returns the type of texture
+	virtual E_TEXTURE_TYPE getTextureType() const  { return TextureType; };
 protected:
 
 	//! Helper function, helps to get the desired texture creation format from the flags.
@@ -223,7 +254,7 @@ protected:
 			return ETCF_ALWAYS_32_BIT;
 		if (flags & ETCF_OPTIMIZED_FOR_QUALITY)
 			return ETCF_OPTIMIZED_FOR_QUALITY;
-		return ETCF_OPTIMIZED_FOR_SPEED;
+		return ETCF_OPTIMIZED_FOR_QUALITY;
 	}
 
 	io::SNamedPath NamedPath;
@@ -232,10 +263,13 @@ protected:
 	E_DRIVER_TYPE DriverType;
 	ECOLOR_FORMAT ColorFormat;
 	u32 Pitch;
-	bool HasMipMaps;
+	u32 DPitch;
+	bool MipMaps;
 	bool HasAlpha;
 	bool IsRenderTarget;
+	bool IsDepthStencil;
 	E_TEXTURE_SOURCE Source;
+	E_TEXTURE_TYPE TextureType;
 };
 
 

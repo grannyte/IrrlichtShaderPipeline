@@ -37,12 +37,11 @@ namespace video
     class COpenGLCallBridge;
 	class COpenGLTexture;
 
-	class COpenGLVertexAttribute : public IVertexAttribute
+	class COpenGLVertexAttribute : public CVertexAttribute
 	{
 	public:
 		COpenGLVertexAttribute(const core::stringc& name, u32 elementCount, E_VERTEX_ATTRIBUTE_SEMANTIC semantic, E_VERTEX_ATTRIBUTE_TYPE type, u32 offset, u32 bufferID, u32 layerCount);
-
-		virtual void setOffset(u32 offset);
+		virtual ~COpenGLVertexAttribute();
 
 		// Add location layer.
 		void addLocationLayer();
@@ -61,23 +60,26 @@ namespace video
 		core::array<s32> Location;
 	};
 
-	class COpenGLVertexDescriptor : public IVertexDescriptor
+	class COpenGLVertexDescriptor : public CVertexDescriptor
 	{
 	public:
 		COpenGLVertexDescriptor(const core::stringc& name, u32 id, u32 layerCount);
-
-		virtual void setID(u32 id);
-
-		virtual IVertexAttribute* addAttribute(const core::stringc& name, u32 elementCount, E_VERTEX_ATTRIBUTE_SEMANTIC semantic, E_VERTEX_ATTRIBUTE_TYPE type, u32 bufferID) _IRR_OVERRIDE_;
-
-		virtual void clearAttribute() _IRR_OVERRIDE_;
+		virtual ~COpenGLVertexDescriptor();
 
 		void addLocationLayer();
 
-	protected:
-		core::array<COpenGLVertexAttribute> Attribute;
+		virtual bool addAttribute(const core::stringc& name, u32 elementCount, E_VERTEX_ATTRIBUTE_SEMANTIC semantic, E_VERTEX_ATTRIBUTE_TYPE type, u32 bufferID);
 
+		COpenGLVertexAttribute* getAttributeSorted(u32 id) const;
+
+		virtual bool removeAttribute(u32 id);
+
+		virtual void removeAllAttribute();
+
+	protected:
 		u32 LayerCount;
+
+		core::array<COpenGLVertexAttribute*> AttributeSorted;
 	};
 
 	class COpenGLHardwareBuffer : public IHardwareBuffer
@@ -507,6 +509,9 @@ namespace video
 		bool genericDriverInit();
 		//! returns a device dependent texture from a software surface (IImage)
 		virtual video::ITexture* createDeviceDependentTexture(IImage* surface, const io::path& name, void* mipmapData) _IRR_OVERRIDE_;
+
+		//! returns a texture array from textures
+		virtual video::ITexture* createDeviceDependentTexture(const core::array<ITexture*> &surfaces, const E_TEXTURE_TYPE Type, const io::path& name, void* mipmapData);
 
 		//! creates a transposed matrix in supplied GLfloat array to pass to OpenGL
 		inline void getGLMatrix(GLfloat gl_matrix[16], const core::matrix4& m);

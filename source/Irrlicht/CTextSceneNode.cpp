@@ -46,7 +46,7 @@ CTextSceneNode::~CTextSceneNode()
 void CTextSceneNode::OnRegisterSceneNode()
 {
 	if (IsVisible)
-		SceneManager->registerNodeForRendering(this, ESNRP_TRANSPARENT);
+		SceneManager->registerNodeForRendering(this, ESNRP_TRANSPARENT_EFFECT);
 
 	ISceneNode::OnRegisterSceneNode();
 }
@@ -104,7 +104,7 @@ CBillboardTextSceneNode::CBillboardTextSceneNode(ISceneNode* parent, ISceneManag
 	Material.MaterialTypeParam = 1.f / 255.f;
 	Material.BackfaceCulling = false;
 	Material.Lighting = false;
-	Material.ZBuffer = video::ECFN_LESSEQUAL;
+	Material.ZBuffer = irr::video::ECFN_GREATEREQUAL;
 	Material.ZWriteEnable = false;
 
 	if (font)

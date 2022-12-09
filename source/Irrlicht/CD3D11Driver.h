@@ -11,16 +11,23 @@
 
 #ifdef _IRR_WINDOWS_
 #define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#include <Windows.h>
 #endif
 
 #include "CNullDriver.h"
 #include "SIrrCreationParameters.h"
 #include "IMaterialRendererServices.h"
 #include "CD3D11CallBridge.h"
+#include "CD3D11VertexDescriptor.h"
 
+#include"CMeshBuffer.h"
+
+#include <queue>
+#include <map>
 #include <d3d11.h>
-
+#include <sal.h>
+//#include <d3d11_1.h>
+//#include <d3d11_2.h>
 namespace irr
 {
 namespace video
@@ -30,23 +37,115 @@ namespace video
 	class CD3D11VertexDeclaration;
 	class CD3D11HardwareBuffer;
 
-	struct SDepthSurface11 : public IReferenceCounted
+
+	template<typename T>
+	class irrObjectHolder
 	{
-		SDepthSurface11() : Surface(0)
+	public:
+		irrObjectHolder<T>() : ref(nullptr)
 		{
-#ifdef _DEBUG
-			setDebugName("SDepthSurface");
-#endif
-		}
-		virtual ~SDepthSurface11()
-		{
-			if (Surface)
-				Surface->Release();
 		}
 
-		ID3D11DepthStencilView* Surface;
-		core::dimension2du Size;
+		irrObjectHolder<T>(T* refcounted) : ref(refcounted)
+		{
+			if (ref)
+				ref->grab();
+		}
+		irrObjectHolder<T>(const irrObjectHolder<T>& other) : ref(other.ref)
+		{
+			if (ref)
+				ref->grab();
+		}
+		irrObjectHolder<T>(irrObjectHolder<T>&& other) : ref(other.ref)
+		{
+			if (ref)
+				ref->grab();
+		}
+		irrObjectHolder<T>& operator=(const irrObjectHolder<T>& other)
+		{
+			if (ref && !other.ref)
+				__debugbreak();
+			if (ref)
+			{
+				ref->drop();
+				ref = nullptr;
+			}
+			if (other.ref)
+			{
+				other.ref->grab();
+				ref = other.ref;
+			}
+			return *this;
+		}
+		irrObjectHolder<T>& operator=(irrObjectHolder<T>&& other)
+		{
+			if (ref && !other.ref)
+				__debugbreak();
+			if (ref)
+			{
+				ref->drop();
+				ref = nullptr;
+			}
+			if (other.ref)
+			{
+				other.ref->grab();
+				ref = other.ref;
+			}
+			return *this;
+		}
+		bool operator>(const irrObjectHolder<T>& other)
+		{
+			return ref > other.ref;
+		}
+		bool operator<(const irrObjectHolder<T>& other)
+		{
+			return ref < other.ref;
+		}
+		bool operator==(const irrObjectHolder<T>& other)
+		{
+			return ref == other.ref;
+		}
+
+		template < typename U > // class T : public U
+		bool operator==(const irrObjectHolder<U>& other)
+		{
+			return ref == other.ref;
+		}
+		template < typename U > // class T : public U
+		bool operator==(const U& other)
+		{
+			return ref == other.ref;
+		}
+		operator T* ()
+		{
+			return ref;
+		}
+		template < typename U > // class T : public U
+		operator irrObjectHolder<U>() const
+		{
+			return irrObjectHolder<U>((U*)ref);
+		}
+
+		~irrObjectHolder()
+		{
+			if (ref)
+				ref->drop();
+		}
+		T* operator->()
+		{
+			return ref;
+		}
+		T* operator->() const
+		{
+			return ref;
+		}
+	protected:
+		T* ref;
+
 	};
+
+
+
 
 	class CD3D11Driver : public CNullDriver, IMaterialRendererServices
 	{
@@ -62,10 +161,10 @@ namespace video
 		virtual ~CD3D11Driver();
 
 		//! applications must call this method before performing any rendering. returns false if failed.
-		virtual bool beginScene(bool backBuffer=true, bool zBuffer=true,
-				SColor color=SColor(255,0,0,0),
-				const SExposedVideoData& videoData=SExposedVideoData(),
-				core::rect<s32>* sourceRect=0);
+		virtual bool beginScene(bool backBuffer = true, bool zBuffer = true,
+			SColor color = SColor(255, 0, 0, 0),
+			const SExposedVideoData& videoData = SExposedVideoData(),
+			core::rect<s32>* sourceRect = 0);
 
 		//! applications must call this method after performing any rendering. returns false if failed.
 		virtual bool endScene();
@@ -90,10 +189,10 @@ namespace video
 
 		void removeAllHardwareBuffers();
 
-				//! Create occlusion query.
-		/** Use node for identification and mesh for occlusion test. */
+		//! Create occlusion query.
+/** Use node for identification and mesh for occlusion test. */
 		virtual void addOcclusionQuery(scene::ISceneNode* node,
-				const scene::IMesh* mesh=0);
+			const scene::IMesh* mesh = 0);
 
 		//! Remove occlusion query.
 		virtual void removeOcclusionQuery(scene::ISceneNode* node);
@@ -101,12 +200,12 @@ namespace video
 		//! Run occlusion query. Draws mesh stored in query.
 		/** If the mesh shall not be rendered visible, use
 		overrideMaterial to disable the color and depth buffer. */
-		virtual void runOcclusionQuery(scene::ISceneNode* node, bool visible=false);
+		virtual void runOcclusionQuery(scene::ISceneNode* node, bool visible = false);
 
 		//! Update occlusion query. Retrieves results from GPU.
 		/** If the query shall not block, set the flag to false.
 		Update might not occur in this case, though */
-		virtual void updateOcclusionQuery(scene::ISceneNode* node, bool block=true);
+		virtual void updateOcclusionQuery(scene::ISceneNode* node, bool block = true);
 
 		//! Return query result.
 		/** Return value is the number of visible pixels/fragments.
@@ -120,41 +219,35 @@ namespace video
 
 		//! Sets multiple render targets
 		virtual bool setRenderTarget(const core::array<video::IRenderTarget>& targets,
-			bool clearBackBuffer, bool clearZBuffer, SColor color, video::ITexture* depthStencil) _IRR_OVERRIDE_;
+			const core::array<bool>& clearBackBuffer, bool clearZBuffer, SColor color, video::ITexture* depthStencil) _IRR_OVERRIDE_;
 
 		//! sets a viewport
 		virtual void setViewPort(const core::rect<s32>& area);
 
 		//! gets the area of the current viewport
 		virtual const core::rect<s32>& getViewPort() const;
-		
+
 		//! is vbo recommended on this mesh? for DirectX 11 ALWAYS YES!!!!!!!!!!!
 		// DirectX 11 doesn't use methods like drawPrimitiveUp (DX9) or glVertex (OpenGL)
 		virtual bool isHardwareBufferRecommend(const scene::IMeshBuffer* mb) { return true; }
 
-		//! draw
-		virtual void drawHardwareBuffer(IHardwareBuffer* vertices,
-				IHardwareBuffer* indices, E_VERTEX_TYPE vType=EVT_STANDARD,
-				scene::E_PRIMITIVE_TYPE pType=scene::EPT_TRIANGLES,
-				E_INDEX_TYPE iType=EIT_16BIT, u32 numInstances = 0);
-
 		//! draws an 2d image, using a color (if color is other then Color(255,255,255,255)) and the alpha channel of the texture if wanted.
 		virtual void draw2DImage(const video::ITexture* texture, const core::position2d<s32>& destPos,
 			const core::rect<s32>& sourceRect, const core::rect<s32>* clipRect = 0,
-			SColor color=SColor(255,255,255,255), bool useAlphaChannelOfTexture=false);
+			SColor color = SColor(255, 255, 255, 255), bool useAlphaChannelOfTexture = false);
 
 		//! Draws a part of the texture into the rectangle.
 		virtual void draw2DImage(const video::ITexture* texture, const core::rect<s32>& destRect,
 			const core::rect<s32>& sourceRect, const core::rect<s32>* clipRect = 0,
-			const video::SColor* const colors=0, bool useAlphaChannelOfTexture=false);
+			const video::SColor* const colors = 0, bool useAlphaChannelOfTexture = false);
 
 		//! Draws a set of 2d images, using a color and the alpha channel of the texture.
 		virtual void draw2DImageBatch(const video::ITexture* texture,
-				const core::array<core::position2d<s32> >& positions,
-				const core::array<core::rect<s32> >& sourceRects,
-				const core::rect<s32>* clipRect=0,
-				SColor color=SColor(255,255,255,255),
-				bool useAlphaChannelOfTexture=false);
+			const core::array<core::position2d<s32> >& positions,
+			const core::array<core::rect<s32> >& sourceRects,
+			const core::rect<s32>* clipRect = 0,
+			SColor color = SColor(255, 255, 255, 255),
+			bool useAlphaChannelOfTexture = false);
 
 		//!Draws an 2d rectangle with a gradient.
 		virtual void draw2DRectangle(const core::rect<s32>& pos,
@@ -163,15 +256,15 @@ namespace video
 
 		//! Draws a 2d line.
 		virtual void draw2DLine(const core::position2d<s32>& start,
-					const core::position2d<s32>& end,
-					SColor color=SColor(255,255,255,255));
+			const core::position2d<s32>& end,
+			SColor color = SColor(255, 255, 255, 255));
 
 		//! Draws a pixel.
-		virtual void drawPixel(u32 x, u32 y, const SColor & color);
+		virtual void drawPixel(u32 x, u32 y, const SColor& color);
 
 		//! Draws a 3d line.
 		virtual void draw3DLine(const core::vector3df& start,
-			const core::vector3df& end, SColor color = SColor(255,255,255,255));
+			const core::vector3df& end, SColor color = SColor(255, 255, 255, 255));
 
 		//! initialises the Direct3D API
 		bool initDriver(HWND hwnd, bool pureSoftware);
@@ -207,11 +300,11 @@ namespace video
 		virtual void drawStencilShadowVolume(const core::array<core::vector3df>& triangles, bool zfail, u32 debugDataVisible);
 
 		//! Fills the stencil shadow with color.
-		virtual void drawStencilShadow(bool clearStencilBuffer=false,
-			video::SColor leftUpEdge = video::SColor(0,0,0,0),
-			video::SColor rightUpEdge = video::SColor(0,0,0,0),
-			video::SColor leftDownEdge = video::SColor(0,0,0,0),
-			video::SColor rightDownEdge = video::SColor(0,0,0,0));
+		virtual void drawStencilShadow(bool clearStencilBuffer = false,
+			video::SColor leftUpEdge = video::SColor(0, 0, 0, 0),
+			video::SColor rightUpEdge = video::SColor(0, 0, 0, 0),
+			video::SColor leftDownEdge = video::SColor(0, 0, 0, 0),
+			video::SColor rightDownEdge = video::SColor(0, 0, 0, 0));
 
 		//! Returns the maximum amount of primitives (mostly vertices) which
 		//! the device is able to render with one drawIndexedTriangleList
@@ -236,31 +329,58 @@ namespace video
 		virtual const core::matrix4& getTransform(E_TRANSFORMATION_STATE state) const;
 
 		//! Get a vertex shader constant index.
-		virtual s32 getVertexShaderConstantID(const c8* name);
+		virtual s32 getVertexShaderConstantID(const c8* name) _IRR_OVERRIDE_;
 
 		//! Get a pixel shader constant index.
-		virtual s32 getPixelShaderConstantID(const c8* name);
+		virtual s32 getPixelShaderConstantID(const c8* name) _IRR_OVERRIDE_;
+
+		//! Get a geometry shader constant index.
+		virtual s32 getGeometryShaderConstantID(const c8* name) _IRR_OVERRIDE_;
+
+		//! Get a hull shader constant index.
+		virtual s32 getHullShaderConstantID(const c8* name) _IRR_OVERRIDE_;
+
+		//! Get a domain shader constant index.
+		virtual s32 getDomainShaderConstantID(const c8* name) _IRR_OVERRIDE_;
 
 		//! Sets a vertex shader constant.
-		virtual void setVertexShaderConstant(const f32* data, s32 startRegister, s32 constantAmount=1);
+		virtual void setVertexShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) _IRR_OVERRIDE_;
 
 		//! Sets a pixel shader constant.
-		virtual void setPixelShaderConstant(const f32* data, s32 startRegister, s32 constantAmount=1);
+		virtual void setPixelShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) _IRR_OVERRIDE_;
+
+		//! Sets a vertex shader constant.
+		virtual void setGeometryShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) _IRR_OVERRIDE_;
+
+		//! Sets a pixel shader constant.
+		virtual void setHullShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) _IRR_OVERRIDE_;
+
+		//! Sets a pixel shader constant.
+		virtual void setDomainShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) _IRR_OVERRIDE_;
 
 		//! Sets a constant for the vertex shader based on a name.
-		virtual bool setVertexShaderConstant(s32 index, const f32* floats, int count);
+		virtual bool setVertexShaderConstant(s32 index, const f32* floats, int count) _IRR_OVERRIDE_;
 
 		//! Sets a constant for the pixel shader based on a name.
-		virtual bool setPixelShaderConstant(s32 index, const f32* floats, int count);
+		virtual bool setPixelShaderConstant(s32 index, const f32* floats, int count) _IRR_OVERRIDE_;
+
+		//! Sets a constant for the geometry shader based on a name.
+		virtual bool setGeometryShaderConstant(s32 index, const f32* floats, int count) _IRR_OVERRIDE_;
+
+		//! Sets a constant for the hull shader based on a name.
+		virtual bool setHullShaderConstant(s32 index, const f32* floats, int count) _IRR_OVERRIDE_;
+
+		//! Sets a constant for the domain shader based on a name.
+		virtual bool setDomainShaderConstant(s32 index, const f32* floats, int count) _IRR_OVERRIDE_;
 
 		//! Int interface for the above.
-		virtual bool setVertexShaderConstant(s32 index, const s32* ints, int count);
+		virtual bool setVertexShaderConstant(s32 index, const s32* ints, int count) _IRR_OVERRIDE_;
 
 		//! Int interface for the above.
-		virtual bool setPixelShaderConstant(s32 index, const s32* ints, int count);
+		virtual bool setPixelShaderConstant(s32 index, const s32* ints, int count) _IRR_OVERRIDE_;
 
 		//! Set hardware buffer for stream output stage
-		virtual bool setStreamOutputBuffer(IHardwareBuffer* buffer);
+		virtual bool setStreamOutputBuffer(scene::IVertexBuffer* buffer) _IRR_OVERRIDE_;
 
 		//! Returns a pointer to the IVideoDriver interface. (Implementation for
 		//! IMaterialRendererServices)
@@ -268,20 +388,20 @@ namespace video
 
 		//! Creates a render target texture.
 		virtual ITexture* addRenderTargetTexture(const core::dimension2d<u32>& size,
-		const io::path&name, const ECOLOR_FORMAT format);
+			const io::path& name, const ECOLOR_FORMAT format);
 
 		virtual ITexture* addRenderTargetTexture(const core::dimension2d<u32>& size,
-				const io::path& name, const ECOLOR_FORMAT format = ECF_UNKNOWN,
-				u32 sampleCount = 1, u32 sampleQuality = 0, u32 arraySlices = 1);
+			const io::path& name, const ECOLOR_FORMAT format = ECF_UNKNOWN,
+			u32 sampleCount = 1, u32 sampleQuality = 0, u32 arraySlices = 1);
 
 		//! Clears the ZBuffer.
 		virtual void clearZBuffer();
 
 		//! Returns an image created from the last rendered frame.
-		virtual IImage* createScreenShot(video::ECOLOR_FORMAT format=video::ECF_UNKNOWN, video::E_RENDER_TARGET target=video::ERT_FRAME_BUFFER);
+		virtual IImage* createScreenShot(video::ECOLOR_FORMAT format = video::ECF_UNKNOWN, video::E_RENDER_TARGET target = video::ERT_FRAME_BUFFER);
 
 		//! Set/unset a clipping plane.
-		virtual bool setClipPlane(u32 index, const core::plane3df& plane, bool enable=false);
+		virtual bool setClipPlane(u32 index, const core::plane3df& plane, bool enable = false);
 
 		//! Enable/disable a clipping plane.
 		virtual void enableClipPlane(u32 index, bool enable);
@@ -290,7 +410,7 @@ namespace video
 		virtual void getClipPlane(u32 index, core::plane3df& plane, bool& enable);
 
 		//! Returns the graphics card vendor name.
-		virtual core::stringc getVendorInfo() {return VendorName;}
+		virtual core::stringc getVendorInfo() { return VendorName; }
 
 		//! Get the current color format of the color buffer
 		/** \return Color format of the color buffer. */
@@ -342,7 +462,7 @@ namespace video
 		bool isHardware() const { return DriverType == D3D_DRIVER_TYPE_HARDWARE; }
 
 		// Return references to state descriptions for material renderers
-		D3D11_BLEND_DESC& getBlendDesc() { return BlendDesc; }
+		SD3D11_BLEND_DESC& getBlendDesc() { return BlendDesc; }
 		D3D11_RASTERIZER_DESC& getRasterizerDesc() { return RasterizerDesc; }
 		D3D11_DEPTH_STENCIL_DESC& getDepthStencilDesc() { return DepthStencilDesc; }
 		D3D11_SAMPLER_DESC* getSamplerDescs() { return SamplerDesc; }
@@ -376,7 +496,7 @@ namespace video
 
 		// Libraries (dxgi library is loaded automatically)
 		HINSTANCE D3DLibrary;
-		
+
 		// DXGI objects
 		DXGI_SWAP_CHAIN_DESC present;
 		IDXGISwapChain* SwapChain;
@@ -393,16 +513,16 @@ namespace video
 
 		// Back and depth buffers
 		ID3D11RenderTargetView* DefaultBackBuffer;
-		ID3D11DepthStencilView* DefaultDepthBuffer;
+		CD3D11Texture* DefaultDepthBuffer;
 		ID3D11RenderTargetView* CurrentBackBuffer;
-		ID3D11DepthStencilView* CurrentDepthBuffer;
+		CD3D11Texture* CurrentDepthBuffer;
 
 		// Buffers for dynamic data
 		ID3D11Buffer* DynVertexBuffer;
 		ID3D11Buffer* DynIndexBuffer;
 		u32 DynVertexBufferSize;
 		u32 DynIndexBufferSize;
-	
+
 		SD3D11_DEPTH_STENCIL_DESC DepthStencilDesc;
 
 		SD3D11_BLEND_DESC BlendDesc;
@@ -423,7 +543,7 @@ namespace video
 		//! number of them will be used at once.
 		struct RequestedLight
 		{
-			RequestedLight(SLight const & lightData)
+			RequestedLight(SLight const& lightData)
 				: LightData(lightData), HardwareLightIndex(-1), DesireToBeOn(true) { }
 
 			SLight	LightData;
@@ -441,18 +561,33 @@ namespace video
 
 		CD3D11CallBridge* BridgeCalls;
 
-		core::array<SDepthSurface11*> DepthBuffers;
+		core::array<CD3D11Texture*> DepthBuffers;
 
 		u32 MaxTextureUnits;
 		u32 MaxUserClipPlanes;
 		f32 MaxLightDistance;
 		s32 LastSetLight;
-		
+
 		ECOLOR_FORMAT ColorFormat;
 		DXGI_FORMAT D3DColorFormat;
 		DXGI_FORMAT DepthStencilFormat;		// Best format for depth stencil
 		SIrrlichtCreationParameters Params;
-	
+
+		//std::map < E_HARDWARE_BUFFER_TYPE, std::map<irr::u32, 
+			std::queue< irrObjectHolder<CD3D11HardwareBuffer>> MeshBuffer2dQueue;
+
+		CD3D11HardwareBuffer* GetTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, const void* initialData);
+
+
+
+
+		CD3D11HardwareBuffer* CreateTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, const void* initialData);
+		//std::map < E_HARDWARE_BUFFER_TYPE, std::map<irr::u32, 
+			std::queue< irrObjectHolder<CD3D11HardwareBuffer>> MeshBuffer2dBack;
+		
+		void revertTempHWBuffers();
+
+
 		bool AlphaToCoverageSupport;
 
 		//! Adds a new material renderer to the VideoDriver, based on a high level shading
@@ -463,20 +598,29 @@ namespace video
 			const c8* geometryShaderProgram, const c8* geometryShaderEntryPointName, E_GEOMETRY_SHADER_TYPE gsCompileTarget,
 			scene::E_PRIMITIVE_TYPE inType, scene::E_PRIMITIVE_TYPE outType, u32 verticesOut,
 			IShaderConstantSetCallBack* callback,
-			E_MATERIAL_TYPE baseMaterial, s32 userData, E_GPU_SHADING_LANGUAGE shadingLang);
+			E_MATERIAL_TYPE baseMaterial, IVertexDescriptor* vertexTypeOut, s32 userData, E_GPU_SHADING_LANGUAGE shadingLang) _IRR_OVERRIDE_;
 
-		virtual s32 addShaderMaterial(const c8* vertexShaderProgram, const c8* pixelShaderProgram, IShaderConstantSetCallBack* callback, E_MATERIAL_TYPE baseMaterial, s32 userData);
+
+		virtual s32 addHighLevelShaderMaterial(
+			const c8* vertexShaderProgram, const c8* vertexShaderEntryPointName, E_VERTEX_SHADER_TYPE vsCompileTarget,
+			const c8* pixelShaderProgram, const c8* pixelShaderEntryPointName, E_PIXEL_SHADER_TYPE psCompileTarget,
+			const c8* geometryShaderProgram, const c8* geometryShaderEntryPointName, E_GEOMETRY_SHADER_TYPE gsCompileTarget,
+			const c8* hullShaderProgram, const c8* hullShaderEntryPointName, E_HULL_SHADER_TYPE hsCompileTarget,
+			const c8* domainShaderProgram, const c8* domainShaderEntryPointName, E_DOMAIN_SHADER_TYPE dsCompileTarget,
+			scene::E_PRIMITIVE_TYPE inType, scene::E_PRIMITIVE_TYPE outType, u32 verticesOut,
+			IShaderConstantSetCallBack* callback,
+			E_MATERIAL_TYPE baseMaterial, IVertexDescriptor* vertexTypeOut, s32 userData, E_GPU_SHADING_LANGUAGE shadingLang) _IRR_OVERRIDE_;
+
+		virtual s32 addShaderMaterial(const c8* vertexShaderProgram, const c8* pixelShaderProgram, IShaderConstantSetCallBack* callback, E_MATERIAL_TYPE baseMaterial, s32 userData) _IRR_OVERRIDE_;
 
 		void createMaterialRenderers();
 
-		void draw2D3DVertexPrimitiveList(const void* vertices, u32 vertexCount, u32 pVertexSize, 
-			const void* indices, u32 primitiveCount, E_VERTEX_TYPE vType, 
-			scene::E_PRIMITIVE_TYPE pType, E_INDEX_TYPE iType, bool is3D, u32 numInstances = 0);
+		void renderArray(u32 vertexCount, u32 indexCount, scene::E_PRIMITIVE_TYPE pType, u32 numInstances = 0);
 
 		D3D11_TEXTURE_ADDRESS_MODE getTextureWrapMode(const u8 clamp);
 
 		//! sets the needed renderstates
-		bool setRenderStates3DMode(E_VERTEX_TYPE vType);
+		bool setRenderStates3DMode(CD3D11VertexDescriptor* vType);
 
 		//! sets the needed renderstates
 		void setRenderStates2DMode(bool alpha, bool texture, bool alphaChannel);
@@ -485,16 +629,67 @@ namespace video
 
 		//! returns a device dependent texture from a software surface (IImage)
 		//! THIS METHOD HAS TO BE OVERRIDDEN BY DERIVED DRIVERS WITH OWN TEXTURES
-		virtual video::ITexture* createDeviceDependentTexture(IImage* surface, const io::path& name, void* mipmapData=0);
+		virtual video::ITexture* createDeviceDependentTexture(IImage* surface, const io::path& name, void* mipmapData = 0);
+
+		//! returns a texture array from textures
+		virtual video::ITexture* createDeviceDependentTexture(const core::array<ITexture*>& surfaces, const E_TEXTURE_TYPE Type, const io::path& name, void* mipmapData);
 
 		//! Check if a proper depth buffer for the RTT is available, otherwise create it.
-		void checkDepthBuffer(ITexture* tex);
+		CD3D11Texture* checkDepthBuffer(ITexture* tex);
 
 		// removes the depth struct from the DepthSurface array
-		void removeDepthSurface(SDepthSurface11* depth);
+		void removeDepthSurface(CD3D11Texture* depth);
 
 		// creates a depth buffer view
-		ID3D11DepthStencilView* createDepthStencilView(core::dimension2d<u32> size);
+		CD3D11Texture* createDepthStencilView(core::dimension2d<u32> size, ECOLOR_FORMAT depthformat);
+
+		void EvaluateBestDepthFormat()
+		{
+			// check stencil buffer format
+			if (DepthStencilFormat == DXGI_FORMAT_UNKNOWN)
+			{
+				DepthStencilFormat = DXGI_FORMAT_R32G8X24_TYPELESS;
+				UINT formatSupport = 0;
+				if (Params.Stencilbuffer)
+				{
+					Device->CheckFormatSupport(DepthStencilFormat, &formatSupport);
+					if ((formatSupport && D3D11_FORMAT_SUPPORT_DEPTH_STENCIL) == 0)
+					{
+						os::Printer::log("Device does not support  DXGI_FORMAT_R32G8X24_TYPELESS", ELL_WARNING);
+						DepthStencilFormat = DXGI_FORMAT_R24G8_TYPELESS;
+						Device->CheckFormatSupport(DepthStencilFormat, &formatSupport);
+						if ((formatSupport && D3D11_FORMAT_SUPPORT_DEPTH_STENCIL) == 0)
+						{
+							os::Printer::log("Device does not support stencilbuffer, disabling stencil buffer DXGI_FORMAT_R24G8_TYPELESS.", ELL_WARNING);
+							Params.Stencilbuffer = false;
+						}
+					}
+					else
+					{
+
+						os::Printer::log("DepthStencilFormat = DXGI_FORMAT_D32_FLOAT_S8X24_UINT", ELL_WARNING);
+					}
+				}
+
+				if (!Params.Stencilbuffer)	// do not use else here to cope with flag change in previous block
+				{
+					DepthStencilFormat = DXGI_FORMAT_D32_FLOAT;
+					Device->CheckFormatSupport(DepthStencilFormat, &formatSupport);
+					if ((formatSupport & D3D11_FORMAT_SUPPORT_DEPTH_STENCIL) == 0)
+					{
+						os::Printer::log("Device does not support required depth buffer DXGI_FORMAT_R32_TYPELESS.", ELL_WARNING);
+						DepthStencilFormat = DXGI_FORMAT_D16_UNORM;
+						Device->CheckFormatSupport(DepthStencilFormat, &formatSupport);
+						if ((formatSupport && D3D11_FORMAT_SUPPORT_DEPTH_STENCIL) == 0)
+						{
+							os::Printer::log("Device does not support required depth buffer DXGI_FORMAT_R16_TYPELESS.", ELL_WARNING);
+						}
+					}
+				}
+			}
+		}
+
+
 
 		//! returns the current size of the screen or rendertarget
 		virtual const core::dimension2d<u32>& getCurrentRenderTargetSize() const;

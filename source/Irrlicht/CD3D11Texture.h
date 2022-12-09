@@ -1,4 +1,3 @@
-
 #ifndef __C_DIRECTX11_TEXTURE_H_INCLUDED__
 #define __C_DIRECTX11_TEXTURE_H_INCLUDED__
 
@@ -8,102 +7,112 @@
 
 #ifdef _IRR_COMPILE_WITH_DIRECT3D_11_
 
+#include <irrArray.h>
 #include "ITexture.h"
 #include "IImage.h"
+#include <d3d11.h>
 
 namespace irr
 {
-namespace video
-{
+	namespace video
+	{
+		class CD3D11Driver;
+		// forward declaration for RTT depth buffer handling
 
-class CD3D11Driver;
-// forward declaration for RTT depth buffer handling
-struct SDepthSurface11;
+		class CD3D11Texture : public ITexture
+		{
+		public:
 
-class CD3D11Texture : public ITexture
-{
-public:
+			//! constructor
+			CD3D11Texture(IImage* image, CD3D11Driver* driver,
+				u32 flags, const io::path& name, u32 arraySlices = 1, void* mipmapData = 0);
 
-	//! constructor
-	CD3D11Texture(IImage* image, CD3D11Driver* driver,
-			u32 flags, const io::path& name, u32 arraySlices = 1, void* mipmapData=0);
+			//! rendertarget constructor
+			CD3D11Texture(CD3D11Driver* driver, const core::dimension2d<u32>& size, const io::path& name,
+				const ECOLOR_FORMAT format = ECF_UNKNOWN, u32 arraySlices = 1,
+				u32 sampleCount = 1, u32 sampleQuality = 0);
+			//! Array constructor
+			CD3D11Texture(const core::array<ITexture*>* surfaces, CD3D11Driver* driver,
+				u32 flags, const io::path& name, E_TEXTURE_TYPE Type, u32 arraySlices, void* mipmapData);
+			//! destructor
+			virtual ~CD3D11Texture();
 
-	//! rendertarget constructor
-	CD3D11Texture(CD3D11Driver* driver, const core::dimension2d<u32>& size, const io::path& name,
-		const ECOLOR_FORMAT format = ECF_UNKNOWN, u32 arraySlices = 1, 
-		u32 sampleCount = 1, u32 sampleQuality = 0 );
+			//! lock function
+			virtual void* lock(E_TEXTURE_LOCK_MODE mode = ETLM_READ_WRITE, u32 mipmapLevel = 0);
 
-	//! destructor
-	virtual ~CD3D11Texture();
+			virtual void* lock(bool readOnly, u32 mipmapLevel = 0, u32 arraySlice = 0);
 
-	//! lock function
-	virtual void* lock(E_TEXTURE_LOCK_MODE mode=ETLM_READ_WRITE, u32 mipmapLevel=0);
+			void MapArraySlice(HRESULT& hr, const irr::u32& mipmapLevel, const irr::u32& arraySlice, D3D11_MAPPED_SUBRESOURCE& mappedData, D3D11_MAP MapDirection, ID3D11Resource* LocalTextureBuffer);
 
-	virtual void* lock(bool readOnly , u32 mipmapLevel=0, u32 arraySlice = 0);
+			//! unlock function
+			virtual void unlock();
 
-	//! unlock function
-	virtual void unlock();
+			//! Regenerates the mip map levels of the texture. Useful after locking and
+			//! modifying the texture
+			virtual void regenerateMipMapLevels(void* mipmapData = 0);
 
-	//! Regenerates the mip map levels of the texture. Useful after locking and
-	//! modifying the texture
-	virtual void regenerateMipMapLevels(void* mipmapData = 0);
+			virtual u32 getNumberOfArraySlices() const;
 
-	virtual u32 getNumberOfArraySlices() const;
+		public:
+			//! return texture resource
+			//! return texture resource
+			inline ID3D11Resource* getTextureResource() const
+			{
+				return Texture;
+			}
 
-public:
-	//! return texture resource
-	ID3D11Resource* getTextureResource() const;
+			//! return render target view
+			ID3D11RenderTargetView* getRenderTargetView() const;
 
-	//! return render target view
-	ID3D11RenderTargetView* getRenderTargetView() const;
+			//! return shader resource view
+			ID3D11ShaderResourceView* getShaderResourceView() const;
 
-	//! return shader resource view
-	ID3D11ShaderResourceView* getShaderResourceView() const;
+		private:
+			friend class CD3D11Driver;
 
-private:
-	friend class CD3D11Driver;
+			ID3D11Device* Device;
+			ID3D11DeviceContext* Context;
+			ID3D11Resource* Texture;
+			ID3D11RenderTargetView* RTView;
+			ID3D11ShaderResourceView* SRView;
+			ID3D11DepthStencilView* dsView;
+			D3D11_RESOURCE_DIMENSION TextureDimension;
+			D3D11_MAP LastMapDirection;
 
-	ID3D11Device* Device;
-	ID3D11DeviceContext* Context;
-	ID3D11Texture2D* Texture;
-	ID3D11RenderTargetView* RTView;
-	ID3D11ShaderResourceView* SRView;
-	D3D11_RESOURCE_DIMENSION TextureDimension;
-	D3D11_MAP LastMapDirection;
-	
-	CD3D11Driver* Driver;
-	SDepthSurface11* DepthSurface;
-	u32 NumberOfMipLevels;
-	u32 NumberOfArraySlices;
-	u32 SampleCount;
-	u32 SampleQuality;
+			CD3D11Driver* Driver;
+			u32 NumberOfMipLevels;
+			u32 NumberOfArraySlices;
+			u32 SampleCount;
+			u32 SampleQuality;
 
-	ID3D11Texture2D* TextureBuffer;		// staging texture used for lock/unlock
-	u32 MipLevelLocked;
-	u32 ArraySliceLocked;
+			ID3D11Resource* TextureBuffer;		// staging texture used for lock/unlock
+			u32 MipLevelLocked;
+			u32 ArraySliceLocked;
 
-	bool HardwareMipMaps;
+			bool HardwareMipMaps;
 
-	//! creates hardware render target
-	void createRenderTarget(const ECOLOR_FORMAT format);
+			//! creates hardware render target
+			void createRenderTarget(const ECOLOR_FORMAT format);
 
-	//! creates the hardware texture
-	bool createTexture(u32 flags, IImage * image);
+			//! creates the hardware texture
+			bool createTexture(u32 flags, IImage* image);
 
-	//! copies the image to the texture
-	bool copyTexture(IImage* image);
+			//! copies the image to the texture
+			bool copyTexture(IImage* image);
 
-	//! set Pitch based on the d3d format
-	void setPitch(DXGI_FORMAT d3dformat);
+			//! copies the texture to the texture layer
+			bool copyTexture(ITexture* image, int layer);
 
-	//! create texture buffer needed for lock/unlock
-	bool createTextureBuffer();
+			//! set Pitch based on the d3d format
+			void setPitch(DXGI_FORMAT d3dformat);
 
-	//! create views to bound texture to pipeline
-	bool createViews();
-};
+			//! create texture buffer needed for lock/unlock
+			bool createTextureBuffer();
 
-}
+			//! create views to bound texture to pipeline
+			bool createViews();
+		};
+	}
 }
 
 #endif

@@ -15,7 +15,7 @@ namespace video
 
 //! Constructor of empty image
 CImage::CImage(ECOLOR_FORMAT format, const core::dimension2d<u32>& size)
-:Data(0), Size(size), Format(format), IsCompressed(false), HasMipMaps(false), DeleteMemory(true)
+:Data(0), Size(size), Format(format), IsCompressed(false), MipMaps(false), DeleteMemory(true)
 {
 	initData();
 }
@@ -23,8 +23,8 @@ CImage::CImage(ECOLOR_FORMAT format, const core::dimension2d<u32>& size)
 
 //! Constructor from raw data
 CImage::CImage(ECOLOR_FORMAT format, const core::dimension2d<u32>& size, void* data,
-			bool ownForeignMemory, bool deleteForeignMemory, bool compressed, bool mipMaps)
-: Data(0), Size(size), Format(format), IsCompressed(compressed), HasMipMaps(mipMaps), DeleteMemory(deleteForeignMemory)
+			bool ownForeignMemory, bool deleteForeignMemory, bool compressed, u32 mipMaps)
+: Data(0), Size(size), Format(format), IsCompressed(compressed), MipMaps(mipMaps), DeleteMemory(deleteForeignMemory)
 {
 	if (ownForeignMemory)
 	{
@@ -63,8 +63,14 @@ void CImage::initData()
 //! destructor
 CImage::~CImage()
 {
-	if ( DeleteMemory )
-		delete [] Data;
+	if (DeleteMemory)
+	{
+		delete[] Data;
+		for (irr::core::map<u32, u8*>::Iterator mip = Mips.getIterator(); !mip.atEnd(); mip++)
+		{
+			delete[] mip->getValue();
+		}
+	}
 }
 
 
@@ -486,10 +492,16 @@ bool CImage::isCompressed() const
 }
 
 
+u32 CImage::getMipMapsCount() const
+{
+	return MipMaps;
+}
+
+
 //! Check whether the image has MipMaps
 bool CImage::hasMipMaps() const
 {
-	return HasMipMaps;
+	return MipMaps>1;
 }
 
 

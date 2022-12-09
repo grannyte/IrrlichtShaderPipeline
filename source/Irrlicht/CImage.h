@@ -7,6 +7,8 @@
 
 #include "IImage.h"
 #include "rect.h"
+#include "irrMap.h"
+
 
 namespace irr
 {
@@ -25,7 +27,7 @@ public:
 	data when the image will be destructed. If false, the memory will by copied. */
 	CImage(ECOLOR_FORMAT format, const core::dimension2d<u32>& size,
 		void* data, bool ownForeignMemory=true, bool deleteMemory = true,
-		bool compressed = false, bool mipMaps = false);
+		bool compressed = false, u32 mipMaps = false);
 
 	//! constructor for empty image
 	CImage(ECOLOR_FORMAT format, const core::dimension2d<u32>& size);
@@ -50,6 +52,9 @@ public:
 
 	//! Returns bytes per pixel
 	virtual u32 getBytesPerPixel() const _IRR_OVERRIDE_;
+
+	//! Returns mipmaps count
+	virtual u32 getMipMapsCount() const _IRR_OVERRIDE_;
 
 	//! Returns image data size in bytes
 	virtual u32 getImageDataSizeInBytes() const _IRR_OVERRIDE_;
@@ -111,6 +116,10 @@ public:
 	/** \return True if image has MipMaps, else false. */
 	virtual bool hasMipMaps() const _IRR_OVERRIDE_;
 
+
+	irr::core::map<u32, u8*> Mips;
+	u32 CompressedSize;
+
 private:
 
 	//! assumes format and size has been set and creates the rest
@@ -125,7 +134,7 @@ private:
 	ECOLOR_FORMAT Format;
 
 	bool IsCompressed;
-	bool HasMipMaps;
+	u32 MipMaps;
 
 	bool DeleteMemory;
 };

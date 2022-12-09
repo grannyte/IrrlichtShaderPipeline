@@ -96,7 +96,7 @@ public:
 		return false;
 	}
 
-	virtual bool OnRender(IMaterialRendererServices* service, E_VERTEX_TYPE vtxtype) _IRR_OVERRIDE_
+	virtual bool OnRender(IMaterialRendererServices* service, IVertexDescriptor* vtxtype) _IRR_OVERRIDE_
 	{
 		return true;
 	};

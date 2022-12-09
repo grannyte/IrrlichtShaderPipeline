@@ -10,130 +10,166 @@
 
 namespace irr
 {
-namespace video
-{
-
-class IVideoDriver;
-
-
-//! Interface providing some methods for changing advanced, internal states of a IVideoDriver.
-class IMaterialRendererServices
-{
-public:
-
-	//! Destructor
-	virtual ~IMaterialRendererServices() {}
-
-	//! Can be called by an IMaterialRenderer to make its work easier.
-	/** Sets all basic renderstates if needed.
-	Basic render states are diffuse, ambient, specular, and emissive color,
-	specular power, bilinear and trilinear filtering, wireframe mode,
-	grouraudshading, lighting, zbuffer, zwriteenable, backfaceculling and
-	fog enabling.
-	\param material The new material to be used.
-	\param lastMaterial The material used until now.
-	\param resetAllRenderstates Set to true if all renderstates should be
-	set, regardless of their current state. */
-	virtual void setBasicRenderStates(const SMaterial& material,
-		const SMaterial& lastMaterial,
-		bool resetAllRenderstates) = 0;
-
-	//! Return an index constant for the vertex shader based on a name.
-	virtual s32 getVertexShaderConstantID(const c8* name) = 0;
-
-	//! Sets a constant for the vertex shader based on a name.
-	/** This can be used if you used a high level shader language like GLSL
-	or HLSL to create a shader. Example: If you created a shader which has
-	variables named 'mWorldViewProj' (containing the WorldViewProjection
-	matrix) and another one named 'fTime' containing one float, you can set
-	them in your IShaderConstantSetCallBack derived class like this:
-	\code
-	virtual void OnSetConstants(video::IMaterialRendererServices* services, s32 userData)
+	namespace video
 	{
-		video::IVideoDriver* driver = services->getVideoDriver();
+		class IVideoDriver;
 
-		f32 time = (f32)os::Timer::getTime()/100000.0f;
-		services->setVertexShaderConstant("fTime", &time, 1);
+		//! Interface providing some methods for changing advanced, internal states of a IVideoDriver.
+		class IMaterialRendererServices
+		{
+		public:
 
-		core::matrix4 worldViewProj(driver->getTransform(video::ETS_PROJECTION));
-		worldViewProj *= driver->getTransform(video::ETS_VIEW);
-		worldViewProj *= driver->getTransform(video::ETS_WORLD);
-		services->setVertexShaderConstant("mWorldViewProj", worldViewProj.M, 16);
-	}
-	\endcode
-	\param index Index of the variable
-	\param floats Pointer to array of floats
-	\param count Amount of floats in array.
-	\return True if successful.
-	*/
-	virtual bool setVertexShaderConstant(s32 index, const f32* floats, int count) = 0;
+			//! Destructor
+			virtual ~IMaterialRendererServices() {}
 
-	//! Int interface for the above.
-	virtual bool setVertexShaderConstant(s32 index, const s32* ints, int count) = 0;
+			//! Can be called by an IMaterialRenderer to make its work easier.
+			/** Sets all basic renderstates if needed.
+			Basic render states are diffuse, ambient, specular, and emissive color,
+			specular power, bilinear and trilinear filtering, wireframe mode,
+			grouraudshading, lighting, zbuffer, zwriteenable, backfaceculling and
+			fog enabling.
+			\param material The new material to be used.
+			\param lastMaterial The material used until now.
+			\param resetAllRenderstates Set to true if all renderstates should be
+			set, regardless of their current state. */
+			virtual void setBasicRenderStates(const SMaterial& material,
+				const SMaterial& lastMaterial,
+				bool resetAllRenderstates) = 0;
 
-	//! Sets a vertex shader constant.
-	/** Can be used if you created a shader using pixel/vertex shader
-	assembler or ARB_fragment_program or ARB_vertex_program.
-	\param data: Data to be set in the constants
-	\param startRegister: First register to be set
-	\param constantAmount: Amount of registers to be set. One register consists of 4 floats. */
-	virtual void setVertexShaderConstant(const f32* data, s32 startRegister, s32 constantAmount=1) = 0;
+			//! Return an index constant for the vertex shader based on a name.
+			virtual s32 getVertexShaderConstantID(const c8* name) = 0;
 
-	//! Return an index constant for the pixel shader based on a name.
-	virtual s32 getPixelShaderConstantID(const c8* name) = 0;
+			//! Sets a constant for the vertex shader based on a name.
+			/** This can be used if you used a high level shader language like GLSL
+			or HLSL to create a shader. Example: If you created a shader which has
+			variables named 'mWorldViewProj' (containing the WorldViewProjection
+			matrix) and another one named 'fTime' containing one float, you can set
+			them in your IShaderConstantSetCallBack derived class like this:
+			\code
+			virtual void OnSetConstants(video::IMaterialRendererServices* services, s32 userData)
+			{
+				video::IVideoDriver* driver = services->getVideoDriver();
 
-	//! Sets a constant for the pixel shader based on a name.
-	/** This can be used if you used a high level shader language like GLSL
-	or HLSL to create a shader. See setVertexShaderConstant() for an
-	example on how to use this.
-	\param index Index of the variable
-	\param floats Pointer to array of floats
-	\param count Amount of floats in array.
-	\return True if successful. */
-	virtual bool setPixelShaderConstant(s32 index, const f32* floats, int count) = 0;
+				f32 time = (f32)os::Timer::getTime()/100000.0f;
+				services->setVertexShaderConstant("fTime", &time, 1);
 
-	//! Int interface for the above.
-	virtual bool setPixelShaderConstant(s32 index, const s32* ints, int count) = 0;
+				core::matrix4 worldViewProj(driver->getTransform(video::ETS_PROJECTION));
+				worldViewProj *= driver->getTransform(video::ETS_VIEW);
+				worldViewProj *= driver->getTransform(video::ETS_WORLD);
+				services->setVertexShaderConstant("mWorldViewProj", worldViewProj.M, 16);
+			}
+			\endcode
+			\param index Index of the variable
+			\param floats Pointer to array of floats
+			\param count Amount of floats in array.
+			\return True if successful.
+			*/
+			virtual bool setVertexShaderConstant(s32 index, const f32* floats, int count) = 0;
 
-	//! Sets a pixel shader constant.
-	/** Can be used if you created a shader using pixel/vertex shader
-	assembler or ARB_fragment_program or ARB_vertex_program.
-	\param data Data to be set in the constants
-	\param startRegister First register to be set.
-	\param constantAmount Amount of registers to be set. One register consists of 4 floats. */
-	virtual void setPixelShaderConstant(const f32* data, s32 startRegister, s32 constantAmount=1) = 0;
+			//! Int interface for the above.
+			virtual bool setVertexShaderConstant(s32 index, const s32* ints, int count) = 0;
 
-	//! \deprecated. This method may be removed by Irrlicht 2.0
-	_IRR_DEPRECATED_ bool setVertexShaderConstant(const c8* name, const f32* floats, int count)
-	{
-		return setVertexShaderConstant(getVertexShaderConstantID(name), floats, count);
-	}
+			//! Sets a vertex shader constant.
+			/** Can be used if you created a shader using pixel/vertex shader
+			assembler or ARB_fragment_program or ARB_vertex_program.
+			\param data: Data to be set in the constants
+			\param startRegister: First register to be set
+			\param constantAmount: Amount of registers to be set. One register consists of 4 floats. */
+			virtual void setVertexShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) = 0;
 
-	//! \deprecated. This method may be removed by Irrlicht 2.0
-	_IRR_DEPRECATED_ bool setVertexShaderConstant(const c8* name, const s32* ints, int count)
-	{
-		return setVertexShaderConstant(getVertexShaderConstantID(name), ints, count);
-	}
+			virtual void setPixelShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) = 0;
 
-	//! \deprecated. This method may be removed by Irrlicht 2.0
-	_IRR_DEPRECATED_ bool setPixelShaderConstant(const c8* name, const f32* floats, int count)
-	{
-		return setPixelShaderConstant(getPixelShaderConstantID(name), floats, count);
-	}
+			//! Sets a vertex shader constant.
+			virtual void setGeometryShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) {};
 
-	//! \deprecated. This method may be removed by Irrlicht 2.0
-	_IRR_DEPRECATED_ bool setPixelShaderConstant(const c8* name, const s32* ints, int count)
-	{
-		return setPixelShaderConstant(getPixelShaderConstantID(name), ints, count);
-	}
+			//! Sets a pixel shader constant.
+			virtual void setHullShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) {};
 
-	//! Get pointer to the IVideoDriver interface
-	/** \return Pointer to the IVideoDriver interface */
-	virtual IVideoDriver* getVideoDriver() = 0;
-};
+			//! Sets a pixel shader constant.
+			virtual void setDomainShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) {};
 
-} // end namespace video
+			//! Sets a constant for the geometry shader based on a name.
+			virtual bool setGeometryShaderConstant(s32 index, const f32* floats, int count) { return false; };
+
+			//! Sets a constant for the hull shader based on a name.
+			virtual bool setHullShaderConstant(s32 index, const f32* floats, int count) { return false; };
+
+			//! Sets a constant for the domain shader based on a name.
+			virtual bool setDomainShaderConstant(s32 index, const f32* floats, int count) { return false; };
+
+			//! Return an index constant for the pixel shader based on a name.
+			virtual s32 getPixelShaderConstantID(const c8* name) = 0;
+
+			//! Get a geometry shader constant index.
+			virtual s32 getGeometryShaderConstantID(const c8* name) { return 0; };
+
+			//! Get a hull shader constant index.
+			virtual s32 getHullShaderConstantID(const c8* name) { return 0; };
+
+			//! Get a domain shader constant index.
+			virtual s32 getDomainShaderConstantID(const c8* name) { return 0; };
+
+			//! Sets a constant for the pixel shader based on a name.
+			/** This can be used if you used a high level shader language like GLSL
+			or HLSL to create a shader. See setVertexShaderConstant() for an
+			example on how to use this.
+			\param index Index of the variable
+			\param floats Pointer to array of floats
+			\param count Amount of floats in array.
+			\return True if successful. */
+			virtual bool setPixelShaderConstant(s32 index, const f32* floats, int count) = 0;
+
+			//! Int interface for the above.
+			virtual bool setPixelShaderConstant(s32 index, const s32* ints, int count) = 0;
+
+			//! Sets a pixel shader constant.
+			/** Can be used if you created a shader using pixel/vertex shader
+			assembler or ARB_fragment_program or ARB_vertex_program.
+			\param data Data to be set in the constants
+			\param startRegister First register to be set.
+			\param constantAmount Amount of registers to be set. One register consists of 4 floats. */
+
+			//! \deprecated. This method may be removed by Irrlicht 2.0
+			_IRR_DEPRECATED_ bool setVertexShaderConstant(const c8* name, const f32* floats, int count)
+			{
+				return setVertexShaderConstant(getVertexShaderConstantID(name), floats, count);
+			}
+
+			//! \deprecated. This method may be removed by Irrlicht 2.0
+			_IRR_DEPRECATED_ bool setVertexShaderConstant(const c8* name, const s32* ints, int count)
+			{
+				return setVertexShaderConstant(getVertexShaderConstantID(name), ints, count);
+			}
+
+			//! \deprecated. This method may be removed by Irrlicht 2.0
+			_IRR_DEPRECATED_ bool setPixelShaderConstant(const c8* name, const f32* floats, int count)
+			{
+				return setPixelShaderConstant(getPixelShaderConstantID(name), floats, count);
+			}
+
+			//! \deprecated. This method may be removed by Irrlicht 2.0
+			_IRR_DEPRECATED_ bool setPixelShaderConstant(const c8* name, const s32* ints, int count)
+			{
+				return setPixelShaderConstant(getPixelShaderConstantID(name), ints, count);
+			}
+
+			_IRR_DEPRECATED_ bool setGeometryShaderConstant(const c8* name, const f32* floats, int count)
+			{
+				return setGeometryShaderConstant(getGeometryShaderConstantID(name), floats, count);
+			}
+			_IRR_DEPRECATED_ bool setHullShaderConstant(const c8* name, const f32* floats, int count)
+			{
+				return setHullShaderConstant(getHullShaderConstantID(name), floats, count);
+			}
+			_IRR_DEPRECATED_ bool setDomainShaderConstant(const c8* name, const f32* floats, int count)
+			{
+				return setDomainShaderConstant(getDomainShaderConstantID(name), floats, count);
+			}
+			//! Get pointer to the IVideoDriver interface
+			/** \return Pointer to the IVideoDriver interface */
+			virtual IVideoDriver* getVideoDriver() = 0;
+		};
+	} // end namespace video
 } // end namespace irr
 
 #endif
-

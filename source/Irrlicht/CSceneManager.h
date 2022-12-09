@@ -37,7 +37,7 @@ namespace scene
 		//! constructor
 		CSceneManager(video::IVideoDriver* driver, io::IFileSystem* fs,
 			gui::ICursorControl* cursorControl, IMeshCache* cache = 0,
-			gui::IGUIEnvironment *guiEnvironment = 0);
+			gui::IGUIEnvironment *guiEnvironment = 0,bool autoregchilds = true);
 
 		//! destructor
 		virtual ~CSceneManager();
@@ -122,6 +122,54 @@ namespace scene
 
 		//! draws all scene nodes
 		virtual void drawAll() _IRR_OVERRIDE_;
+
+
+		//! Explicitly clear material, transforms and other states.
+		virtual void SetupDraw() _IRR_OVERRIDE_;
+
+		//! Explicitly Animate All Scenenodes.
+		/** this should only be called when using custom render path and and you need to animate once befor doing custom rendering*/
+		virtual void Animate() _IRR_OVERRIDE_;
+
+		//! Explicitly Animate All Scenenodes.
+		/** this should only be called when using custom render path and and you need to animate once befor doing custom rendering*/
+		virtual void Animate(u32 timeMs) _IRR_OVERRIDE_;
+
+		//!Explicitly render active Camera
+		virtual void RenderCamera() _IRR_OVERRIDE_;
+
+		//!Explicitly call scenenodes registering
+		virtual void RegisterScenenodes() _IRR_OVERRIDE_;
+
+		//!Explicitly call OnPreRender on the light manager
+		virtual void PreRenderLightManager() _IRR_OVERRIDE_;
+
+		//!Explicitly call OnPostRender on the light manager
+		virtual void PostRenderLightManager() _IRR_OVERRIDE_;
+
+		//!Explicitly Render all camera
+		virtual void RenderCameraScenes() _IRR_OVERRIDE_;
+
+		//!Explicitly Render all light
+		virtual void RenderLightsScenes() _IRR_OVERRIDE_;
+
+		//!Explicitly Render all Scenenodes
+		virtual void RenderSkyboxes() _IRR_OVERRIDE_;
+
+		//!Explicitly Render all Solid Scenenodes
+		virtual void RenderSolid() _IRR_OVERRIDE_;
+
+		//!Explicitly Render all Shadow Scenenodes
+		virtual void RenderShadow() _IRR_OVERRIDE_;
+
+		//!Explicitly Render transparent Scenenodes
+		virtual void RenderTransparent() _IRR_OVERRIDE_;
+
+		//!Explicitly Render transparent Effect Scenenodes
+		virtual void RenderTransparentEffect() _IRR_OVERRIDE_;
+
+		//! Explicitly clear material, transforms and other states.
+		virtual void CleanupDraw() _IRR_OVERRIDE_;
 
 		//! Adds a camera scene node to the tree and sets it as active camera.
 		//! \param position: Position of the space relative to its parent where the camera will be placed.
@@ -427,7 +475,7 @@ namespace scene
 		virtual E_SCENE_NODE_RENDER_PASS getSceneNodeRenderPass() const _IRR_OVERRIDE_;
 
 		//! Creates a new scene manager.
-		virtual ISceneManager* createNewSceneManager(bool cloneContent) _IRR_OVERRIDE_;
+		virtual ISceneManager* createNewSceneManager(bool cloneContent,bool autoreg = true) _IRR_OVERRIDE_;
 
 		//! Returns type of the scene node
 		virtual ESCENE_NODE_TYPE getType() const _IRR_OVERRIDE_ { return ESNT_SCENE_MANAGER; }
@@ -624,6 +672,8 @@ namespace scene
 		core::array<DefaultNodeEntry> SolidNodeList;
 		core::array<TransparentNodeEntry> TransparentNodeList;
 		core::array<TransparentNodeEntry> TransparentEffectNodeList;
+
+		bool AutoRegisterNewNodes;
 
 		core::array<IMeshLoader*> MeshLoaderList;
 		core::array<ISceneLoader*> SceneLoaderList;

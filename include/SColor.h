@@ -31,23 +31,6 @@ namespace video
 		//! Default 32 bit color format. 8 bits are used for every component: red, green, blue and alpha.
 		ECF_A8R8G8B8,
 
-		/** Compressed image formats. **/
-
-		//! DXT1 color format.
-		ECF_DXT1,
-
-		//! DXT2 color format.
-		ECF_DXT2,
-
-		//! DXT3 color format.
-		ECF_DXT3,
-
-		//! DXT4 color format.
-		ECF_DXT4,
-
-		//! DXT5 color format.
-		ECF_DXT5,
-
 		/** The following formats may only be used for render target textures. */
 
 		/** Floating point formats. */
@@ -67,6 +50,9 @@ namespace video
 		//! 64 bit format using 32 bits for the red and green channels.
 		ECF_G32R32F,
 
+		//! 96 bit format using 32 bits for the red and green channels.
+		ECF_B32G32R32F,
+
 		//! 128 bit format using 32 bits for the red, green, blue and alpha channels.
 		ECF_A32B32G32R32F,
 
@@ -81,6 +67,9 @@ namespace video
 		//! 32 bit format using 24 bits for depth and 8 bits for stencil.
 		ECF_D24S8,
 
+		//! 64 bit format using 32 bits for depth and 8 bits for stencil 24bit unused.
+		ECF_DF32S8,
+
 		/** Unsigned normalized integer formats. */
 
 		//! 8 bit format using 8 bits for the red channel.
@@ -94,6 +83,38 @@ namespace video
 
 		//! 32 bit format using 16 bits for the red and green channels.
 		ECF_R16G16,
+
+		/** Signed normalized integer formats. */
+
+		ECF_R8S,
+
+		ECF_A8R8G8B8S,
+
+
+		/** Compressed image formats. **/
+
+		//! DXT1 color format.
+		ECF_DXT1,
+
+		//! DXT2 color format.
+		ECF_DXT2,
+
+		//! DXT3 color format.
+		ECF_DXT3,
+
+		//! DXT4 color format.
+		ECF_DXT4,
+
+		//! DXT5 color format.
+		ECF_DXT5,
+
+		ECF_BC6_U,
+
+		ECF_BC6_S,
+
+		ECF_BC7_U,
+
+		ECF_BC7_S,
 
 		//! Unknown color format:
 		ECF_UNKNOWN

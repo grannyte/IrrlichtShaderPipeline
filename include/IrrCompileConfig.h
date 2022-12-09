@@ -120,7 +120,7 @@
 
 
 //! Maximum number of texture an SMaterial can have, up to 8 are supported by Irrlicht.
-#define _IRR_MATERIAL_MAX_TEXTURES_ 8
+#define _IRR_MATERIAL_MAX_TEXTURES_ 16
 
 //! Whether to support XML and XML-based formats (irrmesh, collada...)
 #define _IRR_COMPILE_WITH_XML_
@@ -175,10 +175,11 @@ If not defined, Windows Multimedia library is used, which offers also broad supp
 
 //! Only define _IRR_COMPILE_WITH_DIRECT3D_8_ if you have an appropriate DXSDK, e.g. Summer 2004
 // #define _IRR_COMPILE_WITH_DIRECT3D_8_
-#define _IRR_COMPILE_WITH_DIRECT3D_9_
+//#define _IRR_COMPILE_WITH_DIRECT3D_9_
 //! Only define _IRR_COMPILE_WITH_DIRECT3D_11_ if you have an appropriate DXSDK
 //! Download: http://msdn.microsoft.com/en-us/windows/desktop/hh852363.aspx
 #define _IRR_COMPILE_WITH_DIRECT3D_11_
+#define _IRR_COMPILE_WITH_DIRECT3D_12_
 
 #ifdef NO_IRR_COMPILE_WITH_DIRECT3D_8_
 #undef _IRR_COMPILE_WITH_DIRECT3D_8_
@@ -189,12 +190,17 @@ If not defined, Windows Multimedia library is used, which offers also broad supp
 #ifdef NO_IRR_COMPILE_WITH_DIRECT3D_11_
 #undef _IRR_COMPILE_WITH_DIRECT3D_11_
 #endif
+#ifdef NO_IRR_COMPILE_WITH_DIRECT3D_12_
+#undef _IRR_COMPILE_WITH_DIRECT3D_12_
+#endif
 #endif
 
+
+#define _IRR_USE_D3DXFilterTexture_
 //! Define _IRR_COMPILE_WITH_OPENGL_ to compile the Irrlicht engine with OpenGL.
 /** If you do not wish the engine to be compiled with OpenGL, comment this
 define out. */
-#define _IRR_COMPILE_WITH_OPENGL_
+//#define _IRR_COMPILE_WITH_OPENGL_
 #ifdef NO_IRR_COMPILE_WITH_OPENGL_
 #undef _IRR_COMPILE_WITH_OPENGL_
 #endif
@@ -714,10 +720,14 @@ precision will be lower but speed higher. currently X86 only
 	#ifdef NO_IRRLICHT_FAST_MATH
 	#undef IRRLICHT_FAST_MATH
 	#endif
+
+
+//this is ment to aling the vector3df to a 16 bit boundary to loat it in one single ops instead of 3 but do not enable it's not working yet
+//#define IRR_EXP_SSE
 #endif
 
 //! Enable SSE optimisation for f32 matrices and f32 vectors.
-// #define _IRR_SSE
+//#define _IRR_SSE
 #ifdef NO_IRR_SSE
 #undef _IRR_SSE
 #endif

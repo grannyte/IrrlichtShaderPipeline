@@ -16,7 +16,7 @@ namespace scene
 	class IVertexBuffer : public virtual IReferenceCounted
 	{
 	public:
-		IVertexBuffer() : HardwareBuffer(0)
+		IVertexBuffer() : HardwareBuffer(0), BufferType(EBT_VERTEX)
 		{
 		}
 
@@ -39,6 +39,16 @@ namespace scene
 		virtual void fill(u32 used) = 0;
 
 		virtual E_HARDWARE_MAPPING getHardwareMappingHint() const = 0;
+
+		virtual void setBufferType(E_BUFFER_TYPE type)
+		{
+			 BufferType = type;
+		};
+
+		virtual E_BUFFER_TYPE getBufferType() const
+		{
+			return BufferType;
+		};
 
 		virtual void setHardwareMappingHint(E_HARDWARE_MAPPING hardwareMappingHint) = 0;
 
@@ -77,6 +87,7 @@ namespace scene
 
 	protected:
 		video::IHardwareBuffer* HardwareBuffer;
+		E_BUFFER_TYPE BufferType;
 	};
 }
 }
