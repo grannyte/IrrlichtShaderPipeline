@@ -188,7 +188,7 @@ For functions:		template<class T> _IRR_DEPRECATED_ void test4(void) {}
 #if defined(IGNORE_DEPRECATED_WARNING)
 #define _IRR_DEPRECATED_
 #elif _MSC_VER >= 1310 //vs 2003 or higher
-#define _IRR_DEPRECATED_ __declspec(deprecated)
+#define _IRR_DEPRECATED_ /*__declspec(deprecated)*/
 #elif (__GNUC__ > 3 || (__GNUC__ == 3 && __GNUC_MINOR__ >= 1)) // all versions above 3.0 should support this feature
 #define _IRR_DEPRECATED_  __attribute__ ((deprecated))
 #else

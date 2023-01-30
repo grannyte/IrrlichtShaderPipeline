@@ -50,11 +50,11 @@ namespace scene
 	{
 	public:
 		//! Constructor
-		ITerrainSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id,
+		ITerrainSceneNode( std::shared_ptr<ISceneManager> mgr, s32 id,
 			const core::vector3df& position = core::vector3df(0.0f, 0.0f, 0.0f),
 			const core::vector3df& rotation = core::vector3df(0.0f, 0.0f, 0.0f),
 			const core::vector3df& scale = core::vector3df(1.0f, 1.0f, 1.0f) )
-			: ISceneNode (parent, mgr, id, position, rotation, scale) {}
+			: ISceneNode (mgr, id, position, rotation, scale) {}
 
 		//! Get the bounding box of the terrain.
 		/** \return The bounding box of the entire terrain. */

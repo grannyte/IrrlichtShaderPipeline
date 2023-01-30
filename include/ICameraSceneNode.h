@@ -25,11 +25,11 @@ namespace scene
 	public:
 
 		//! Constructor
-		ICameraSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id,
+		ICameraSceneNode(std::shared_ptr<ISceneManager> mgr, s32 id,
 			const core::vector3df& position = core::vector3df(0,0,0),
 			const core::vector3df& rotation = core::vector3df(0,0,0),
 			const core::vector3df& scale = core::vector3df(1.0f,1.0f,1.0f))
-			: ISceneNode(parent, mgr, id, position, rotation, scale), IsOrthogonal(false) {}
+			: ISceneNode(mgr, id, position, rotation, scale), IsOrthogonal(false) {}
 
 		//! Sets the projection matrix of the camera.
 		/** The core::matrix4 class has some methods to build a
@@ -195,7 +195,7 @@ namespace scene
 
 	protected:
 
-		void cloneMembers(ICameraSceneNode* toCopyFrom)
+		void cloneMembers(std::shared_ptr<ICameraSceneNode> toCopyFrom)
 		{
 			IsOrthogonal = toCopyFrom->IsOrthogonal;
 		}

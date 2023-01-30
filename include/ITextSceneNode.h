@@ -9,27 +9,27 @@
 
 namespace irr
 {
-namespace scene
-{
+	namespace scene
+	{
 
-//! A scene node for displaying 2d text at a position in three dimensional space
-class ITextSceneNode : public ISceneNode
-{
-public:
+		//! A scene node for displaying 2d text at a position in three dimensional space
+		class ITextSceneNode : public ISceneNode
+		{
+		public:
 
-	//! constructor
-	ITextSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id,
-		const core::vector3df& position = core::vector3df(0,0,0))
-			: ISceneNode(parent, mgr, id, position) {}
+			//! constructor
+			ITextSceneNode(std::shared_ptr<ISceneManager> mgr, s32 id,
+				const core::vector3df& position = core::vector3df(0, 0, 0))
+				: ISceneNode(mgr, id, position) {}
 
-	//! sets the text string
-	virtual void setText(const wchar_t* text) = 0;
+			//! sets the text string
+			virtual void setText(const wchar_t* text) = 0;
 
-	//! sets the color of the text
-	virtual void setTextColor(video::SColor color) = 0;
-};
+			//! sets the color of the text
+			virtual void setTextColor(video::SColor color) = 0;
+		};
 
-} // end namespace scene
+	} // end namespace scene
 } // end namespace irr
 
 

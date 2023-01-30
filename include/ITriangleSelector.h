@@ -20,7 +20,7 @@ class ISceneNode;
 
 //! Interface to return triangles with specific properties.
 /** Every ISceneNode may have a triangle selector, available with
-ISceneNode::getTriangleScelector() or ISceneManager::createTriangleSelector.
+std::shared_ptr<ISceneNode>::getTriangleScelector() or ISceneManager::createTriangleSelector.
 This is used for doing collision detection: For example if you know, that a
 collision may have happened in the area between (1,1,1) and (10,10,10), you
 can get all triangles of the scene node in this area with the
@@ -107,7 +107,7 @@ public:
 	the associated scene node.
 	\return The scene node associated with that triangle.
 	*/
-	virtual ISceneNode* getSceneNodeForTriangle(u32 triangleIndex) const = 0;
+	virtual std::shared_ptr<ISceneNode> getSceneNodeForTriangle(u32 triangleIndex) const = 0;
 
 	//! Get number of TriangleSelectors that are part of this one
 	/** Only useful for MetaTriangleSelector, others return 1

@@ -130,11 +130,11 @@ namespace scene
 		/** \param node The new target node. Setting this will force the animator to update
 					its last target position for the node, allowing setPosition() to teleport
 					the node through collision geometry. */
-		virtual void setTargetNode(ISceneNode * node) = 0;
+		virtual void setTargetNode(std::shared_ptr<ISceneNode> node) = 0;
 
 		//! Gets the single node that this animator is acting on.
 		/** \return The node that this animator is acting on. */
-		virtual ISceneNode* getTargetNode(void) const = 0;
+		virtual std::shared_ptr<ISceneNode> getTargetNode(void) const = 0;
 
 		//! Returns true if a collision occurred during the last animateNode()
 		virtual bool collisionOccurred() const = 0;
@@ -153,7 +153,7 @@ namespace scene
 		virtual const core::vector3df & getCollisionResultPosition(void) const = 0;
 
 		//! Returns the node that was collided with.
-		virtual ISceneNode* getCollisionNode(void) const = 0;
+		virtual std::shared_ptr<ISceneNode> getCollisionNode(void) const = 0;
 
 		//! Sets a callback interface which will be called if a collision occurs.
 		/** \param callback: collision callback handler that will be called when a collision

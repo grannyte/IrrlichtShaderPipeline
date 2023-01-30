@@ -73,11 +73,11 @@ class IParticleSystemSceneNode : public ISceneNode
 public:
 
 	//! Constructor
-	IParticleSystemSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id,
+	IParticleSystemSceneNode(std::shared_ptr<ISceneManager> mgr, s32 id,
 		const core::vector3df& position = core::vector3df(0,0,0),
 		const core::vector3df& rotation = core::vector3df(0,0,0),
 		const core::vector3df& scale = core::vector3df(1.0f, 1.0f, 1.0f))
-			: ISceneNode(parent, mgr, id, position, rotation, scale)
+			: ISceneNode( mgr, id, position, rotation, scale)
 			, ParticleBehavior(0)
 	{
 	}

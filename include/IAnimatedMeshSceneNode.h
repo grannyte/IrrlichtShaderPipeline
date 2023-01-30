@@ -55,11 +55,11 @@ namespace scene
 	public:
 
 		//! Constructor
-		IAnimatedMeshSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id,
+		IAnimatedMeshSceneNode(std::shared_ptr<ISceneManager> mgr, s32 id,
 			const core::vector3df& position = core::vector3df(0,0,0),
 			const core::vector3df& rotation = core::vector3df(0,0,0),
 			const core::vector3df& scale = core::vector3df(1.0f, 1.0f, 1.0f))
-			: ISceneNode(parent, mgr, id, position, rotation, scale) {}
+			: ISceneNode(mgr, id, position, rotation, scale) {}
 
 		//! Destructor
 		virtual ~IAnimatedMeshSceneNode() {}
@@ -104,7 +104,7 @@ namespace scene
 		\return Pointer to the created shadow scene node. This pointer
 		should not be dropped. See IReferenceCounted::drop() for more
 		information. */
-		virtual IShadowVolumeSceneNode* addShadowVolumeSceneNode(const IMesh* shadowMesh=0,
+		virtual std::shared_ptr<IShadowVolumeSceneNode> addShadowVolumeSceneNode(const IMesh* shadowMesh=0,
 			s32 id=-1, bool zfailmethod=true, f32 infinity=1000.0f) = 0;
 
 
@@ -113,7 +113,7 @@ namespace scene
 		joints for example possible to attach a weapon to the left hand
 		of an animated model. This example shows how:
 		\code
-		ISceneNode* hand =
+		std::shared_ptr<ISceneNode> hand =
 			yourAnimatedMeshSceneNode->getJointNode("LeftHand");
 		hand->addChild(weaponSceneNode);
 		\endcode
@@ -123,10 +123,10 @@ namespace scene
 		\return Pointer to the scene node which represents the joint
 		with the specified name. Returns 0 if the contained mesh is not
 		an skinned mesh or the name of the joint could not be found. */
-		virtual IBoneSceneNode* getJointNode(const c8* jointName)=0;
+		virtual std::shared_ptr<IBoneSceneNode> getJointNode(const c8* jointName) =0;
 
 		//! same as getJointNode(const c8* jointName), but based on id
-		virtual IBoneSceneNode* getJointNode(u32 jointID) = 0;
+		virtual std::shared_ptr<IBoneSceneNode> getJointNode(u32 jointID) = 0;
 
 		//! Gets joint count.
 		/** \return Amount of joints in the mesh. */
@@ -217,7 +217,8 @@ namespace scene
 		/** \param newParent An optional new parent.
 		\param newManager An optional new scene manager.
 		\return The newly created clone of this node. */
-		virtual ISceneNode* clone(ISceneNode* newParent=0, ISceneManager* newManager=0) = 0;
+		virtual std::shared_ptr<ISceneNode> clone(std::shared_ptr<ISceneNode> newParent = 0,
+		                                          std::shared_ptr<ISceneManager> newManager = 0) = 0;
 
 	};
 

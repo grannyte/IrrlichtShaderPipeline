@@ -135,19 +135,19 @@ namespace scene
 
 		//! Should node be used in scene export? (only needed for scene-writing, ignored in mesh-writing)
 		//! By default all visible nodes are exported.
-		virtual bool isExportable(const irr::scene::ISceneNode * node) const = 0;
+		virtual bool isExportable(const std::shared_ptr<irr::scene::ISceneNode> node) const = 0;
 
 		//! Return the mesh for the given node. If it has no mesh or shouldn't export it's mesh
 		//! you can return 0 in which case only the transformation matrix of the node will be used.
 		// TODO: Function is not const because there is no const getMesh() function for several Irrlicht nodes.
-		virtual IMesh* getMesh(irr::scene::ISceneNode * node) = 0;
+		virtual IMesh* getMesh(std::shared_ptr<irr::scene::ISceneNode> node) = 0;
 
 		//! Return if the node has it's own material overwriting the mesh-materials
 		/** Usually true except for mesh-nodes which have isReadOnlyMaterials set.
 		This is mostly important for naming (as ISceneNode::getMaterial() already returns the correct material).
 		You have to override it when exporting custom scenenodes with own materials.
 		\return true => The node's own material is used, false => ignore node material and use the one from the mesh */
-		virtual bool useNodeMaterial(const scene::ISceneNode* node) const = 0;
+		virtual bool useNodeMaterial(const std::shared_ptr<irr::scene::ISceneNode> node) const = 0;
 
 	};
 
@@ -180,7 +180,7 @@ namespace scene
 		the xs::NCName standard to be valid, you can run them through
 		IColladaMeshWriter::toNCName to ensure that.
 		*/
-		virtual irr::core::stringw nameForNode(const scene::ISceneNode* node) = 0;
+		virtual irr::core::stringw nameForNode(const std::shared_ptr<irr::scene::ISceneNode> node) = 0;
 
 		//! Return a name for the material
 		/** There is one material created in the writer for each unique name.
@@ -193,7 +193,7 @@ namespace scene
 		Names must follow the xs::NCName standard to be valid, you can run them
 		through IColladaMeshWriter::toNCName to ensure that.
 		*/
-		virtual irr::core::stringw nameForMaterial(const video::SMaterial & material, int materialId, const scene::IMesh* mesh, const scene::ISceneNode* node) = 0;
+		virtual irr::core::stringw nameForMaterial(const video::SMaterial & material, int materialId, const scene::IMesh* mesh, const std::shared_ptr<irr::scene::ISceneNode> node) = 0;
 	};
 
 
@@ -224,7 +224,7 @@ namespace scene
 		}
 
 		//! writes a scene starting with the given node
-		virtual bool writeScene(io::IWriteFile* file, scene::ISceneNode* root) = 0;
+		virtual bool writeScene(io::IWriteFile* file, std::shared_ptr<scene::ISceneNode> root) = 0;
 
 
 		//! Set if texture information should be written
@@ -364,7 +364,7 @@ namespace scene
 		/** The name comes from IColladaMeshWriterNames::nameForMesh, but you can't access the node there.
 		\return Either a pointer to the name or NULL */
 		// TODO: Function is not const because there is no const getMesh() function for several Irrlicht nodes.
-		virtual const irr::core::stringw* findGeometryNameForNode(ISceneNode* node) = 0;
+		virtual const irr::core::stringw* findGeometryNameForNode(std::shared_ptr<ISceneNode> node) = 0;
 
 
 	protected:

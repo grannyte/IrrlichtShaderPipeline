@@ -22,9 +22,9 @@ class IBillboardSceneNode : public ISceneNode
 public:
 
 	//! Constructor
-	IBillboardSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id,
+	IBillboardSceneNode(std::shared_ptr<ISceneManager> mgr, s32 id,
 		const core::vector3df& position = core::vector3df(0,0,0))
-		: ISceneNode(parent, mgr, id, position) {}
+		: ISceneNode(mgr, id, position) {}
 
 	//! Sets the size of the billboard, making it rectangular.
 	virtual void setSize(const core::dimension2d<f32>& size) = 0;

@@ -25,8 +25,8 @@ class IDummyTransformationSceneNode : public ISceneNode
 public:
 
 	//! Constructor
-	IDummyTransformationSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id)
-		: ISceneNode(parent, mgr, id) {}
+	IDummyTransformationSceneNode(std::shared_ptr<ISceneManager> mgr, s32 id)
+		: ISceneNode( mgr, id) {}
 
 	//! Returns a reference to the current relative transformation matrix.
 	/** This is the matrix, this scene node uses instead of scale, translation

@@ -26,11 +26,11 @@ namespace scene
 	public:
 
 		//! Constructor
-		IInstancedMeshSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id = -1,
+		IInstancedMeshSceneNode(std::shared_ptr<ISceneManager> mgr, s32 id = -1,
 				const core::vector3df& position = core::vector3df(0,0,0),
 				const core::vector3df& rotation = core::vector3df(0,0,0),
 				const core::vector3df& scale = core::vector3df(1.0f, 1.0f, 1.0f))
-				: IMeshSceneNode(parent, mgr, id, position, rotation, scale)
+				: IMeshSceneNode( mgr, id, position, rotation, scale)
 		{
 		}
 
@@ -46,7 +46,7 @@ namespace scene
 		\return Pointer to the created empty scene node that represents
 		the instance. This pointer should not be dropped. 
 		See IReferenceCounted::drop() for more information. */
-		virtual ISceneNode* addInstance(ISceneNode* node) = 0;
+		virtual std::shared_ptr<ISceneNode> addInstance(std::shared_ptr<ISceneNode> node) = 0;
 
 		//! Adds a new instance as child of this node.
 		/** Position, rotation, scale and id are passed
@@ -58,7 +58,7 @@ namespace scene
 		\return Pointer to the created empty scene node that represents
 		the instance. This pointer should not be dropped.
 		See IReferenceCounted::drop() for more information. */
-		virtual ISceneNode* addInstance(const core::vector3df& position,
+		virtual std::shared_ptr<ISceneNode> addInstance(const core::vector3df& position,
 			const core::vector3df& rotation = core::vector3df(0, 0, 0),
 			const core::vector3df& scale = core::vector3df(1.0f, 1.0f, 1.0f),
 			s32 id = -1) = 0;
@@ -76,17 +76,17 @@ namespace scene
 		//! Removes an instance from the list by a node.
 		/** \param node: node that will be deleted
 		\return True if the node was found and deleted. */
-		virtual bool removeInstance(ISceneNode* node) = 0;
+		virtual bool removeInstance(std::shared_ptr<ISceneNode> node) = 0;
 
 		//! Returns a node in the instance list by index.
 		/** \param index: index of the node in the list
 		\return Node if it was found. */
-		virtual ISceneNode* getInstance(u32 index) const = 0;
+		virtual std::shared_ptr<ISceneNode> getInstance(u32 index) const = 0;
 
 		//! Returns a node in the instance list by id of an node.
 		/** \param id: node id that will be searched for
 		\return Node if it could be found. */
-		virtual ISceneNode* getInstanceById(s32 id) const = 0;
+		virtual std::shared_ptr<ISceneNode> getInstanceById(s32 id) const = 0;
 
 		//! Returns the instance count.
 		/** \return Number of all instances. */

@@ -56,8 +56,8 @@ namespace scene
 	{
 	public:
 
-		IBoneSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id=-1) :
-			ISceneNode(parent, mgr, id),positionHint(-1),scaleHint(-1),rotationHint(-1) { }
+		IBoneSceneNode(std::shared_ptr<ISceneManager> mgr, s32 id=-1) :
+			ISceneNode( mgr, id),positionHint(-1),scaleHint(-1),rotationHint(-1) { }
 
 		//! Get the name of the bone
 		/** \deprecated Use getName instead. This method may be removed by Irrlicht 1.9 */

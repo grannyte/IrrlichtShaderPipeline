@@ -50,7 +50,7 @@ public:
 	scene will be loaded into the root node.
 	\return Returns true on success, false on failure. Returns 0 if loading failed. */
 	virtual bool loadScene(io::IReadFile* file, ISceneUserDataSerializer* userDataSerializer=0,
-	                       ISceneNode* rootNode=0) = 0;
+	                       std::shared_ptr<ISceneNode> rootNode = 0) = 0;
 
 };
 

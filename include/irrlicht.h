@@ -235,7 +235,7 @@
  *	device->setWindowCaption(L"Hello World!");
  *
  *	// load and show quake2 .md2 model
- *	scene::ISceneNode* node = scenemgr->addAnimatedMeshSceneNode(
+ *	std::shared_ptr<irr::scene::ISceneNode> node = scenemgr->addAnimatedMeshSceneNode(
  *		scenemgr->getMesh("quake2model.md2"));
  *
  *	// if everything worked, add a texture and disable lighting
