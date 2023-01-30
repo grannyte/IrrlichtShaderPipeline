@@ -14,10 +14,10 @@ namespace scene
 {
 
 //! constructor
-CBillboardSceneNode::CBillboardSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id,
+CBillboardSceneNode::CBillboardSceneNode(std::shared_ptr<ISceneManager> mgr, s32 id,
 			const core::vector3df& position, const core::dimension2d<f32>& size,
 			video::SColor colorTop, video::SColor colorBottom)
-	: IBillboardSceneNode(parent, mgr, id, position)
+	: IBillboardSceneNode(mgr, id, position)
 {
 	#ifdef _DEBUG
 	setDebugName("CBillboardSceneNode");
@@ -72,7 +72,7 @@ CBillboardSceneNode::~CBillboardSceneNode()
 void CBillboardSceneNode::OnRegisterSceneNode()
 {
 	if (IsVisible)
-		SceneManager->registerNodeForRendering(this);
+		SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()));
 
 	ISceneNode::OnRegisterSceneNode();
 }
@@ -81,8 +81,8 @@ void CBillboardSceneNode::OnRegisterSceneNode()
 //! render
 void CBillboardSceneNode::render()
 {
-	video::IVideoDriver* driver = SceneManager->getVideoDriver();
-	ICameraSceneNode* camera = SceneManager->getActiveCamera();
+	video::IVideoDriver* driver = SceneManager.lock()->getVideoDriver();
+	auto camera = SceneManager.lock()->getActiveCamera();
 
 	if (!camera || !driver)
 		return;
@@ -307,17 +307,19 @@ void CBillboardSceneNode::getColor(video::SColor& topColor,
 
 
 //! Creates a clone of this scene node and its children.
-ISceneNode* CBillboardSceneNode::clone(ISceneNode* newParent, ISceneManager* newManager)
+std::shared_ptr<ISceneNode> CBillboardSceneNode::clone(std::shared_ptr<ISceneNode> newParent,
+                                                       std::shared_ptr<ISceneManager> newManager)
 {
 	if (!newParent)
-		newParent = Parent;
+		newParent = Parent.lock();
 	if (!newManager)
-		newManager = SceneManager;
+		newManager = SceneManager.lock();
 
-	CBillboardSceneNode* nb = new CBillboardSceneNode(newParent,
-		newManager, ID, RelativeTranslation, Size);
+	auto nb = std::make_shared<CBillboardSceneNode>(newManager, ID, RelativeTranslation, Size);
 
-	nb->cloneMembers(this, newManager);
+	if (newParent)
+		newParent->addChild(nb);
+	nb->cloneMembers(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), newManager);
 	nb->Size = Size;
 	nb->TopEdgeWidth = this->TopEdgeWidth;
 	nb->MeshBuffer->getMaterial() = MeshBuffer->getMaterial();
@@ -327,8 +329,6 @@ ISceneNode* CBillboardSceneNode::clone(ISceneNode* newParent, ISceneManager* new
 	getColor(topColor,bottomColor);
 	nb->setColor(topColor,bottomColor);
 
-	if ( newParent )
-		nb->drop();
 	return nb;
 }
 

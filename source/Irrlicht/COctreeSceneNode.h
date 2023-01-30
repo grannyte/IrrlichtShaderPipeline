@@ -18,7 +18,7 @@ namespace scene
 	public:
 
 		//! constructor
-		COctreeSceneNode(const core::array<scene::IMeshBuffer*>& meshes, ISceneNode* parent, ISceneManager* mgr,
+		COctreeSceneNode(const core::array<scene::IMeshBuffer*>& meshes,std::shared_ptr<ISceneManager> mgr,
 			s32 id, s32 minimalPolysPerNode=512);
 
 		//! destructor
@@ -68,13 +68,13 @@ namespace scene
 
 		//! Creates shadow volume scene node as child of this node
 		//! and returns a pointer to it.
-		virtual IShadowVolumeSceneNode* addShadowVolumeSceneNode(const IMesh* shadowMesh,
-			s32 id, bool zfailmethod=true, f32 infinity=10000.0f) _IRR_OVERRIDE_;
+		virtual std::shared_ptr<IShadowVolumeSceneNode> addShadowVolumeSceneNode(const IMesh* shadowMesh,
+			s32 id, bool zfailmethod = true, f32 infinity = 10000.0f) _IRR_OVERRIDE_;
 
 		//! Removes a child from this scene node.
 		//! Implemented here, to be able to remove the shadow properly, if there is one,
 		//! or to remove attached childs.
-		virtual bool removeChild(ISceneNode* child) _IRR_OVERRIDE_;
+		virtual bool removeChild(std::shared_ptr<ISceneNode> child) _IRR_OVERRIDE_;
 
 	private:
 
@@ -93,7 +93,7 @@ namespace scene
 		s32 PassCount;
 
 		IMesh * Mesh;
-		IShadowVolumeSceneNode* Shadow;
+		std::shared_ptr<IShadowVolumeSceneNode> Shadow;
 		//! use VBOs for rendering where possible
 		bool UseVBOs;
 		//! use visibility information together with VBOs

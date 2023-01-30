@@ -9,79 +9,79 @@
 
 namespace irr
 {
-namespace scene
-{
-
-	//! Scene node for rendering a shadow volume into a stencil buffer.
-	class CShadowVolumeSceneNode : public IShadowVolumeSceneNode
+	namespace scene
 	{
-	public:
 
-		//! constructor
-		CShadowVolumeSceneNode(const IMesh* shadowMesh, ISceneNode* parent, ISceneManager* mgr,
-			s32 id, bool zfailmethod=true, f32 infinity=10000.0f);
+		//! Scene node for rendering a shadow volume into a stencil buffer.
+		class CShadowVolumeSceneNode : public IShadowVolumeSceneNode
+		{
+		public:
 
-		//! destructor
-		virtual ~CShadowVolumeSceneNode();
+			//! constructor
+			CShadowVolumeSceneNode(const IMesh* shadowMesh, std::shared_ptr<ISceneManager> mgr,
+				s32 id, bool zfailmethod = true, f32 infinity = 10000.0f);
 
-		//! Sets the mesh from which the shadow volume should be generated.
-		/** To optimize shadow rendering, use a simpler mesh for shadows.
-		*/
-		virtual void setShadowMesh(const IMesh* mesh) _IRR_OVERRIDE_;
+			//! destructor
+			virtual ~CShadowVolumeSceneNode();
 
-		//! Updates the shadow volumes for current light positions.
-		/** Called each render cycle from Animated Mesh SceneNode render method. */
-		virtual void updateShadowVolumes() _IRR_OVERRIDE_;
+			//! Sets the mesh from which the shadow volume should be generated.
+			/** To optimize shadow rendering, use a simpler mesh for shadows.
+			*/
+			virtual void setShadowMesh(const IMesh* mesh) _IRR_OVERRIDE_;
 
-		//! pre render method
-		virtual void OnRegisterSceneNode() _IRR_OVERRIDE_;
+			//! Updates the shadow volumes for current light positions.
+			/** Called each render cycle from Animated Mesh SceneNode render method. */
+			virtual void updateShadowVolumes() _IRR_OVERRIDE_;
 
-		//! renders the node.
-		virtual void render() _IRR_OVERRIDE_;
+			//! pre render method
+			virtual void OnRegisterSceneNode() _IRR_OVERRIDE_;
 
-		//! returns the axis aligned bounding box of this node
-		virtual const core::aabbox3d<f32>& getBoundingBox() const _IRR_OVERRIDE_;
+			//! renders the node.
+			virtual void render() _IRR_OVERRIDE_;
 
-		//! Returns type of the scene node
-		virtual ESCENE_NODE_TYPE getType() const _IRR_OVERRIDE_ { return ESNT_SHADOW_VOLUME; }
+			//! returns the axis aligned bounding box of this node
+			virtual const core::aabbox3d<f32>& getBoundingBox() const _IRR_OVERRIDE_;
 
-	private:
+			//! Returns type of the scene node
+			virtual ESCENE_NODE_TYPE getType() const _IRR_OVERRIDE_ { return ESNT_SHADOW_VOLUME; }
 
-		typedef core::array<core::vector3df> SShadowVolume;
+		private:
 
-		void createShadowVolume(const core::vector3df& pos, bool isDirectional=false);
-		u32 createEdgesAndCaps(const core::vector3df& light, SShadowVolume* svp, core::aabbox3d<f32>* bb);
+			typedef core::array<core::vector3df> SShadowVolume;
 
-		//! Generates adjacency information based on mesh indices.
-		void calculateAdjacency();
+			void createShadowVolume(const core::vector3df& pos, bool isDirectional = false);
+			u32 createEdgesAndCaps(const core::vector3df& light, SShadowVolume* svp, core::aabbox3d<f32>* bb);
 
-		core::aabbox3d<f32> Box;
+			//! Generates adjacency information based on mesh indices.
+			void calculateAdjacency();
 
-		// a shadow volume for every light
-		core::array<SShadowVolume> ShadowVolumes;
+			core::aabbox3d<f32> Box;
 
-		// a back cap bounding box for every light
-		core::array<core::aabbox3d<f32> > ShadowBBox;
+			// a shadow volume for every light
+			core::array<SShadowVolume> ShadowVolumes;
 
-		core::array<core::vector3df> Vertices;
-		core::array<u16> Indices;
-		core::array<u16> Adjacency;
-		core::array<u16> Edges;
-		// tells if face is front facing
-		core::array<bool> FaceData;
+			// a back cap bounding box for every light
+			core::array<core::aabbox3d<f32> > ShadowBBox;
 
-		const scene::IMesh* ShadowMesh;
+			core::array<core::vector3df> Vertices;
+			core::array<u16> Indices;
+			core::array<u16> Adjacency;
+			core::array<u16> Edges;
+			// tells if face is front facing
+			core::array<bool> FaceData;
 
-		u32 IndexCount;
-		u32 VertexCount;
-		u32 ShadowVolumesUsed;
+			const scene::IMesh* ShadowMesh;
 
-		f32 Infinity;
+			u32 IndexCount;
+			u32 VertexCount;
+			u32 ShadowVolumesUsed;
 
-		bool UseZFailMethod;
-	};
+			f32 Infinity;
 
-} // end namespace scene
+			bool UseZFailMethod;
+		};
+
+	} // end namespace scene
 } // end namespace irr
 
 #endif

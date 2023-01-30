@@ -96,12 +96,12 @@ bool CSceneNodeAnimatorCameraFPS::OnEvent(const SEvent& evt)
 }
 
 
-void CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node, u32 timeMs)
+void CSceneNodeAnimatorCameraFPS::animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs)
 {
 	if (!node || node->getType() != ESNT_CAMERA)
 		return;
 
-	ICameraSceneNode* camera = static_cast<ICameraSceneNode*>(node);
+	auto camera = std::static_pointer_cast<ICameraSceneNode>(node);
 
 	if (firstUpdate)
 	{
@@ -130,7 +130,7 @@ void CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node, u32 timeMs)
 		firstInput = false;
 	}
 
-	scene::ISceneManager * smgr = camera->getSceneManager();
+	auto smgr = camera->getSceneManager();
 	if(smgr && smgr->getActiveCamera() != camera)
 		return;
 
@@ -369,7 +369,7 @@ void CSceneNodeAnimatorCameraFPS::setInvertMouse(bool invert)
 }
 
 
-ISceneNodeAnimator* CSceneNodeAnimatorCameraFPS::createClone(ISceneNode* node, ISceneManager* newManager)
+ISceneNodeAnimator* CSceneNodeAnimatorCameraFPS::createClone(std::shared_ptr<ISceneNode> node, std::shared_ptr<ISceneManager> newManager)
 {
 	CSceneNodeAnimatorCameraFPS * newAnimator =
 		new CSceneNodeAnimatorCameraFPS(CursorControl,	RotateSpeed, MoveSpeed, JumpSpeed,

@@ -24,7 +24,7 @@ namespace scene
 		virtual ~CSceneNodeAnimatorTexture();
 
 		//! animates a scene node
-		virtual void animateNode(ISceneNode* node, u32 timeMs) _IRR_OVERRIDE_;
+		virtual void animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs) _IRR_OVERRIDE_;
 
 		//! Writes attributes of the scene node animator.
 		virtual void serializeAttributes(io::IAttributes* out, io::SAttributeReadWriteOptions* options=0) const _IRR_OVERRIDE_;
@@ -39,7 +39,8 @@ namespace scene
 		/** Please note that you will have to drop
 		(IReferenceCounted::drop()) the returned pointer after calling
 		this. */
-		virtual ISceneNodeAnimator* createClone(ISceneNode* node, ISceneManager* newManager=0) _IRR_OVERRIDE_;
+		virtual ISceneNodeAnimator* createClone(std::shared_ptr<ISceneNode> node,
+		                                        std::shared_ptr<ISceneManager> newManager = 0) _IRR_OVERRIDE_;
 
 
 	private:

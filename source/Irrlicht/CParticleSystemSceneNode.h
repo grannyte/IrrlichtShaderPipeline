@@ -25,7 +25,7 @@ public:
 
 	//! constructor
 	CParticleSystemSceneNode(bool createDefaultEmitter,
-		ISceneNode* parent, ISceneManager* mgr, s32 id,
+		 std::shared_ptr<ISceneManager> mgr, s32 id,
 		const core::vector3df& position,
 		const core::vector3df& rotation,
 		const core::vector3df& scale);

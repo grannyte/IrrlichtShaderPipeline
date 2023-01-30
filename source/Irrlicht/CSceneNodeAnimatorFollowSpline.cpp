@@ -32,7 +32,7 @@ inline s32 CSceneNodeAnimatorFollowSpline::clamp(s32 idx, s32 size)
 
 
 //! animates a scene node
-void CSceneNodeAnimatorFollowSpline::animateNode(ISceneNode* node, u32 timeMs)
+void CSceneNodeAnimatorFollowSpline::animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs)
 {
 	if(!node)
 		return;
@@ -153,7 +153,7 @@ void CSceneNodeAnimatorFollowSpline::deserializeAttributes(io::IAttributes* in, 
 }
 
 
-ISceneNodeAnimator* CSceneNodeAnimatorFollowSpline::createClone(ISceneNode* node, ISceneManager* newManager)
+ISceneNodeAnimator* CSceneNodeAnimatorFollowSpline::createClone(std::shared_ptr<ISceneNode> node, std::shared_ptr<ISceneManager> newManager)
 {
 	CSceneNodeAnimatorFollowSpline * newAnimator =
 		new CSceneNodeAnimatorFollowSpline(StartTime, Points, Speed, Tightness);

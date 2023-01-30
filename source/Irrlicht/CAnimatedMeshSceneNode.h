@@ -22,7 +22,7 @@ namespace scene
 	public:
 
 		//! constructor
-		CAnimatedMeshSceneNode(IAnimatedMesh* mesh, ISceneNode* parent, ISceneManager* mgr,	s32 id,
+		CAnimatedMeshSceneNode(IAnimatedMesh* mesh,std::shared_ptr<ISceneManager> mgr,	s32 id,
 			const core::vector3df& position = core::vector3df(0,0,0),
 			const core::vector3df& rotation = core::vector3df(0,0,0),
 			const core::vector3df& scale = core::vector3df(1.0f, 1.0f, 1.0f));
@@ -78,15 +78,15 @@ namespace scene
 
 		//! Creates shadow volume scene node as child of this node
 		//! and returns a pointer to it.
-		virtual IShadowVolumeSceneNode* addShadowVolumeSceneNode(const IMesh* shadowMesh,
+		virtual std::shared_ptr<IShadowVolumeSceneNode> addShadowVolumeSceneNode(const IMesh* shadowMesh,
 			s32 id, bool zfailmethod=true, f32 infinity=1000.0f) _IRR_OVERRIDE_;
 
 		//! Returns a pointer to a child node, which has the same transformation as
 		//! the corrsesponding joint, if the mesh in this scene node is a skinned mesh.
-		virtual IBoneSceneNode* getJointNode(const c8* jointName) _IRR_OVERRIDE_;
+		virtual std::shared_ptr<IBoneSceneNode> getJointNode(const c8* jointName) _IRR_OVERRIDE_;
 
 		//! same as getJointNode(const c8* jointName), but based on id
-		virtual IBoneSceneNode* getJointNode(u32 jointID) _IRR_OVERRIDE_;
+		virtual std::shared_ptr<IBoneSceneNode> getJointNode(u32 jointID) _IRR_OVERRIDE_;
 
 		//! Gets joint count.
 		virtual u32 getJointCount() const _IRR_OVERRIDE_;
@@ -94,7 +94,7 @@ namespace scene
 		//! Removes a child from this scene node.
 		//! Implemented here, to be able to remove the shadow properly, if there is one,
 		//! or to remove attached childs.
-		virtual bool removeChild(ISceneNode* child) _IRR_OVERRIDE_;
+		virtual bool removeChild(std::shared_ptr<ISceneNode> child) _IRR_OVERRIDE_;
 
 		//! Starts a MD2 animation.
 		virtual bool setMD2Animation(EMD2_ANIMATION_TYPE anim) _IRR_OVERRIDE_;
@@ -157,7 +157,8 @@ namespace scene
 		/** \param newParent An optional new parent.
 		\param newManager An optional new scene manager.
 		\return The newly created clone of this node. */
-		virtual ISceneNode* clone(ISceneNode* newParent=0, ISceneManager* newManager=0) _IRR_OVERRIDE_;
+		virtual std::shared_ptr<ISceneNode> clone(std::shared_ptr<ISceneNode> newParent = 0,
+		                                          std::shared_ptr<ISceneManager> newManager = 0) _IRR_OVERRIDE_;
 
 	private:
 
@@ -193,9 +194,9 @@ namespace scene
 		IAnimationEndCallBack* LoopCallBack;
 		s32 PassCount;
 
-		IShadowVolumeSceneNode* Shadow;
+		std::shared_ptr<IShadowVolumeSceneNode> Shadow;
 
-		core::array<IBoneSceneNode* > JointChildSceneNodes;
+		core::array<std::shared_ptr<IBoneSceneNode> > JointChildSceneNodes;
 		core::array<core::matrix4> PretransitingSave;
 
 		// Quake3 Model

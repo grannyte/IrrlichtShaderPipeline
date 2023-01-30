@@ -14,9 +14,9 @@ namespace scene
 
 
 //! constructor
-CCameraSceneNode::CCameraSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id,
+CCameraSceneNode::CCameraSceneNode(std::shared_ptr<ISceneManager> mgr, s32 id,
 	const core::vector3df& position, const core::vector3df& lookat)
-	: ICameraSceneNode(parent, mgr, id, position),
+	: ICameraSceneNode( mgr, id, position),
 	Target(lookat), UpVector(0.0f, 1.0f, 0.0f), ZNear(1.0f), ZFar(3000.0f),
 	InputReceiverEnabled(true), TargetAndRotationAreBound(false)
 {
@@ -238,8 +238,8 @@ void CCameraSceneNode::recalculateProjectionMatrix()
 //! prerender
 void CCameraSceneNode::OnRegisterSceneNode()
 {
-	if ( SceneManager->getActiveCamera () == this )
-		SceneManager->registerNodeForRendering(this, ESNRP_CAMERA);
+	if ( SceneManager.lock()->getActiveCamera() == std::dynamic_pointer_cast<CCameraSceneNode>(shared_from_this()))
+		SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<CCameraSceneNode>(shared_from_this()), ESNRP_CAMERA);
 
 	ISceneNode::OnRegisterSceneNode();
 }
@@ -250,7 +250,7 @@ void CCameraSceneNode::render()
 {
 	updateMatrices();
 
-	video::IVideoDriver* driver = SceneManager->getVideoDriver();
+	video::IVideoDriver* driver = SceneManager.lock()->getVideoDriver();
 	if ( driver)
 	{
 		driver->setTransform(video::ETS_PROJECTION, ViewArea.getTransform ( video::ETS_PROJECTION) );
@@ -357,20 +357,21 @@ bool CCameraSceneNode::getTargetAndRotationBinding(void) const
 
 
 //! Creates a clone of this scene node and its children.
-ISceneNode* CCameraSceneNode::clone(ISceneNode* newParent, ISceneManager* newManager)
+std::shared_ptr<ISceneNode> CCameraSceneNode::clone(std::shared_ptr<ISceneNode> newParent,
+                                                    std::shared_ptr<ISceneManager> newManager)
 {
 	ICameraSceneNode::clone(newParent, newManager);
 
 	if (!newParent)
-		newParent = Parent;
+		newParent = Parent.lock();
 	if (!newManager)
-		newManager = SceneManager;
+		newManager = SceneManager.lock();
 
-	CCameraSceneNode* nb = new CCameraSceneNode(newParent,
+	auto nb = std::make_shared<CCameraSceneNode>(
 		newManager, ID, RelativeTranslation, Target);
-
-	nb->ISceneNode::cloneMembers(this, newManager);
-	nb->ICameraSceneNode::cloneMembers(this);
+	newParent->addChild(nb);
+	nb->ISceneNode::cloneMembers(std::dynamic_pointer_cast<CCameraSceneNode>(shared_from_this()), newManager);
+	nb->ICameraSceneNode::cloneMembers(std::dynamic_pointer_cast<CCameraSceneNode>(shared_from_this()));
 
 	nb->Target = Target;
 	nb->UpVector = UpVector;
@@ -383,8 +384,6 @@ ISceneNode* CCameraSceneNode::clone(ISceneNode* newParent, ISceneManager* newMan
 	nb->InputReceiverEnabled = InputReceiverEnabled;
 	nb->TargetAndRotationAreBound = TargetAndRotationAreBound;
 
-	if ( newParent )
-		nb->drop();
 	return nb;
 }
 

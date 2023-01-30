@@ -29,10 +29,10 @@ namespace scene
 	*/
 
 //! constructor
-CCubeSceneNode::CCubeSceneNode(f32 size, ISceneNode* parent, ISceneManager* mgr,
+CCubeSceneNode::CCubeSceneNode(f32 size, std::shared_ptr<ISceneManager> mgr,
 		s32 id, const core::vector3df& position,
 		const core::vector3df& rotation, const core::vector3df& scale)
-	: IMeshSceneNode(parent, mgr, id, position, rotation, scale),
+	: IMeshSceneNode( mgr, id, position, rotation, scale),
 	Mesh(0), Shadow(0), Size(size)
 {
 	#ifdef _DEBUG
@@ -45,8 +45,7 @@ CCubeSceneNode::CCubeSceneNode(f32 size, ISceneNode* parent, ISceneManager* mgr,
 
 CCubeSceneNode::~CCubeSceneNode()
 {
-	if (Shadow)
-		Shadow->drop();
+	
 	if (Mesh)
 		Mesh->drop();
 }
@@ -56,14 +55,14 @@ void CCubeSceneNode::setSize()
 {
 	if (Mesh)
 		Mesh->drop();
-	Mesh = SceneManager->getGeometryCreator()->createCubeMesh(core::vector3df(Size));
+	Mesh = SceneManager.lock()->getGeometryCreator()->createCubeMesh(core::vector3df(Size));
 }
 
 
 //! renders the node.
 void CCubeSceneNode::render()
 {
-	video::IVideoDriver* driver = SceneManager->getVideoDriver();
+	video::IVideoDriver* driver = SceneManager.lock()->getVideoDriver();
 	driver->setTransform(video::ETS_WORLD, AbsoluteTransformation);
 
 	if (Shadow)
@@ -98,8 +97,8 @@ void CCubeSceneNode::render()
 		if (DebugDataVisible & scene::EDS_NORMALS)
 		{
 			// draw normals
-			const f32 debugNormalLength = SceneManager->getParameters()->getAttributeAsFloat(DEBUG_NORMAL_LENGTH);
-			const video::SColor debugNormalColor = SceneManager->getParameters()->getAttributeAsColor(DEBUG_NORMAL_COLOR);
+			const f32 debugNormalLength = SceneManager.lock()->getParameters()->getAttributeAsFloat(DEBUG_NORMAL_LENGTH);
+			const video::SColor debugNormalColor = SceneManager.lock()->getParameters()->getAttributeAsColor(DEBUG_NORMAL_COLOR);
 			const u32 count = Mesh->getMeshBufferCount();
 
 			for (u32 i=0; i != count; ++i)
@@ -130,11 +129,10 @@ const core::aabbox3d<f32>& CCubeSceneNode::getBoundingBox() const
 //! Removes a child from this scene node.
 //! Implemented here, to be able to remove the shadow properly, if there is one,
 //! or to remove attached childs.
-bool CCubeSceneNode::removeChild(ISceneNode* child)
+bool CCubeSceneNode::removeChild(std::shared_ptr<ISceneNode> child)
 {
 	if (child && Shadow == child)
 	{
-		Shadow->drop();
 		Shadow = 0;
 	}
 
@@ -144,19 +142,18 @@ bool CCubeSceneNode::removeChild(ISceneNode* child)
 
 //! Creates shadow volume scene node as child of this node
 //! and returns a pointer to it.
-IShadowVolumeSceneNode* CCubeSceneNode::addShadowVolumeSceneNode(
-		const IMesh* shadowMesh, s32 id, bool zfailmethod, f32 infinity)
+std::shared_ptr<IShadowVolumeSceneNode> CCubeSceneNode::addShadowVolumeSceneNode(
+	const IMesh* shadowMesh, s32 id, bool zfailmethod, f32 infinity)
 {
-	if (!SceneManager->getVideoDriver()->queryFeature(video::EVDF_STENCIL_BUFFER))
+	if (!SceneManager.lock()->getVideoDriver()->queryFeature(video::EVDF_STENCIL_BUFFER))
 		return 0;
 
 	if (!shadowMesh)
 		shadowMesh = Mesh; // if null is given, use the mesh of node
 
-	if (Shadow)
-		Shadow->drop();
 
-	Shadow = new CShadowVolumeSceneNode(shadowMesh, this, SceneManager, id,  zfailmethod, infinity);
+	Shadow = std::make_shared<CShadowVolumeSceneNode>(shadowMesh,  SceneManager.lock(), id, zfailmethod, infinity);
+	addChild(Shadow);
 	return Shadow;
 }
 
@@ -164,7 +161,7 @@ IShadowVolumeSceneNode* CCubeSceneNode::addShadowVolumeSceneNode(
 void CCubeSceneNode::OnRegisterSceneNode()
 {
 	if (IsVisible)
-		SceneManager->registerNodeForRendering(this);
+		SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()));
 	ISceneNode::OnRegisterSceneNode();
 }
 
@@ -208,24 +205,21 @@ void CCubeSceneNode::deserializeAttributes(io::IAttributes* in, io::SAttributeRe
 
 
 //! Creates a clone of this scene node and its children.
-ISceneNode* CCubeSceneNode::clone(ISceneNode* newParent, ISceneManager* newManager)
+std::shared_ptr<ISceneNode> CCubeSceneNode::clone(std::shared_ptr<ISceneNode> newParent,
+                                                  std::shared_ptr<ISceneManager> newManager)
 {
 	if (!newParent)
-		newParent = Parent;
+		newParent = Parent.lock();
 	if (!newManager)
-		newManager = SceneManager;
+		newManager = SceneManager.lock();
 
-	CCubeSceneNode* nb = new CCubeSceneNode(Size, newParent,
+	auto nb = std::make_shared<CCubeSceneNode>(Size,
 		newManager, ID, RelativeTranslation);
-
-	nb->cloneMembers(this, newManager);
+	newParent->addChild(nb);
+	nb->cloneMembers(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), newManager);
 	nb->getMaterial(0) = getMaterial(0);
 	nb->Shadow = Shadow;
-	if ( nb->Shadow )
-		nb->Shadow->grab();
 
-	if ( newParent )
-		nb->drop();
 	return nb;
 }
 

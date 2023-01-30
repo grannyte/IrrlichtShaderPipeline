@@ -29,10 +29,10 @@ namespace scene
 
 //! constructor
 CParticleSystemSceneNode::CParticleSystemSceneNode(bool createDefaultEmitter,
-	ISceneNode* parent, ISceneManager* mgr, s32 id,
+	std::shared_ptr<ISceneManager> mgr, s32 id,
 	const core::vector3df& position, const core::vector3df& rotation,
 	const core::vector3df& scale)
-	: IParticleSystemSceneNode(parent, mgr, id, position, rotation, scale),
+	: IParticleSystemSceneNode(mgr, id, position, rotation, scale),
 	Emitter(0), ParticleSize(core::dimension2d<f32>(5.0f, 5.0f)), LastEmitTime(0),
 	MeshBuffer(0), VertexBuffer(0), IndexBuffer(0), ParticlesAreGlobal(true)
 {
@@ -302,7 +302,7 @@ void CParticleSystemSceneNode::OnRegisterSceneNode()
 
 	if (IsVisible && (Particles.size() != 0))
 	{
-		SceneManager->registerNodeForRendering(this);
+		SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()));
 		ISceneNode::OnRegisterSceneNode();
 	}
 }
@@ -311,8 +311,8 @@ void CParticleSystemSceneNode::OnRegisterSceneNode()
 //! render
 void CParticleSystemSceneNode::render()
 {
-	video::IVideoDriver* driver = SceneManager->getVideoDriver();
-	ICameraSceneNode* camera = SceneManager->getActiveCamera();
+	video::IVideoDriver* driver = SceneManager.lock()->getVideoDriver();
+	auto camera = SceneManager.lock()->getActiveCamera();
 
 	if (!camera || !driver)
 		return;

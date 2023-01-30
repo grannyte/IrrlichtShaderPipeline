@@ -19,7 +19,7 @@ namespace scene
 	public:
 
 		//! constructor
-		CBoneSceneNode(ISceneNode* parent, ISceneManager* mgr,
+		CBoneSceneNode(std::shared_ptr<ISceneManager> mgr,
 			s32 id=-1, u32 boneIndex=0, const c8* boneName=0);
 
 		//! Returns the index of the bone
@@ -61,7 +61,7 @@ namespace scene
 		}
 
 	private:
-		void helper_updateAbsolutePositionOfAllChildren(ISceneNode *Node);
+		void helper_updateAbsolutePositionOfAllChildren(std::shared_ptr<ISceneNode>Node);
 
 		u32 BoneIndex;
 

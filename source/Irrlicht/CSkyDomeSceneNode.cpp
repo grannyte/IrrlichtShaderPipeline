@@ -32,8 +32,8 @@ namespace scene
 
 CSkyDomeSceneNode::CSkyDomeSceneNode(video::ITexture* sky, u32 horiRes, u32 vertRes,
 		f32 texturePercentage, f32 spherePercentage, f32 radius,
-		ISceneNode* parent, ISceneManager* mgr, s32 id)
-	: ISceneNode(parent, mgr, id), Buffer(0),
+		std::shared_ptr<ISceneManager> mgr, s32 id)
+	: ISceneNode(mgr, id), Buffer(0),
 	  HorizontalResolution(horiRes), VerticalResolution(vertRes),
 	  TexturePercentage(texturePercentage),
 	  SpherePercentage(spherePercentage), Radius(radius)
@@ -133,8 +133,8 @@ void CSkyDomeSceneNode::generateMesh()
 //! renders the node.
 void CSkyDomeSceneNode::render()
 {
-	video::IVideoDriver* driver = SceneManager->getVideoDriver();
-	scene::ICameraSceneNode* camera = SceneManager->getActiveCamera();
+	video::IVideoDriver* driver = SceneManager.lock()->getVideoDriver();
+	auto camera = SceneManager.lock()->getActiveCamera();
 
 	if (!camera || !driver)
 		return;
@@ -160,8 +160,8 @@ void CSkyDomeSceneNode::render()
 		if ( DebugDataVisible & scene::EDS_NORMALS )
 		{
 			// draw normals
-			const f32 debugNormalLength = SceneManager->getParameters()->getAttributeAsFloat(DEBUG_NORMAL_LENGTH);
-			const video::SColor debugNormalColor = SceneManager->getParameters()->getAttributeAsColor(DEBUG_NORMAL_COLOR);
+			const f32 debugNormalLength = SceneManager.lock()->getParameters()->getAttributeAsFloat(DEBUG_NORMAL_LENGTH);
+			const video::SColor debugNormalColor = SceneManager.lock()->getParameters()->getAttributeAsColor(DEBUG_NORMAL_COLOR);
 			driver->drawMeshBufferNormals(Buffer, debugNormalLength, debugNormalColor);
 		}
 
@@ -188,7 +188,7 @@ void CSkyDomeSceneNode::OnRegisterSceneNode()
 {
 	if (IsVisible)
 	{
-		SceneManager->registerNodeForRendering(this, ESNRP_SKY_BOX );
+		SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), ESNRP_SKY_BOX);
 	}
 
 	ISceneNode::OnRegisterSceneNode();
@@ -242,20 +242,20 @@ void CSkyDomeSceneNode::deserializeAttributes(io::IAttributes* in, io::SAttribut
 }
 
 //! Creates a clone of this scene node and its children.
-ISceneNode* CSkyDomeSceneNode::clone(ISceneNode* newParent, ISceneManager* newManager)
+std::shared_ptr<ISceneNode> CSkyDomeSceneNode::clone(std::shared_ptr<ISceneNode> newParent,
+                                                     std::shared_ptr<ISceneManager> newManager)
 {
 	if (!newParent)
-		newParent = Parent;
+		newParent = Parent.lock();
 	if (!newManager)
-		newManager = SceneManager;
+		newManager = SceneManager.lock();
 
-	CSkyDomeSceneNode* nb = new CSkyDomeSceneNode(Buffer->getMaterial().TextureLayer[0].Texture, HorizontalResolution, VerticalResolution, TexturePercentage,
-		SpherePercentage, Radius, newParent, newManager, ID);
+	auto nb = std::make_shared< CSkyDomeSceneNode>(Buffer->getMaterial().TextureLayer[0].Texture, HorizontalResolution, VerticalResolution, TexturePercentage,
+		SpherePercentage, Radius,  newManager, ID);
 
-	nb->cloneMembers(this, newManager);
+	nb->cloneMembers(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), newManager);
 
-	if ( newParent )
-		nb->drop();
+	
 	return nb;
 }
 

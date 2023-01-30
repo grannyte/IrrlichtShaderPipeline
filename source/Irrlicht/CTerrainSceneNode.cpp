@@ -30,12 +30,12 @@ namespace scene
 {
 
 	//! constructor
-	CTerrainSceneNode::CTerrainSceneNode(ISceneNode* parent, ISceneManager* mgr,
+	CTerrainSceneNode::CTerrainSceneNode( std::shared_ptr<ISceneManager> mgr,
 			io::IFileSystem* fs, s32 id, s32 maxLOD, E_TERRAIN_PATCH_SIZE patchSize,
 			const core::vector3df& position,
 			const core::vector3df& rotation,
 			const core::vector3df& scale)
-	: ITerrainSceneNode(parent, mgr, id, position, rotation, scale),
+	: ITerrainSceneNode( mgr, id, position, rotation, scale),
 	TerrainData(patchSize, maxLOD, position, rotation, scale), RenderBuffer(0),
 	VerticesToRender(0), IndicesToRender(0), DynamicSelectorUpdate(false),
 	OverrideDistanceThreshold(false), UseDefaultRotationPivot(true), ForceRecalculation(true),
@@ -47,7 +47,7 @@ namespace scene
 		#endif
 
 		Mesh = new SMesh();
-		RenderBuffer = new CMeshBuffer<video::S3DVertex2TCoords>(SceneManager->getVideoDriver()->getVertexDescriptor(1), video::EIT_16BIT);
+		RenderBuffer = new CMeshBuffer<video::S3DVertex2TCoords>(SceneManager.lock()->getVideoDriver()->getVertexDescriptor(1), video::EIT_16BIT);
 
 		RenderBuffer->setHardwareMappingHint(scene::EHM_STATIC, scene::EBT_VERTEX);
 		RenderBuffer->setHardwareMappingHint(scene::EHM_DYNAMIC, scene::EBT_INDEX);
@@ -84,7 +84,7 @@ namespace scene
 
 		Mesh->MeshBuffers.clear();
 		const u32 startTime = os::Timer::getRealTime();
-		video::IImage* heightMap = SceneManager->getVideoDriver()->createImageFromFile(file);
+		video::IImage* heightMap = SceneManager.lock()->getVideoDriver()->createImageFromFile(file);
 
 		if (!heightMap)
 		{
@@ -134,7 +134,7 @@ namespace scene
 
 		// --- Generate vertex data from heightmap ----
 		// resize the vertex array for the mesh buffer one time (makes loading faster)
-		CMeshBuffer<video::S3DVertex2TCoords>* mb = new CMeshBuffer<video::S3DVertex2TCoords>(SceneManager->getVideoDriver()->getVertexDescriptor(1), video::EIT_16BIT);
+		CMeshBuffer<video::S3DVertex2TCoords>* mb = new CMeshBuffer<video::S3DVertex2TCoords>(SceneManager.lock()->getVideoDriver()->getVertexDescriptor(1), video::EIT_16BIT);
 
 		const u32 numVertices = TerrainData.Size * TerrainData.Size;
 		if (numVertices <= 65536)
@@ -206,7 +206,7 @@ namespace scene
 			Vertices[i].Pos += TerrainData.Position;
 		}
 
-		SceneManager->getMeshManipulator()->copyVertices(mb->getVertexBuffer(), 0, mb->getVertexDescriptor(), RenderBuffer->getVertexBuffer(), 0, RenderBuffer->getVertexDescriptor(), false);
+		SceneManager.lock()->getMeshManipulator()->copyVertices(mb->getVertexBuffer(), 0, mb->getVertexDescriptor(), RenderBuffer->getVertexBuffer(), 0, RenderBuffer->getVertexDescriptor(), false);
 
 		for (u32 i = 0; i < numVertices; ++i)
 		{
@@ -317,7 +317,7 @@ namespace scene
 
 		// --- Generate vertex data from heightmap ----
 		// resize the vertex array for the mesh buffer one time (makes loading faster)
-		CMeshBuffer<video::S3DVertex2TCoords>* mb = new CMeshBuffer<video::S3DVertex2TCoords>(SceneManager->getVideoDriver()->getVertexDescriptor(1), video::EIT_16BIT);
+		CMeshBuffer<video::S3DVertex2TCoords>* mb = new CMeshBuffer<video::S3DVertex2TCoords>(SceneManager.lock()->getVideoDriver()->getVertexDescriptor(1), video::EIT_16BIT);
 
 		const u32 numVertices = TerrainData.Size * TerrainData.Size;
 		if (numVertices <= 65536)
@@ -459,7 +459,7 @@ namespace scene
 			Vertices[i].Pos += TerrainData.Position;
 		}
 
-		SceneManager->getMeshManipulator()->copyVertices(mb->getVertexBuffer(), 0, mb->getVertexDescriptor(), RenderBuffer->getVertexBuffer(), 0, RenderBuffer->getVertexDescriptor(), false);
+		SceneManager.lock()->getMeshManipulator()->copyVertices(mb->getVertexBuffer(), 0, mb->getVertexDescriptor(), RenderBuffer->getVertexBuffer(), 0, RenderBuffer->getVertexDescriptor(), false);
 
 		for (u32 i = 0; i < vertexCount; ++i)
 		{
@@ -613,10 +613,10 @@ namespace scene
 	//! generated for that patch.
 	void CTerrainSceneNode::OnRegisterSceneNode()
 	{
-		if (!IsVisible || !SceneManager->getActiveCamera())
+		if (!IsVisible || !SceneManager.lock()->getActiveCamera())
 			return;
 
-		SceneManager->registerNodeForRendering(this);
+		SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()));
 
 		preRenderCalculationsIfNeeded();
 
@@ -628,7 +628,7 @@ namespace scene
 
 	void CTerrainSceneNode::preRenderCalculationsIfNeeded()
 	{
-		scene::ICameraSceneNode * camera = SceneManager->getActiveCamera();
+		auto camera = SceneManager.lock()->getActiveCamera();
 		if (!camera)
 			return;
 
@@ -637,7 +637,7 @@ namespace scene
 		const core::vector3df cameraRotation = core::line3d<f32>(cameraPosition, camera->getTarget()).getVector().getHorizontalAngle();
 		core::vector3df cameraUp = camera->getUpVector();
 		cameraUp.normalize();
-		const f32 CameraFOV = SceneManager->getActiveCamera()->getFOV();
+		const f32 CameraFOV = SceneManager.lock()->getActiveCamera()->getFOV();
 
 		// Only check on the Camera's Y Rotation
 		if (!ForceRecalculation)
@@ -671,7 +671,7 @@ namespace scene
 
 	void CTerrainSceneNode::preRenderLODCalculations()
 	{
-		scene::ICameraSceneNode * camera = SceneManager->getActiveCamera();
+		auto camera = SceneManager.lock()->getActiveCamera();
 
 		if (!camera)
 			return;
@@ -763,7 +763,7 @@ namespace scene
 		if (DynamicSelectorUpdate && TriangleSelector)
 		{
 			CTerrainTriangleSelector* selector = (CTerrainTriangleSelector*)TriangleSelector;
-			selector->setTriangleData(this, -1);
+			selector->setTriangleData(std::dynamic_pointer_cast<ITerrainSceneNode>(shared_from_this()), -1);
 		}
 	}
 
@@ -771,13 +771,13 @@ namespace scene
 	//! Render the scene node
 	void CTerrainSceneNode::render()
 	{
-		if (!IsVisible || !SceneManager->getActiveCamera())
+		if (!IsVisible || !SceneManager.lock()->getActiveCamera())
 			return;
 
 		if (!Mesh->getMeshBufferCount())
 			return;
 
-		video::IVideoDriver* driver = SceneManager->getVideoDriver();
+		video::IVideoDriver* driver = SceneManager.lock()->getVideoDriver();
 
 		driver->setTransform (video::ETS_WORLD, core::IdentityMatrix);
 		driver->setMaterial(Mesh->getMeshBuffer(0)->getMaterial());
@@ -812,8 +812,8 @@ namespace scene
 			if (DebugDataVisible & scene::EDS_NORMALS)
 			{
 				// draw normals
-				const f32 debugNormalLength = SceneManager->getParameters()->getAttributeAsFloat(DEBUG_NORMAL_LENGTH);
-				const video::SColor debugNormalColor = SceneManager->getParameters()->getAttributeAsColor(DEBUG_NORMAL_COLOR);
+				const f32 debugNormalLength = SceneManager.lock()->getParameters()->getAttributeAsFloat(DEBUG_NORMAL_LENGTH);
+				const video::SColor debugNormalColor = SceneManager.lock()->getParameters()->getAttributeAsColor(DEBUG_NORMAL_COLOR);
 				driver->drawMeshBufferNormals(RenderBuffer, debugNormalLength, debugNormalColor);
 			}
 
@@ -859,7 +859,7 @@ namespace scene
 		LOD = core::clamp(LOD, 0, TerrainData.MaxLOD - 1);
 
 		IMeshBuffer* meshBuffer = Mesh->getMeshBuffer(0);
-		SceneManager->getMeshManipulator()->copyVertices(meshBuffer->getVertexBuffer(), 0, meshBuffer->getVertexDescriptor(), mb.getVertexBuffer(), 0, mb.getVertexDescriptor(), false);
+		SceneManager.lock()->getMeshManipulator()->copyVertices(meshBuffer->getVertexBuffer(), 0, meshBuffer->getVertexDescriptor(), mb.getVertexBuffer(), 0, mb.getVertexDescriptor(), false);
 		mb.getIndexBuffer()->setType(RenderBuffer->getIndexBuffer()->getType());
 
 		// calculate the step we take for all patches, since LOD is the same
@@ -1585,18 +1585,19 @@ namespace scene
 
 
 	//! Creates a clone of this scene node and its children.
-	ISceneNode* CTerrainSceneNode::clone(ISceneNode* newParent, ISceneManager* newManager)
+	std::shared_ptr<ISceneNode> CTerrainSceneNode::clone(std::shared_ptr<ISceneNode> newParent,
+	                                                     std::shared_ptr<ISceneManager> newManager)
 	{
 		if (!newParent)
-			newParent = Parent;
+			newParent = Parent.lock();
 		if (!newManager)
-			newManager = SceneManager;
+			newManager = SceneManager.lock();
 
-		CTerrainSceneNode* nb = new CTerrainSceneNode(
-			newParent, newManager, FileSystem, ID,
+		auto nb = std::make_shared< CTerrainSceneNode>(
+			 newManager, FileSystem, ID,
 			4, ETPS_17, getPosition(), getRotation(), getScale());
-
-		nb->cloneMembers(this, newManager);
+		newParent->addChild(nb);
+		nb->cloneMembers(std::dynamic_pointer_cast<ITerrainSceneNode>(shared_from_this()), newManager);
 
 		// instead of cloning the data structures, recreate the terrain.
 		// (temporary solution)
@@ -1631,8 +1632,6 @@ namespace scene
 
 		// finish
 
-		if ( newParent )
-			nb->drop();
 		return nb;
 	}
 

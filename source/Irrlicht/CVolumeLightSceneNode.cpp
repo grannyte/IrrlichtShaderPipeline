@@ -14,13 +14,13 @@ namespace scene
 {
 
 //! constructor
-CVolumeLightSceneNode::CVolumeLightSceneNode(ISceneNode* parent, ISceneManager* mgr,
+CVolumeLightSceneNode::CVolumeLightSceneNode( std::shared_ptr<ISceneManager> mgr,
 		s32 id, const u32 subdivU, const u32 subdivV,
 		const video::SColor foot,
 		const video::SColor tail,
 		const core::vector3df& position,
 		const core::vector3df& rotation, const core::vector3df& scale)
-	: IVolumeLightSceneNode(parent, mgr, id, position, rotation, scale),
+	: IVolumeLightSceneNode(mgr, id, position, rotation, scale),
 		Mesh(0), LPDistance(8.0f),
 		SubdivideU(subdivU), SubdivideV(subdivV),
 		FootColor(foot), TailColor(tail),
@@ -45,7 +45,7 @@ void CVolumeLightSceneNode::constructLight()
 {
 	if (Mesh)
 		Mesh->drop();
-	Mesh = SceneManager->getGeometryCreator()->createVolumeLightMesh(SubdivideU, SubdivideV, FootColor, TailColor, LPDistance, LightDimensions);
+	Mesh = SceneManager.lock()->getGeometryCreator()->createVolumeLightMesh(SubdivideU, SubdivideV, FootColor, TailColor, LPDistance, LightDimensions);
 }
 
 
@@ -55,7 +55,7 @@ void CVolumeLightSceneNode::render()
 	if (!Mesh)
 		return;
 
-	video::IVideoDriver* driver = SceneManager->getVideoDriver();
+	video::IVideoDriver* driver = SceneManager.lock()->getVideoDriver();
 	driver->setTransform(video::ETS_WORLD, AbsoluteTransformation);
 
 	driver->setMaterial(Mesh->getMeshBuffer(0)->getMaterial());
@@ -74,7 +74,7 @@ void CVolumeLightSceneNode::OnRegisterSceneNode()
 {
 	if (IsVisible)
 	{
-		SceneManager->registerNodeForRendering(this, ESNRP_TRANSPARENT);
+		SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), ESNRP_TRANSPARENT);
 	}
 	ISceneNode::OnRegisterSceneNode();
 }
@@ -178,21 +178,20 @@ void CVolumeLightSceneNode::deserializeAttributes(io::IAttributes* in, io::SAttr
 
 
 //! Creates a clone of this scene node and its children.
-ISceneNode* CVolumeLightSceneNode::clone(ISceneNode* newParent, ISceneManager* newManager)
+std::shared_ptr<ISceneNode> CVolumeLightSceneNode::clone(std::shared_ptr<ISceneNode> newParent,
+                                                         std::shared_ptr<ISceneManager> newManager)
 {
 	if (!newParent)
-		newParent = Parent;
+		newParent = Parent.lock();
 	if (!newManager)
-		newManager = SceneManager;
+		newManager = SceneManager.lock();
 
-	CVolumeLightSceneNode* nb = new CVolumeLightSceneNode(newParent,
+	auto nb = std::make_shared<CVolumeLightSceneNode>(
 		newManager, ID, SubdivideU, SubdivideV, FootColor, TailColor, RelativeTranslation);
-
-	nb->cloneMembers(this, newManager);
+	newManager->getRootSceneNode()->addChild(nb);
+	nb->cloneMembers(std::dynamic_pointer_cast<CVolumeLightSceneNode>(shared_from_this()), newManager);
 	nb->getMaterial(0) = Mesh->getMeshBuffer(0)->getMaterial();
 
-	if ( newParent )
-		nb->drop();
 	return nb;
 }
 

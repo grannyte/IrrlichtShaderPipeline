@@ -192,12 +192,12 @@ namespace irr
 			IRR_XML_FORMAT_SCENE(L"irr_scene"), IRR_XML_FORMAT_NODE(L"node"), IRR_XML_FORMAT_NODE_ATTR_TYPE(L"type"), AutoRegisterNewNodes(AutoRegChilds)
 		{
 #ifdef _DEBUG
-			ISceneManager::setDebugName("CSceneManager ISceneManager");
+			//ISceneManager::setDebugName("CSceneManager ISceneManager");
 			ISceneNode::setDebugName("CSceneManager ISceneNode");
 #endif
 
 			// root node's scene manager
-			SceneManager = this;
+			//SceneManager = this;
 
 			if (Driver)
 				Driver->grab();
@@ -223,7 +223,7 @@ namespace irr
 			Parameters->setAttribute(DEBUG_NORMAL_COLOR, video::SColor(255, 34, 221, 221));
 
 			// create collision manager
-			CollisionManager = new CSceneCollisionManager(this, Driver);
+			CollisionManager = std::make_shared<CSceneCollisionManager>(this, Driver);
 
 			// create geometry creator
 			GeometryCreator = new CGeometryCreator(Driver);
@@ -347,7 +347,7 @@ namespace irr
 				CursorControl->drop();
 
 			if (CollisionManager)
-				CollisionManager->drop();
+				CollisionManager.reset();
 
 			if (GeometryCreator)
 				GeometryCreator->drop();
@@ -362,8 +362,6 @@ namespace irr
 			for (i = 0; i < SceneLoaderList.size(); ++i)
 				SceneLoaderList[i]->drop();
 
-			if (ActiveCamera)
-				ActiveCamera->drop();
 			ActiveCamera = 0;
 
 			if (MeshCache)
@@ -492,28 +490,29 @@ namespace irr
 
 		//! Adds a text scene node, which is able to display
 		//! 2d text at a position in three dimensional space
-		ITextSceneNode* CSceneManager::addTextSceneNode(gui::IGUIFont* font,
-			const wchar_t* text, video::SColor color, ISceneNode* parent,
+		std::shared_ptr<ITextSceneNode> CSceneManager::addTextSceneNode(gui::IGUIFont* font,
+			const wchar_t* text, video::SColor color,
+			std::shared_ptr<ISceneNode> parent,
 			const core::vector3df& position, s32 id)
 		{
 			if (!font)
 				return 0;
 
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
-			ITextSceneNode* t = new CTextSceneNode(parent, this, id, font,
+			auto t = std::make_shared< CTextSceneNode >(std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), id, font,
 				getSceneCollisionManager(), position, text, color);
+			if (parent)
+				parent->addChild(t);
 
-			if (parent || AutoRegisterNewNodes)
-				t->drop();
 
 			return t;
 		}
 
 		//! Adds a text scene node, which uses billboards
-		IBillboardTextSceneNode* CSceneManager::addBillboardTextSceneNode(gui::IGUIFont* font,
-			const wchar_t* text, ISceneNode* parent,
+		std::shared_ptr<IBillboardTextSceneNode> CSceneManager::addBillboardTextSceneNode(gui::IGUIFont* font,
+			const wchar_t* text, std::shared_ptr<ISceneNode> parent,
 			const core::dimension2d<f32>& size,
 			const core::vector3df& position, s32 id,
 			video::SColor colorTop, video::SColor colorBottom)
@@ -525,33 +524,33 @@ namespace irr
 				return 0;
 
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
-			IBillboardTextSceneNode* node = new CBillboardTextSceneNode(parent, this, id, font, text, position, size,
+			auto node = std::make_shared < CBillboardTextSceneNode>(std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), id, font, text, position, size,
 				colorTop, colorBottom);
-			if (parent || AutoRegisterNewNodes)
-				node->drop();
+			if (parent)
+				parent->addChild(node);
 
 			return node;
 		}
 
 		//! Adds a scene node, which can render a quake3 shader
-		IMeshSceneNode* CSceneManager::addQuake3SceneNode(const IMeshBuffer* meshBuffer,
+		std::shared_ptr<IMeshSceneNode> CSceneManager::addQuake3SceneNode(const IMeshBuffer* meshBuffer,
 			const quake3::IShader* shader,
-			ISceneNode* parent, s32 id)
+			std::shared_ptr<ISceneNode> parent, s32 id)
 		{
 #ifdef _IRR_COMPILE_WITH_BSP_LOADER_
 			if (!shader)
 				return 0;
 
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
-			CQuake3ShaderSceneNode* node = new CQuake3ShaderSceneNode(parent,
-				this, id, FileSystem,
+			auto node = std::make_shared<CQuake3ShaderSceneNode >(
+				std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), id, FileSystem,
 				meshBuffer, shader);
-			if (parent || AutoRegisterNewNodes)
-				node->drop();
+			if (parent)
+				parent->addChild(node);
 
 			return node;
 #else
@@ -561,56 +560,56 @@ namespace irr
 
 		//! adds Volume Lighting Scene Node.
 		//! the returned pointer must not be dropped.
-		IVolumeLightSceneNode* CSceneManager::addVolumeLightSceneNode(
-			ISceneNode* parent, s32 id,
+		std::shared_ptr<IVolumeLightSceneNode> CSceneManager::addVolumeLightSceneNode(
+			std::shared_ptr<ISceneNode> parent, s32 id,
 			const u32 subdivU, const u32 subdivV,
 			const video::SColor foot, const video::SColor tail,
 			const core::vector3df& position, const core::vector3df& rotation, const core::vector3df& scale)
 		{
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
-			IVolumeLightSceneNode* node = new CVolumeLightSceneNode(parent, this, id, subdivU, subdivV, foot, tail, position, rotation, scale);
-			if (parent || AutoRegisterNewNodes)
-				node->drop();
+			auto node = std::make_shared < CVolumeLightSceneNode>(std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), id, subdivU, subdivV, foot, tail, position, rotation, scale);
+			if (parent)
+				parent->addChild(node);
 
 			return node;
 		}
 
 		//! adds a test scene node for test purposes to the scene. It is a simple cube of (1,1,1) size.
 		//! the returned pointer must not be dropped.
-		IMeshSceneNode* CSceneManager::addCubeSceneNode(f32 size, ISceneNode* parent,
+		std::shared_ptr<IMeshSceneNode> CSceneManager::addCubeSceneNode(f32 size, std::shared_ptr<ISceneNode> parent,
 			s32 id, const core::vector3df& position,
 			const core::vector3df& rotation, const core::vector3df& scale)
 		{
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
-			IMeshSceneNode* node = new CCubeSceneNode(size, parent, this, id, position, rotation, scale);
-			if (parent || AutoRegisterNewNodes)
-				node->drop();
+			auto node = std::make_shared < CCubeSceneNode>(size, std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), id, position, rotation, scale);
+			if (parent)
+				parent->addChild(node);
 
 			return node;
 		}
 
 		//! Adds a sphere scene node for test purposes to the scene.
-		IMeshSceneNode* CSceneManager::addSphereSceneNode(f32 radius, s32 polyCount,
-			ISceneNode* parent, s32 id, const core::vector3df& position,
+		std::shared_ptr<IMeshSceneNode> CSceneManager::addSphereSceneNode(f32 radius, s32 polyCount,
+			std::shared_ptr<ISceneNode> parent, s32 id, const core::vector3df& position,
 			const core::vector3df& rotation, const core::vector3df& scale)
 		{
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
-			IMeshSceneNode* node = new CSphereSceneNode(radius, polyCount, polyCount, parent, this, id, position, rotation, scale);
-			if (parent || AutoRegisterNewNodes)
-				node->drop();
+			auto node = std::make_shared < CSphereSceneNode>(radius, polyCount, polyCount,  std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), id, position, rotation, scale);
+			if (parent)
+				parent->addChild(node);
 
 			return node;
 		}
 
 		//! adds a scene node for rendering a static mesh
 		//! the returned pointer must not be dropped.
-		IMeshSceneNode* CSceneManager::addMeshSceneNode(IMesh* mesh, ISceneNode* parent, s32 id,
+		std::shared_ptr<IMeshSceneNode> CSceneManager::addMeshSceneNode(IMesh* mesh, std::shared_ptr<ISceneNode> parent, s32 id,
 			const core::vector3df& position, const core::vector3df& rotation,
 			const core::vector3df& scale, bool alsoAddIfMeshPointerZero)
 		{
@@ -618,33 +617,33 @@ namespace irr
 				return 0;
 
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
-			IMeshSceneNode* node = new CMeshSceneNode(mesh, parent, this, id, position, rotation, scale);
-			if (parent || AutoRegisterNewNodes)
-				node->drop();
+			auto node = std::make_shared <  CMeshSceneNode >(mesh, std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), id, position, rotation, scale);
+			if (parent)
+				parent->addChild(node);
 
 			return node;
 		}
 
 		//! Adds a scene node for rendering a animated water surface mesh.
-		ISceneNode* CSceneManager::addWaterSurfaceSceneNode(IMesh* mesh, f32 waveHeight, f32 waveSpeed, f32 waveLength,
-			ISceneNode* parent, s32 id, const core::vector3df& position,
+		std::shared_ptr<ISceneNode> CSceneManager::addWaterSurfaceSceneNode(IMesh* mesh, f32 waveHeight, f32 waveSpeed, f32 waveLength,
+			std::shared_ptr<ISceneNode> parent, s32 id, const core::vector3df& position,
 			const core::vector3df& rotation, const core::vector3df& scale)
 		{
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
-			ISceneNode* node = new CWaterSurfaceSceneNode(waveHeight, waveSpeed, waveLength,
-				mesh, parent, this, id, position, rotation, scale);
-			if (parent || AutoRegisterNewNodes)
-				node->drop();
+			auto node = std::make_shared < CWaterSurfaceSceneNode >(waveHeight, waveSpeed, waveLength,
+				mesh, std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), id, position, rotation, scale);
+			if (parent)
+				parent->addChild(node);
 
 			return node;
 		}
 
 		//! adds a scene node for rendering an animated mesh model
-		IAnimatedMeshSceneNode* CSceneManager::addAnimatedMeshSceneNode(IAnimatedMesh* mesh, ISceneNode* parent, s32 id,
+		std::shared_ptr<IAnimatedMeshSceneNode> CSceneManager::addAnimatedMeshSceneNode(IAnimatedMesh* mesh, std::shared_ptr<ISceneNode> parent, s32 id,
 			const core::vector3df& position, const core::vector3df& rotation,
 			const core::vector3df& scale, bool alsoAddIfMeshPointerZero)
 		{
@@ -652,18 +651,17 @@ namespace irr
 				return 0;
 
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
-			IAnimatedMeshSceneNode* node =
-				new CAnimatedMeshSceneNode(mesh, parent, this, id, position, rotation, scale);
-			if (parent || AutoRegisterNewNodes)
-				node->drop();
+			auto node = std::make_shared < CAnimatedMeshSceneNode>(mesh,std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), id, position, rotation, scale);
+			if (parent)
+				parent->addChild(node);
 
 			return node;
 		}
 
 		//! adds a scene node for rendering an animated mesh model
-		IInstancedMeshSceneNode* CSceneManager::addInstancedMeshSceneNode(IMesh* mesh, ISceneNode* parent, s32 id,
+		std::shared_ptr<IInstancedMeshSceneNode> CSceneManager::addInstancedMeshSceneNode(IMesh* mesh, std::shared_ptr<ISceneNode> parent, s32 id,
 			const core::vector3df& position, const core::vector3df& rotation,
 			const core::vector3df& scale, bool alsoAddIfMeshPointerZero)
 		{
@@ -671,12 +669,11 @@ namespace irr
 				return 0;
 
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
-			IInstancedMeshSceneNode* node =
-				new CInstancedMeshSceneNode(mesh, parent, this, id, position, rotation, scale);
-			if (parent || AutoRegisterNewNodes)
-				node->drop();
+			auto node = std::make_shared <  CInstancedMeshSceneNode >(mesh, std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), id, position, rotation, scale);
+			if (parent)
+				parent->addChild(node);
 
 			return node;
 		}
@@ -684,19 +681,19 @@ namespace irr
 		//! Adds a scene node for rendering using a octree to the scene graph. This a good method for rendering
 		//! scenes with lots of geometry. The Octree is built on the fly from the mesh, much
 		//! faster then a bsp tree.
-		IMeshSceneNode* CSceneManager::addOctreeSceneNode(const core::array<scene::IMeshBuffer*>& meshes, IMesh* origMesh, ISceneNode* parent,
+		std::shared_ptr<IMeshSceneNode> CSceneManager::addOctreeSceneNode(const core::array<scene::IMeshBuffer*>& meshes, IMesh* origMesh, std::shared_ptr<ISceneNode> parent,
 			s32 id, s32 minimalPolysPerNode)
 		{
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
-			COctreeSceneNode* node = new COctreeSceneNode(meshes, parent, this, id, minimalPolysPerNode);
+			auto node = std::make_shared < COctreeSceneNode >(meshes, std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), id, minimalPolysPerNode);
 
 			if (node)
 			{
 				node->setMesh(origMesh);
-				if (parent || AutoRegisterNewNodes)
-					node->drop();
+				if (parent)
+					parent->addChild(node);
 			}
 
 			return node;
@@ -708,19 +705,19 @@ namespace irr
 		//! \param parent: Parent scene node of the camera. Can be null. If the parent moves,
 		//! the camera will move too.
 		//! \return Returns pointer to interface to camera
-		ICameraSceneNode* CSceneManager::addCameraSceneNode(ISceneNode* parent,
-			const core::vector3df& position, const core::vector3df& lookat, s32 id,
+		std::shared_ptr<ICameraSceneNode> CSceneManager::addCameraSceneNode(std::shared_ptr<ISceneNode> parent,
+			const core::vector3df& position,
+			const core::vector3df& lookat, s32 id,
 			bool makeActive)
 		{
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
-			ICameraSceneNode* node = new CCameraSceneNode(parent, this, id, position, lookat);
-
+			auto node = std::make_shared < CCameraSceneNode >( std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), id, position, lookat);
+			if (parent)
+				parent->addChild(node);
 			if (makeActive)
 				setActiveCamera(node);
-			if (parent || AutoRegisterNewNodes)
-				node->drop();
 
 			return node;
 		}
@@ -728,14 +725,17 @@ namespace irr
 		//! Adds a camera scene node which is able to be controlled with the mouse similar
 		//! to in the 3D Software Maya by Alias Wavefront.
 		//! The returned pointer must not be dropped.
-		ICameraSceneNode* CSceneManager::addCameraSceneNodeMaya(ISceneNode* parent,
+		std::shared_ptr<ICameraSceneNode> CSceneManager::addCameraSceneNodeMaya(std::shared_ptr<ISceneNode> parent,
 			f32 rotateSpeed, f32 zoomSpeed, f32 translationSpeed, s32 id, f32 distance,
 			bool makeActive)
 		{
-			ICameraSceneNode* node = addCameraSceneNode(parent, core::vector3df(),
+			auto node = addCameraSceneNode(parent, core::vector3df(),
 				core::vector3df(0, 0, 100), id, makeActive);
+			;
 			if (node)
 			{
+				if (parent)
+					parent->addChild(node);
 				ISceneNodeAnimator* anm = new CSceneNodeAnimatorCameraMaya(CursorControl,
 					rotateSpeed, zoomSpeed, translationSpeed, distance);
 
@@ -748,15 +748,20 @@ namespace irr
 
 		//! Adds a camera scene node which is able to be controlled with the mouse and keys
 		//! like in most first person shooters (FPS):
-		ICameraSceneNode* CSceneManager::addCameraSceneNodeFPS(ISceneNode* parent,
-			f32 rotateSpeed, f32 moveSpeed, s32 id, SKeyMap* keyMapArray,
-			s32 keyMapSize, bool noVerticalMovement, f32 jumpSpeed,
+		std::shared_ptr<ICameraSceneNode> CSceneManager::addCameraSceneNodeFPS(std::shared_ptr<ISceneNode> parent,
+			f32 rotateSpeed, f32 moveSpeed, s32 id,
+			SKeyMap* keyMapArray,
+			s32 keyMapSize, bool noVerticalMovement,
+			f32 jumpSpeed,
 			bool invertMouseY, bool makeActive)
 		{
-			ICameraSceneNode* node = addCameraSceneNode(parent, core::vector3df(),
+			auto node = addCameraSceneNode(parent, core::vector3df(),
 				core::vector3df(0, 0, 100), id, makeActive);
+
 			if (node)
 			{
+				if (parent)
+					parent->addChild(node);
 				ISceneNodeAnimator* anm = new CSceneNodeAnimatorCameraFPS(CursorControl,
 					rotateSpeed, moveSpeed, jumpSpeed,
 					keyMapArray, keyMapSize, noVerticalMovement, invertMouseY);
@@ -773,15 +778,16 @@ namespace irr
 		//! Adds a dynamic light scene node. The light will cast dynamic light on all
 		//! other scene nodes in the scene, which have the material flag video::MTF_LIGHTING
 		//! turned on. (This is the default setting in most scene nodes).
-		ILightSceneNode* CSceneManager::addLightSceneNode(ISceneNode* parent,
-			const core::vector3df& position, video::SColorf color, f32 range, s32 id)
+		std::shared_ptr<ILightSceneNode> CSceneManager::addLightSceneNode(std::shared_ptr<ISceneNode> parent,
+			const core::vector3df& position,
+			video::SColorf color, f32 range, s32 id)
 		{
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
-			ILightSceneNode* node = new CLightSceneNode(parent, this, id, position, color, range);
-			if (parent || AutoRegisterNewNodes)
-				node->drop();
+			auto node = std::make_shared< CLightSceneNode>(std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), id, position, color, range);
+			if (parent)
+				parent->addChild(node);
 
 			return node;
 		}
@@ -789,75 +795,75 @@ namespace irr
 		//! Adds a billboard scene node to the scene. A billboard is like a 3d sprite: A 2d element,
 		//! which always looks to the camera. It is usually used for things like explosions, fire,
 		//! lensflares and things like that.
-		IBillboardSceneNode* CSceneManager::addBillboardSceneNode(ISceneNode* parent,
+		std::shared_ptr<IBillboardSceneNode> CSceneManager::addBillboardSceneNode(std::shared_ptr<ISceneNode> parent,
 			const core::dimension2d<f32>& size, const core::vector3df& position, s32 id,
 			video::SColor colorTop, video::SColor colorBottom
 		)
 		{
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
-			IBillboardSceneNode* node = new CBillboardSceneNode(parent, this, id, position, size,
+			auto node = std::make_shared<CBillboardSceneNode>( std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), id, position, size,
 				colorTop, colorBottom);
-			if (parent || AutoRegisterNewNodes)
-				node->drop();
+			if (parent)
+				parent->addChild(node);
 
 			return node;
 		}
 
 		//! Adds a skybox scene node. A skybox is a big cube with 6 textures on it and
 		//! is drawn around the camera position.
-		ISceneNode* CSceneManager::addSkyBoxSceneNode(video::ITexture* top, video::ITexture* bottom,
+		std::shared_ptr<ISceneNode> CSceneManager::addSkyBoxSceneNode(video::ITexture* top, video::ITexture* bottom,
 			video::ITexture* left, video::ITexture* right, video::ITexture* front,
-			video::ITexture* back, ISceneNode* parent, s32 id)
+			video::ITexture* back, std::shared_ptr<ISceneNode> parent, s32 id)
 		{
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
-			ISceneNode* node = new CSkyBoxSceneNode(top, bottom, left, right,
-				front, back, parent, this, id);
-			if (parent || AutoRegisterNewNodes)
-				node->drop();
+			auto node = std::make_shared<CSkyBoxSceneNode>(top, bottom, left, right,
+				front, back, std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), id);
+			if (parent)
+				parent->addChild(node);
 			return node;
 		}
 
 		//! Adds a skydome scene node. A skydome is a large (half-) sphere with a
 		//! panoramic texture on it and is drawn around the camera position.
-		ISceneNode* CSceneManager::addSkyDomeSceneNode(video::ITexture* texture,
+		std::shared_ptr<ISceneNode> CSceneManager::addSkyDomeSceneNode(video::ITexture* texture,
 			u32 horiRes, u32 vertRes, f32 texturePercentage, f32 spherePercentage, f32 radius,
-			ISceneNode* parent, s32 id)
+			std::shared_ptr<ISceneNode> parent, s32 id)
 		{
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
-			ISceneNode* node = new CSkyDomeSceneNode(texture, horiRes, vertRes,
-				texturePercentage, spherePercentage, radius, parent, this, id);
-			if (parent || AutoRegisterNewNodes)
-				node->drop();
+			auto node = std::make_shared<CSkyDomeSceneNode>(texture, horiRes, vertRes,
+				texturePercentage, spherePercentage, radius,std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), id);
+			if (parent)
+				parent->addChild(node);
 			return node;
 		}
 
 		//! Adds a particle system scene node.
-		IParticleSystemSceneNode* CSceneManager::addParticleSystemSceneNode(
-			bool withDefaultEmitter, ISceneNode* parent, s32 id,
+		std::shared_ptr<IParticleSystemSceneNode> CSceneManager::addParticleSystemSceneNode(
+			bool withDefaultEmitter, std::shared_ptr<ISceneNode> parent, s32 id,
 			const core::vector3df& position, const core::vector3df& rotation,
 			const core::vector3df& scale)
 		{
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
-			IParticleSystemSceneNode* node = new CParticleSystemSceneNode(withDefaultEmitter,
-				parent, this, id, position, rotation, scale);
-			if (parent || AutoRegisterNewNodes)
-				node->drop();
+			auto node = std::make_shared<CParticleSystemSceneNode>(withDefaultEmitter,
+				 std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), id, position, rotation, scale);
+			if (parent)
+				parent->addChild(node);
 
 			return node;
 		}
 
 		//! Adds a terrain scene node to the scene graph.
-		ITerrainSceneNode* CSceneManager::addTerrainSceneNode(
+		std::shared_ptr<ITerrainSceneNode> CSceneManager::addTerrainSceneNode(
 			const io::path& heightMapFileName,
-			ISceneNode* parent, s32 id,
+			std::shared_ptr<ISceneNode> parent, s32 id,
 			const core::vector3df& position,
 			const core::vector3df& rotation,
 			const core::vector3df& scale,
@@ -874,10 +880,11 @@ namespace irr
 				return 0;
 			}
 
-			ITerrainSceneNode* terrain = addTerrainSceneNode(file, parent, id,
+			auto terrain = addTerrainSceneNode(file, parent, id,
 				position, rotation, scale, vertexColor, maxLOD, patchSize,
 				smoothFactor, addAlsoIfHeightmapEmpty);
-
+			if (parent)
+				parent->addChild(terrain);
 			if (file)
 				file->drop();
 
@@ -885,9 +892,9 @@ namespace irr
 		}
 
 		//! Adds a terrain scene node to the scene graph.
-		ITerrainSceneNode* CSceneManager::addTerrainSceneNode(
+		std::shared_ptr<ITerrainSceneNode> CSceneManager::addTerrainSceneNode(
 			io::IReadFile* heightMapFile,
-			ISceneNode* parent, s32 id,
+			std::shared_ptr<ISceneNode> parent, s32 id,
 			const core::vector3df& position,
 			const core::vector3df& rotation,
 			const core::vector3df& scale,
@@ -897,7 +904,7 @@ namespace irr
 			bool addAlsoIfHeightmapEmpty)
 		{
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
 			if (!heightMapFile && !addAlsoIfHeightmapEmpty)
 			{
@@ -905,7 +912,7 @@ namespace irr
 				return 0;
 			}
 
-			CTerrainSceneNode* node = new CTerrainSceneNode(parent, this, FileSystem, id,
+			auto node = std::make_shared < CTerrainSceneNode>( std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), FileSystem, id,
 				maxLOD, patchSize, position, rotation, scale);
 
 			if (!node->loadHeightMap(heightMapFile, vertexColor, smoothFactor))
@@ -913,39 +920,38 @@ namespace irr
 				if (!addAlsoIfHeightmapEmpty)
 				{
 					node->remove();
-					node->drop();
 					return 0;
 				}
 			}
-			if (parent || AutoRegisterNewNodes)
-				node->drop();
+			if (parent)
+				parent->addChild(node);
 			return node;
 		}
 
 		//! Adds an empty scene node.
-		ISceneNode* CSceneManager::addEmptySceneNode(ISceneNode* parent, s32 id)
+		std::shared_ptr<ISceneNode> CSceneManager::addEmptySceneNode(std::shared_ptr<ISceneNode> parent, s32 id)
 		{
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());;
 
-			ISceneNode* node = new CEmptySceneNode(parent, this, id);
-			if (parent || AutoRegisterNewNodes)
-				node->drop();
+			auto node = std::make_shared < CEmptySceneNode>( std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), id);
+			if (parent)
+				parent->addChild(node);
 
 			return node;
 		}
 
 		//! Adds a dummy transformation scene node to the scene graph.
-		IDummyTransformationSceneNode* CSceneManager::addDummyTransformationSceneNode(
-			ISceneNode* parent, s32 id)
+		std::shared_ptr<IDummyTransformationSceneNode> CSceneManager::addDummyTransformationSceneNode(
+			std::shared_ptr<ISceneNode> parent, s32 id)
 		{
 			if (!parent && AutoRegisterNewNodes)
-				parent = this;
+				parent = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
-			IDummyTransformationSceneNode* node = new CDummyTransformationSceneNode(
-				parent, this, id);
-			if (parent || AutoRegisterNewNodes)
-				node->drop();
+			auto node = std::make_shared < CDummyTransformationSceneNode>(
+				 std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), id);
+			if (parent)
+				parent->addChild(node);
 
 			return node;
 		}
@@ -1117,27 +1123,24 @@ namespace irr
 		//! only exists to manage all scene nodes. It is not rendered and cannot
 		//! be removed from the scene.
 		//! \return Returns a pointer to the root scene node.
-		ISceneNode* CSceneManager::getRootSceneNode()
+		std::shared_ptr<ISceneNode> CSceneManager::getRootSceneNode()
 		{
-			return this;
+			return std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 		}
 
 		//! Returns the current active camera.
 		//! \return The active camera is returned. Note that this can be NULL, if there
 		//! was no camera created yet.
-		ICameraSceneNode* CSceneManager::getActiveCamera() const
+		std::shared_ptr<ICameraSceneNode> CSceneManager::getActiveCamera() const
 		{
 			return ActiveCamera;
 		}
 
 		//! Sets the active camera. The previous active camera will be deactivated.
 		//! \param camera: The new camera which should be active.
-		void CSceneManager::setActiveCamera(ICameraSceneNode* camera)
+		void CSceneManager::setActiveCamera(std::shared_ptr<ICameraSceneNode> camera)
 		{
-			if (camera)
-				camera->grab();
-			if (ActiveCamera)
-				ActiveCamera->drop();
+
 
 			ActiveCamera = camera;
 		}
@@ -1157,9 +1160,9 @@ namespace irr
 		}
 
 		//! returns if node is culled
-		bool CSceneManager::isCulled(const ISceneNode* node) const
+		bool CSceneManager::isCulled(const std::shared_ptr<ISceneNode> node) const
 		{
-			const ICameraSceneNode* cam = getActiveCamera();
+			const auto cam = getActiveCamera();
 			if (!cam)
 			{
 				_IRR_IMPLEMENT_MANAGED_MARSHALLING_BUGFIX;
@@ -1170,7 +1173,7 @@ namespace irr
 			// has occlusion query information
 			if (node->getAutomaticCulling() & scene::EAC_OCC_QUERY)
 			{
-				result = (Driver->getOcclusionQueryResult(const_cast<ISceneNode*>(node)) == 0);
+				result = (Driver->getOcclusionQueryResult(std::const_pointer_cast<ISceneNode>(node)) == 0);
 			}
 
 			// can be seen by a bounding box ?
@@ -1236,7 +1239,7 @@ namespace irr
 		//! returns if node is culled
 		bool CSceneManager::isCulled(core::aabbox3d<f32> tbox, scene::E_CULLING_TYPE type, const core::matrix4& absoluteTransformation) const
 		{
-			const ICameraSceneNode* cam = getActiveCamera();
+			const auto cam = getActiveCamera();
 
 			if (!cam)
 				return false;
@@ -1302,11 +1305,10 @@ namespace irr
 		}
 
 		//! registers a node for rendering it at a specific time.
-		u32 CSceneManager::registerNodeForRendering(ISceneNode* node, E_SCENE_NODE_RENDER_PASS pass)
+		u32 CSceneManager::registerNodeForRendering(std::shared_ptr<ISceneNode> node, E_SCENE_NODE_RENDER_PASS pass)
 		{
 			IRR_PROFILE(CProfileScope p1(EPID_SM_REGISTER);)
 				u32 taken = 0;
-			node->grab();
 			switch (pass)
 			{
 				// take camera if it is not already registered
@@ -1400,7 +1402,7 @@ namespace irr
 				break;
 
 			case ESNRP_NONE: // ignore this one
-				node->drop();
+
 				break;
 			}
 
@@ -1468,7 +1470,6 @@ namespace irr
 			for (u32 i = 0; i < CameraList.size(); ++i)
 			{
 				CameraList[i]->render();
-				CameraList[i]->drop();
 			}
 
 			CameraList.set_used(0);
@@ -1518,7 +1519,6 @@ namespace irr
 			for (u32 i = 0; i < maxLights; ++i)
 			{
 				LightList[i]->render();
-				LightList[i]->drop();
 			}
 
 			if (LightManager)
@@ -1536,7 +1536,7 @@ namespace irr
 				LightManager->OnRenderPassPreRender(CurrentRenderPass);
 				for (u32 i = 0; i < SkyBoxList.size(); ++i)
 				{
-					ISceneNode* node = SkyBoxList[i];
+					auto node = SkyBoxList[i];
 					LightManager->OnNodePreRender(node);
 					node->render();
 					LightManager->OnNodePostRender(node);
@@ -1547,7 +1547,6 @@ namespace irr
 				for (u32 i = 0; i < SkyBoxList.size(); ++i)
 				{
 					SkyBoxList[i]->render();
-					SkyBoxList[i]->drop();
 				}
 			}
 
@@ -1570,7 +1569,7 @@ namespace irr
 				LightManager->OnRenderPassPreRender(CurrentRenderPass);
 				for (u32 i = 0; i < SolidNodeList.size(); ++i)
 				{
-					ISceneNode* node = SolidNodeList[i].Node;
+					auto node = SolidNodeList[i].Node;
 					LightManager->OnNodePreRender(node);
 					node->render();
 					LightManager->OnNodePostRender(node);
@@ -1581,7 +1580,6 @@ namespace irr
 				for (u32 i = 0; i < SolidNodeList.size(); ++i)
 				{
 					SolidNodeList[i].Node->render();
-					SolidNodeList[i].Node->drop();
 				}
 			}
 
@@ -1605,7 +1603,7 @@ namespace irr
 				LightManager->OnRenderPassPreRender(CurrentRenderPass);
 				for (u32 i = 0; i < ShadowNodeList.size(); ++i)
 				{
-					ISceneNode* node = ShadowNodeList[i];
+					auto node = ShadowNodeList[i];
 					LightManager->OnNodePreRender(node);
 					node->render();
 					LightManager->OnNodePostRender(node);
@@ -1616,7 +1614,6 @@ namespace irr
 				for (u32 i = 0; i < ShadowNodeList.size(); ++i)
 				{
 					ShadowNodeList[i]->render();
-					ShadowNodeList[i]->drop();
 				}
 			}
 
@@ -1643,7 +1640,7 @@ namespace irr
 
 				for (u32 i = 0; i < TransparentNodeList.size(); ++i)
 				{
-					ISceneNode* node = TransparentNodeList[i].Node;
+					auto node = TransparentNodeList[i].Node;
 					LightManager->OnNodePreRender(node);
 					node->render();
 					LightManager->OnNodePostRender(node);
@@ -1679,7 +1676,7 @@ namespace irr
 
 				for (u32 i = 0; i < TransparentEffectNodeList.size(); ++i)
 				{
-					ISceneNode* node = TransparentEffectNodeList[i].Node;
+					auto node = TransparentEffectNodeList[i].Node;
 					LightManager->OnNodePreRender(node);
 					node->render();
 					LightManager->OnNodePostRender(node);
@@ -1858,18 +1855,18 @@ namespace irr
 		//! some time automaticly.
 		ISceneNodeAnimator* CSceneManager::createDeleteAnimator(u32 when)
 		{
-			return new CSceneNodeAnimatorDelete(this, os::Timer::getTime() + when);
+			return new CSceneNodeAnimatorDelete(std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), os::Timer::getTime() + when);
 		}
 
 		//! Creates a special scene node animator for doing automatic collision detection
 		//! and response.
 		ISceneNodeAnimatorCollisionResponse* CSceneManager::createCollisionResponseAnimator(
-			ITriangleSelector* world, ISceneNode* sceneNode, const core::vector3df& ellipsoidRadius,
+			ITriangleSelector* world,std::shared_ptr<ISceneNode> sceneNode, const core::vector3df& ellipsoidRadius,
 			const core::vector3df& gravityPerSecond,
 			const core::vector3df& ellipsoidTranslation, f32 slidingValue)
 		{
 			ISceneNodeAnimatorCollisionResponse* anim = new
-				CSceneNodeAnimatorCollisionResponse(this, world, sceneNode,
+				CSceneNodeAnimatorCollisionResponse(std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), world, sceneNode,
 					ellipsoidRadius, gravityPerSecond,
 					ellipsoidTranslation, slidingValue);
 
@@ -1937,7 +1934,7 @@ namespace irr
 		}
 
 		//! Returns a pointer to the scene collision manager.
-		ISceneCollisionManager* CSceneManager::getSceneCollisionManager()
+		std::shared_ptr<ISceneCollisionManager> CSceneManager::getSceneCollisionManager()
 		{
 			return CollisionManager;
 		}
@@ -1949,7 +1946,7 @@ namespace irr
 		}
 
 		//! Creates a simple ITriangleSelector, based on a mesh.
-		ITriangleSelector* CSceneManager::createTriangleSelector(IMesh* mesh, ISceneNode* node)
+		ITriangleSelector* CSceneManager::createTriangleSelector(IMesh* mesh, std::shared_ptr<ISceneNode> node)
 		{
 			if (!mesh)
 				return 0;
@@ -1959,7 +1956,7 @@ namespace irr
 
 		//! Creates a simple and updatable ITriangleSelector, based on a the mesh owned by an
 		//! animated scene node
-		ITriangleSelector* CSceneManager::createTriangleSelector(IAnimatedMeshSceneNode* node)
+		ITriangleSelector* CSceneManager::createTriangleSelector(std::shared_ptr<IAnimatedMeshSceneNode> node)
 		{
 			if (!node || !node->getMesh())
 				return 0;
@@ -1968,7 +1965,7 @@ namespace irr
 		}
 
 		//! Creates a simple dynamic ITriangleSelector, based on a axis aligned bounding box.
-		ITriangleSelector* CSceneManager::createTriangleSelectorFromBoundingBox(ISceneNode* node)
+		ITriangleSelector* CSceneManager::createTriangleSelectorFromBoundingBox(std::shared_ptr<ISceneNode> node)
 		{
 			if (!node)
 				return 0;
@@ -1978,7 +1975,7 @@ namespace irr
 
 		//! Creates a simple ITriangleSelector, based on a mesh.
 		ITriangleSelector* CSceneManager::createOctreeTriangleSelector(IMesh* mesh,
-			ISceneNode* node, s32 minimalPolysPerNode)
+			std::shared_ptr<ISceneNode> node, s32 minimalPolysPerNode)
 		{
 			if (!mesh)
 				return 0;
@@ -1994,18 +1991,16 @@ namespace irr
 
 		//! Creates a triangle selector which can select triangles from a terrain scene node
 		ITriangleSelector* CSceneManager::createTerrainTriangleSelector(
-			ITerrainSceneNode* node, s32 LOD)
+			std::shared_ptr<ITerrainSceneNode> node, s32 LOD)
 		{
 			return new CTerrainTriangleSelector(node, LOD);
 		}
 
 		//! Adds a scene node to the deletion queue.
-		void CSceneManager::addToDeletionQueue(ISceneNode* node)
+		void CSceneManager::addToDeletionQueue(std::shared_ptr<ISceneNode> node)
 		{
 			if (!node)
 				return;
-
-			node->grab();
 			DeletionList.push_back(node);
 		}
 
@@ -2018,14 +2013,13 @@ namespace irr
 			for (u32 i = 0; i < DeletionList.size(); ++i)
 			{
 				DeletionList[i]->remove();
-				DeletionList[i]->drop();
 			}
 
 			DeletionList.clear();
 		}
 
 		//! Returns the first scene node with the specified name.
-		ISceneNode* CSceneManager::getSceneNodeFromName(const char* name, ISceneNode* start)
+		std::shared_ptr<ISceneNode> CSceneManager::getSceneNodeFromName(const char* name, std::shared_ptr<ISceneNode> start)
 		{
 			if (start == 0)
 				start = getRootSceneNode();
@@ -2033,7 +2027,7 @@ namespace irr
 			if (!strcmp(start->getName(), name))
 				return start;
 
-			ISceneNode* node = 0;
+			std::shared_ptr<ISceneNode> node = 0;
 
 			const ISceneNodeList& list = start->getChildren();
 			ISceneNodeList::ConstIterator it = list.begin();
@@ -2048,7 +2042,7 @@ namespace irr
 		}
 
 		//! Returns the first scene node with the specified id.
-		ISceneNode* CSceneManager::getSceneNodeFromId(s32 id, ISceneNode* start)
+		std::shared_ptr<ISceneNode> CSceneManager::getSceneNodeFromId(s32 id, std::shared_ptr<ISceneNode> start)
 		{
 			if (start == 0)
 				start = getRootSceneNode();
@@ -2056,7 +2050,7 @@ namespace irr
 			if (start->getID() == id)
 				return start;
 
-			ISceneNode* node = 0;
+			std::shared_ptr<ISceneNode> node = 0;
 
 			const ISceneNodeList& list = start->getChildren();
 			ISceneNodeList::ConstIterator it = list.begin();
@@ -2071,7 +2065,7 @@ namespace irr
 		}
 
 		//! Returns the first scene node with the specified type.
-		ISceneNode* CSceneManager::getSceneNodeFromType(scene::ESCENE_NODE_TYPE type, ISceneNode* start)
+		std::shared_ptr<ISceneNode> CSceneManager::getSceneNodeFromType(scene::ESCENE_NODE_TYPE type, std::shared_ptr<ISceneNode> start)
 		{
 			if (start == 0)
 				start = getRootSceneNode();
@@ -2079,7 +2073,7 @@ namespace irr
 			if (start->getType() == type || ESNT_ANY == type)
 				return start;
 
-			ISceneNode* node = 0;
+			std::shared_ptr<ISceneNode> node = 0;
 
 			const ISceneNodeList& list = start->getChildren();
 			ISceneNodeList::ConstIterator it = list.begin();
@@ -2094,7 +2088,7 @@ namespace irr
 		}
 
 		//! returns scene nodes by type.
-		void CSceneManager::getSceneNodesFromType(ESCENE_NODE_TYPE type, core::array<scene::ISceneNode*>& outNodes, ISceneNode* start)
+		void CSceneManager::getSceneNodesFromType(ESCENE_NODE_TYPE type, core::array < std::shared_ptr<scene::ISceneNode>>& outNodes, std::shared_ptr<ISceneNode> start)
 		{
 			if (start == 0)
 				start = getRootSceneNode();
@@ -2116,7 +2110,7 @@ namespace irr
 		bool CSceneManager::postEventFromUser(const SEvent& event)
 		{
 			bool ret = false;
-			ICameraSceneNode* cam = getActiveCamera();
+			auto cam = getActiveCamera();
 			if (cam)
 				ret = cam->OnEvent(event);
 
@@ -2159,12 +2153,12 @@ namespace irr
 		}
 
 		//! Creates a new scene manager.
-		ISceneManager* CSceneManager::createNewSceneManager(bool cloneContent, bool autoreg)
+		std::shared_ptr<ISceneManager> CSceneManager::createNewSceneManager(bool cloneContent, bool autoreg)
 		{
-			CSceneManager* manager = new CSceneManager(Driver, FileSystem, CursorControl, MeshCache, GUIEnvironment, autoreg);
-
+			auto manager = std::make_shared<CSceneManager>(Driver, FileSystem, CursorControl, MeshCache, GUIEnvironment, autoreg);
+			manager->setSceneManager(manager);
 			if (cloneContent)
-				manager->cloneMembers(this, manager);
+				manager->cloneMembers(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), manager);
 
 			return manager;
 		}
@@ -2233,7 +2227,7 @@ namespace irr
 
 		//! Saves the current scene into a file.
 		//! \param filename: Name of the file .
-		bool CSceneManager::saveScene(const io::path& filename, ISceneUserDataSerializer* userDataSerializer, ISceneNode* node)
+		bool CSceneManager::saveScene(const io::path& filename, ISceneUserDataSerializer* userDataSerializer, std::shared_ptr<ISceneNode> node)
 		{
 			bool ret = false;
 			io::IWriteFile* file = FileSystem->createAndWriteFile(filename);
@@ -2250,7 +2244,7 @@ namespace irr
 		}
 
 		//! Saves the current scene into a file.
-		bool CSceneManager::saveScene(io::IWriteFile* file, ISceneUserDataSerializer* userDataSerializer, ISceneNode* node)
+		bool CSceneManager::saveScene(io::IWriteFile* file, ISceneUserDataSerializer* userDataSerializer, std::shared_ptr<ISceneNode> node)
 		{
 			if (!file)
 			{
@@ -2272,13 +2266,14 @@ namespace irr
 		}
 
 		//! Saves the current scene into a file.
-		bool CSceneManager::saveScene(io::IXMLWriter* writer, const io::path& currentPath, ISceneUserDataSerializer* userDataSerializer, ISceneNode* node)
+		bool CSceneManager::saveScene(io::IXMLWriter* writer, const io::path& currentPath, ISceneUserDataSerializer* userDataSerializer, std::shared_ptr<
+		                              ISceneNode> node)
 		{
 			if (!writer)
 				return false;
 
 			if (!node)
-				node = this;
+				node = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 
 			writer->writeXMLHeader();
 			writeSceneNode(writer, node, userDataSerializer, currentPath.c_str(), true);
@@ -2287,7 +2282,7 @@ namespace irr
 		}
 
 		//! Loads a scene.
-		bool CSceneManager::loadScene(const io::path& filename, ISceneUserDataSerializer* userDataSerializer, ISceneNode* rootNode)
+		bool CSceneManager::loadScene(const io::path& filename, ISceneUserDataSerializer* userDataSerializer, std::shared_ptr<ISceneNode> rootNode)
 		{
 			io::IReadFile* file = FileSystem->createAndOpenFile(filename);
 			if (!file)
@@ -2303,7 +2298,7 @@ namespace irr
 		}
 
 		//! Loads a scene. Note that the current scene is not cleared before.
-		bool CSceneManager::loadScene(io::IReadFile* file, ISceneUserDataSerializer* userDataSerializer, ISceneNode* rootNode)
+		bool CSceneManager::loadScene(io::IReadFile* file, ISceneUserDataSerializer* userDataSerializer, std::shared_ptr<ISceneNode> rootNode)
 		{
 			if (!file)
 			{
@@ -2326,20 +2321,20 @@ namespace irr
 		}
 
 		//! writes a scene node
-		void CSceneManager::writeSceneNode(io::IXMLWriter* writer, ISceneNode* node, ISceneUserDataSerializer* userDataSerializer,
-			const fschar_t* currentPath, bool init)
+		void CSceneManager::writeSceneNode(io::IXMLWriter* writer, std::shared_ptr<ISceneNode> node, ISceneUserDataSerializer* userDataSerializer,
+		                                   const fschar_t* currentPath, bool init)
 		{
 			if (!writer || !node || node->isDebugObject())
 				return;
 
 			const wchar_t* name;
-			ISceneNode* tmpNode = node;
+			std::shared_ptr<ISceneNode> tmpNode = node;
 
 			if (init)
 			{
 				name = IRR_XML_FORMAT_SCENE.c_str();
 				writer->writeElement(name, false);
-				node = this;
+				node = std::dynamic_pointer_cast<ISceneNode>(shared_from_this());
 			}
 			else
 			{
@@ -2439,7 +2434,7 @@ namespace irr
 
 			// write children once root node is written
 			// if parent is not scene manager, we need to write out node first
-			if (init && (node != this))
+			if (init && (node != std::dynamic_pointer_cast<ISceneNode>(shared_from_this())))
 			{
 				writeSceneNode(writer, node, userDataSerializer, currentPath);
 			}
@@ -2469,9 +2464,9 @@ namespace irr
 		}
 
 		//! Adds a scene node to the scene by name
-		ISceneNode* CSceneManager::addSceneNode(const char* sceneNodeTypeName, ISceneNode* parent)
+		std::shared_ptr<ISceneNode> CSceneManager::addSceneNode(const char* sceneNodeTypeName,std::shared_ptr<ISceneNode> parent)
 		{
-			ISceneNode* node = 0;
+			std::shared_ptr<ISceneNode> node = 0;
 
 			for (s32 i = (s32)SceneNodeFactoryList.size() - 1; i >= 0 && !node; --i)
 				node = SceneNodeFactoryList[i]->addSceneNode(sceneNodeTypeName, parent);
@@ -2479,7 +2474,7 @@ namespace irr
 			return node;
 		}
 
-		ISceneNodeAnimator* CSceneManager::createSceneNodeAnimator(const char* typeName, ISceneNode* target)
+		ISceneNodeAnimator* CSceneManager::createSceneNodeAnimator(const char* typeName,std::shared_ptr<ISceneNode> target)
 		{
 			ISceneNodeAnimator* animator = 0;
 
@@ -2594,19 +2589,19 @@ namespace irr
 #endif
 			case EMWT_COLLADA:
 #ifdef _IRR_COMPILE_WITH_COLLADA_WRITER_
-				return new CColladaMeshWriter(this, Driver, FileSystem);
+				return new CColladaMeshWriter(std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), Driver, FileSystem);
 #else
 				return 0;
 #endif
 			case EMWT_STL:
 #ifdef _IRR_COMPILE_WITH_STL_WRITER_
-				return new CSTLMeshWriter(this);
+				return new CSTLMeshWriter(std::dynamic_pointer_cast<ISceneManager>(shared_from_this()));
 #else
 				return 0;
 #endif
 			case EMWT_OBJ:
 #ifdef _IRR_COMPILE_WITH_OBJ_WRITER_
-				return new COBJMeshWriter(this, FileSystem);
+				return new COBJMeshWriter(std::dynamic_pointer_cast<ISceneManager>(shared_from_this()), FileSystem);
 #else
 				return 0;
 #endif
@@ -2623,11 +2618,13 @@ namespace irr
 		}
 
 		// creates a scenemanager
-		ISceneManager* createSceneManager(video::IVideoDriver* driver,
+		std::shared_ptr<ISceneManager> createSceneManager(video::IVideoDriver* driver,
 			io::IFileSystem* fs, gui::ICursorControl* cursorcontrol,
 			gui::IGUIEnvironment* guiEnvironment)
 		{
-			return new CSceneManager(driver, fs, cursorcontrol, 0, guiEnvironment);
+			auto mgr = std::make_shared <CSceneManager>(driver, fs, cursorcontrol, static_cast<IMeshCache*>(nullptr), guiEnvironment);
+			mgr->setSceneManager(mgr);
+			return mgr;
 		}
 	} // end namespace scene
 } // end namespace irr

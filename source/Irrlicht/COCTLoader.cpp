@@ -50,7 +50,7 @@ COCTLoader::~COCTLoader()
 
 
 // Doesn't really belong here, but it's jammed in for now.
-void COCTLoader::OCTLoadLights(io::IReadFile* file, scene::ISceneNode * parent, f32 radius, f32 intensityScale, bool rewind)
+void COCTLoader::OCTLoadLights(io::IReadFile* file, std::shared_ptr<ISceneNode> parent, f32 radius, f32 intensityScale, bool rewind)
 {
 	if (rewind)
 		file->seek(0);

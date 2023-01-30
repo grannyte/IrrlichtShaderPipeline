@@ -144,18 +144,18 @@ namespace scene
 		virtual void updateBoundingBox(void);
 
 		//! Recovers the joints from the mesh
-		void recoverJointsFromMesh(core::array<IBoneSceneNode*> &jointChildSceneNodes);
+		void recoverJointsFromMesh(core::array<std::shared_ptr<IBoneSceneNode>>& jointChildSceneNodes);
 
 		//! Tranfers the joint data to the mesh
-		void transferJointsToMesh(const core::array<IBoneSceneNode*> &jointChildSceneNodes);
+		void transferJointsToMesh(const core::array<std::shared_ptr<IBoneSceneNode>>& jointChildSceneNodes);
 
 		//! Tranfers the joint hints to the mesh
-		void transferOnlyJointsHintsToMesh(const core::array<IBoneSceneNode*> &jointChildSceneNodes);
+		void transferOnlyJointsHintsToMesh(const core::array<std::shared_ptr<IBoneSceneNode>>& jointChildSceneNodes);
 
 		//! Creates an array of joints from this mesh as children of node
-		void addJoints(core::array<IBoneSceneNode*> &jointChildSceneNodes,
-				IAnimatedMeshSceneNode* node,
-				ISceneManager* smgr);
+		void addJoints(core::array<std::shared_ptr<IBoneSceneNode>>& jointChildSceneNodes,
+		               std::shared_ptr<IAnimatedMeshSceneNode> node,
+		               std::shared_ptr<ISceneManager> smgr);
 
 private:
 		void checkForAnimation();

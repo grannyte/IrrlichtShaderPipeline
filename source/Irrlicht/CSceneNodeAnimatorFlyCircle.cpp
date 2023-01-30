@@ -40,7 +40,7 @@ void CSceneNodeAnimatorFlyCircle::init()
 
 
 //! animates a scene node
-void CSceneNodeAnimatorFlyCircle::animateNode(ISceneNode* node, u32 timeMs)
+void CSceneNodeAnimatorFlyCircle::animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs)
 {
 	if ( 0 == node )
 		return;
@@ -92,7 +92,8 @@ void CSceneNodeAnimatorFlyCircle::deserializeAttributes(io::IAttributes* in, io:
 }
 
 
-ISceneNodeAnimator* CSceneNodeAnimatorFlyCircle::createClone(ISceneNode* node, ISceneManager* newManager)
+ISceneNodeAnimator* CSceneNodeAnimatorFlyCircle::createClone(std::shared_ptr<ISceneNode> node,
+                                                             std::shared_ptr<ISceneManager> newManager)
 {
 	CSceneNodeAnimatorFlyCircle * newAnimator =
 		new CSceneNodeAnimatorFlyCircle(StartTime, Center, Radius, Speed, Direction, RadiusEllipsoid);

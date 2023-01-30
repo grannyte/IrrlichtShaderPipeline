@@ -13,7 +13,7 @@ namespace scene
 {
 
 //! constructor
-CTriangleSelector::CTriangleSelector(ISceneNode* node)
+CTriangleSelector::CTriangleSelector(std::shared_ptr<ISceneNode> node)
 : SceneNode(node), AnimatedNode(0), LastMeshFrame(0)
 {
 	#ifdef _DEBUG
@@ -25,7 +25,7 @@ CTriangleSelector::CTriangleSelector(ISceneNode* node)
 
 
 //! constructor
-CTriangleSelector::CTriangleSelector(const core::aabbox3d<f32>& box, ISceneNode* node)
+CTriangleSelector::CTriangleSelector(const core::aabbox3d<f32>& box,std::shared_ptr<ISceneNode> node)
 : SceneNode(node), AnimatedNode(0), LastMeshFrame(0)
 {
 	#ifdef _DEBUG
@@ -38,7 +38,7 @@ CTriangleSelector::CTriangleSelector(const core::aabbox3d<f32>& box, ISceneNode*
 
 
 //! constructor
-CTriangleSelector::CTriangleSelector(const IMesh* mesh, ISceneNode* node)
+CTriangleSelector::CTriangleSelector(const IMesh* mesh,std::shared_ptr<ISceneNode> node)
 : SceneNode(node), AnimatedNode(0), LastMeshFrame(0)
 {
 	#ifdef _DEBUG

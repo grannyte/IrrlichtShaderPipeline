@@ -37,7 +37,7 @@ void CSceneNodeAnimatorFlyStraight::recalculateIntermediateValues()
 
 
 //! animates a scene node
-void CSceneNodeAnimatorFlyStraight::animateNode(ISceneNode* node, u32 timeMs)
+void CSceneNodeAnimatorFlyStraight::animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs)
 {
 	if (!node)
 		return;
@@ -104,7 +104,8 @@ void CSceneNodeAnimatorFlyStraight::deserializeAttributes(io::IAttributes* in, i
 }
 
 
-ISceneNodeAnimator* CSceneNodeAnimatorFlyStraight::createClone(ISceneNode* node, ISceneManager* newManager)
+ISceneNodeAnimator* CSceneNodeAnimatorFlyStraight::createClone(std::shared_ptr<ISceneNode> node,
+                                                               std::shared_ptr<ISceneManager> newManager)
 {
 	CSceneNodeAnimatorFlyStraight * newAnimator =
 		new CSceneNodeAnimatorFlyStraight(Start, End, TimeForWay, Loop, StartTime, PingPong);

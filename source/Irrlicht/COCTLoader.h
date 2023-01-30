@@ -79,9 +79,9 @@ namespace scene
 		virtual IAnimatedMesh* createMesh(io::IReadFile* file) _IRR_OVERRIDE_;
 
 		void OCTLoadLights(io::IReadFile* file,
-				ISceneNode * parent = 0, f32 radius = 500.0f,
-				f32 intensityScale = 0.0000001f*2.5,
-				bool rewind = true);
+		                   std::shared_ptr<ISceneNode> parent = 0, f32 radius = 500.0f,
+		                   f32 intensityScale = 0.0000001f*2.5,
+		                   bool rewind = true);
 
 	private:
 		struct octHeader {

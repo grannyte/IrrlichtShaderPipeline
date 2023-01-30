@@ -27,13 +27,13 @@ namespace scene
 		/** \param type: Type of the scene node to add.
 		\param parent: Parent scene node of the new node, can be null to add the scene node to the root.
 		\return Returns pointer to the new scene node or null if not successful. */
-		virtual ISceneNode* addSceneNode(ESCENE_NODE_TYPE type, ISceneNode* parent=0) _IRR_OVERRIDE_;
+		virtual std::shared_ptr<ISceneNode> addSceneNode(ESCENE_NODE_TYPE type, std::shared_ptr<ISceneNode> parent = 0) _IRR_OVERRIDE_;
 
 		//! adds a scene node to the scene graph based on its type name
 		/** \param typeName: Type name of the scene node to add.
 		\param parent: Parent scene node of the new node, can be null to add the scene node to the root.
 		\return Returns pointer to the new scene node or null if not successful. */
-		virtual ISceneNode* addSceneNode(const c8* typeName, ISceneNode* parent=0) _IRR_OVERRIDE_;
+		virtual std::shared_ptr<ISceneNode> addSceneNode(const c8* typeName, std::shared_ptr<ISceneNode> parent=0) _IRR_OVERRIDE_;
 
 		//! returns amount of scene node types this factory is able to create
 		virtual u32 getCreatableSceneNodeTypeCount() const _IRR_OVERRIDE_;

@@ -42,22 +42,22 @@ public:
 	//! Loads the scene into the scene manager.
 	virtual bool loadScene(io::IReadFile* file,
 		ISceneUserDataSerializer* userDataSerializer=0,
-		ISceneNode* rootNode=0) _IRR_OVERRIDE_;
+		std::shared_ptr<ISceneNode> rootNode=0) _IRR_OVERRIDE_;
 
 private:
 
 	//! Recursively reads nodes from the xml file
-	void readSceneNode(io::IXMLReader* reader, ISceneNode* parent,
+	void readSceneNode(io::IXMLReader* reader,std::shared_ptr<ISceneNode> parent,
 		ISceneUserDataSerializer* userDataSerializer);
 
 	//! read a node's materials
-	void readMaterials(io::IXMLReader* reader, ISceneNode* node);
+	void readMaterials(io::IXMLReader* reader,std::shared_ptr<ISceneNode> node);
 
 	//! read a node's animators
-	void readAnimators(io::IXMLReader* reader, ISceneNode* node);
+	void readAnimators(io::IXMLReader* reader,std::shared_ptr<ISceneNode> node);
 
 	//! read any other data into the user serializer
-	void readUserData(io::IXMLReader* reader, ISceneNode* node,
+	void readUserData(io::IXMLReader* reader,std::shared_ptr<ISceneNode> node,
 		ISceneUserDataSerializer* userDataSerializer);
 
 	ISceneManager   *SceneManager;

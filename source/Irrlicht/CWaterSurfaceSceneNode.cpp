@@ -18,10 +18,10 @@ namespace scene
 
 //! constructor
 CWaterSurfaceSceneNode::CWaterSurfaceSceneNode(f32 waveHeight, f32 waveSpeed, f32 waveLength,
-		IMesh* mesh, ISceneNode* parent, ISceneManager* mgr, s32 id,
+		IMesh* mesh, std::shared_ptr<ISceneManager> mgr, s32 id,
 		const core::vector3df& position, const core::vector3df& rotation,
 		const core::vector3df& scale)
-	: CMeshSceneNode(mesh, parent, mgr, id, position, rotation, scale),
+	: CMeshSceneNode(mesh,  mgr, id, position, rotation, scale),
 	WaveLength(waveLength), WaveSpeed(waveSpeed), WaveHeight(waveHeight),
 	OriginalMesh(0)
 {
@@ -88,7 +88,7 @@ void CWaterSurfaceSceneNode::OnAnimate(u32 timeMs)
 		}// end for all mesh buffers
 		Mesh->setDirty(scene::EBT_VERTEX);
 
-		SceneManager->getMeshManipulator()->recalculateNormals(Mesh);
+		SceneManager.lock()->getMeshManipulator()->recalculateNormals(Mesh);
 	}
 	CMeshSceneNode::OnAnimate(timeMs);
 }
@@ -101,8 +101,8 @@ void CWaterSurfaceSceneNode::setMesh(IMesh* mesh)
 		return;
 	if (OriginalMesh)
 		OriginalMesh->drop();
-	IMesh* clone = SceneManager->getMeshManipulator()->createMeshCopy<video::S3DVertex>(mesh,
-		SceneManager->getVideoDriver()->getVertexDescriptor(0));
+	IMesh* clone = SceneManager.lock()->getMeshManipulator()->createMeshCopy<video::S3DVertex>(mesh,
+		SceneManager.lock()->getVideoDriver()->getVertexDescriptor(0));
 	OriginalMesh = mesh;
 	Mesh = clone;
 	Mesh->setHardwareMappingHint(scene::EHM_STATIC, scene::EBT_INDEX);
@@ -119,7 +119,7 @@ void CWaterSurfaceSceneNode::serializeAttributes(io::IAttributes* out, io::SAttr
 
 	CMeshSceneNode::serializeAttributes(out, options);
 	// serialize original mesh
-	out->setAttribute("Mesh", SceneManager->getMeshCache()->getMeshName(OriginalMesh).getPath().c_str());
+	out->setAttribute("Mesh", SceneManager.lock()->getMeshCache()->getMeshName(OriginalMesh).getPath().c_str());
 }
 
 
@@ -141,8 +141,8 @@ void CWaterSurfaceSceneNode::deserializeAttributes(io::IAttributes* in, io::SAtt
 
 	if (Mesh)
 	{
-		IMesh* clone = SceneManager->getMeshManipulator()->createMeshCopy<video::S3DVertex>(Mesh,
-			SceneManager->getVideoDriver()->getVertexDescriptor(0));
+		IMesh* clone = SceneManager.lock()->getMeshManipulator()->createMeshCopy<video::S3DVertex>(Mesh,
+			SceneManager.lock()->getVideoDriver()->getVertexDescriptor(0));
 		OriginalMesh = Mesh;
 		Mesh = clone;
 	}

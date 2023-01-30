@@ -13,9 +13,9 @@ namespace scene
 {
 
 //! constructor
-CBoneSceneNode::CBoneSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id,
+CBoneSceneNode::CBoneSceneNode(std::shared_ptr<ISceneManager> mgr, s32 id,
 	u32 boneIndex, const c8* boneName)
-: IBoneSceneNode(parent, mgr, id), BoneIndex(boneIndex),
+: IBoneSceneNode( mgr, id), BoneIndex(boneIndex),
 	AnimationMode(EBAM_AUTOMATIC), SkinningSpace(EBSS_LOCAL)
 {
 	#ifdef _DEBUG
@@ -71,7 +71,7 @@ void CBoneSceneNode::OnAnimate(u32 timeMs)
 
 		ISceneNodeAnimatorList::Iterator ait = Animators.begin();
 		for (; ait != Animators.end(); ++ait)
-			(*ait)->animateNode(this, timeMs);
+			(*ait)->animateNode(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), timeMs);
 
 		// update absolute position
 		//updateAbsolutePosition();
@@ -84,7 +84,7 @@ void CBoneSceneNode::OnAnimate(u32 timeMs)
 }
 
 
-void CBoneSceneNode::helper_updateAbsolutePositionOfAllChildren(ISceneNode *Node)
+void CBoneSceneNode::helper_updateAbsolutePositionOfAllChildren(std::shared_ptr<ISceneNode>Node)
 {
 	Node->updateAbsolutePosition();
 
@@ -98,7 +98,7 @@ void CBoneSceneNode::helper_updateAbsolutePositionOfAllChildren(ISceneNode *Node
 
 void CBoneSceneNode::updateAbsolutePositionOfAllChildren()
 {
-	helper_updateAbsolutePositionOfAllChildren( this );
+	helper_updateAbsolutePositionOfAllChildren(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()));
 }
 
 

@@ -1388,7 +1388,7 @@ void COpenGLDriver::removeAllHardwareBuffers()
 
 //! Create occlusion query.
 /** Use node for identification and mesh for occlusion test. */
-void COpenGLDriver::addOcclusionQuery(scene::ISceneNode* node,
+void COpenGLDriver::addOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node,
 		const scene::IMesh* mesh)
 {
 	if (!queryFeature(EVDF_OCCLUSION_QUERY))
@@ -1402,7 +1402,7 @@ void COpenGLDriver::addOcclusionQuery(scene::ISceneNode* node,
 
 
 //! Remove occlusion query.
-void COpenGLDriver::removeOcclusionQuery(scene::ISceneNode* node)
+void COpenGLDriver::removeOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node)
 {
 	const s32 index = OcclusionQueries.linear_search(SOccQuery(node));
 	if (index != -1)
@@ -1417,7 +1417,7 @@ void COpenGLDriver::removeOcclusionQuery(scene::ISceneNode* node)
 //! Run occlusion query. Draws mesh stored in query.
 /** If the mesh shall not be rendered visible, use
 overrideMaterial to disable the color and depth buffer. */
-void COpenGLDriver::runOcclusionQuery(scene::ISceneNode* node, bool visible)
+void COpenGLDriver::runOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool visible)
 {
 	if (!node)
 		return;
@@ -1449,7 +1449,7 @@ void COpenGLDriver::runOcclusionQuery(scene::ISceneNode* node, bool visible)
 //! Update occlusion query. Retrieves results from GPU.
 /** If the query shall not block, set the flag to false.
 Update might not occur in this case, though */
-void COpenGLDriver::updateOcclusionQuery(scene::ISceneNode* node, bool block)
+void COpenGLDriver::updateOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool block)
 {
 	const s32 index = OcclusionQueries.linear_search(SOccQuery(node));
 	if (index != -1)
@@ -1492,7 +1492,7 @@ void COpenGLDriver::updateOcclusionQuery(scene::ISceneNode* node, bool block)
 /** Return value is the number of visible pixels/fragments.
 The value is a safe approximation, i.e. can be larger than the
 actual value of pixels. */
-u32 COpenGLDriver::getOcclusionQueryResult(scene::ISceneNode* node) const
+u32 COpenGLDriver::getOcclusionQueryResult(std::shared_ptr<irr::scene::ISceneNode> node) const
 {
 	const s32 index = OcclusionQueries.linear_search(SOccQuery(node));
 	if (index != -1)

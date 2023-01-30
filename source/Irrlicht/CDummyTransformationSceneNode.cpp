@@ -11,9 +11,8 @@ namespace scene
 {
 
 //! constructor
-CDummyTransformationSceneNode::CDummyTransformationSceneNode(
-	ISceneNode* parent, ISceneManager* mgr, s32 id)
-	: IDummyTransformationSceneNode(parent, mgr, id)
+CDummyTransformationSceneNode::CDummyTransformationSceneNode( std::shared_ptr<ISceneManager> mgr, s32 id)
+	: IDummyTransformationSceneNode( mgr, id)
 {
 	#ifdef _DEBUG
 	setDebugName("CDummyTransformationSceneNode");
@@ -46,22 +45,22 @@ core::matrix4 CDummyTransformationSceneNode::getRelativeTransformation() const
 }
 
 //! Creates a clone of this scene node and its children.
-ISceneNode* CDummyTransformationSceneNode::clone(ISceneNode* newParent, ISceneManager* newManager)
+std::shared_ptr<ISceneNode> CDummyTransformationSceneNode::clone(std::shared_ptr<ISceneNode> newParent,
+                                                                 std::shared_ptr<ISceneManager> newManager)
 {
 	if (!newParent)
-		newParent = Parent;
+		newParent = Parent.lock();
 	if (!newManager)
-		newManager = SceneManager;
+		newManager = SceneManager.lock();
 
-	CDummyTransformationSceneNode* nb = new CDummyTransformationSceneNode(newParent,
+	auto nb = std::make_shared<CDummyTransformationSceneNode>(
 		newManager, ID);
 
-	nb->cloneMembers(this, newManager);
+	if (newParent)
+		newParent->addChild(nb);
+	nb->cloneMembers(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), newManager);
 	nb->RelativeTransformationMatrix = RelativeTransformationMatrix;
 	nb->Box = Box;
-
-	if ( newParent )
-		nb->drop();
 	return nb;
 }
 

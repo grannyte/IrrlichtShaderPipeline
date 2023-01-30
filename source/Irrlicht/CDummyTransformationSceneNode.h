@@ -17,7 +17,7 @@ namespace scene
 	public:
 
 		//! constructor
-		CDummyTransformationSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id);
+		CDummyTransformationSceneNode( std::shared_ptr<ISceneManager> mgr, s32 id);
 
 		//! returns the axis aligned bounding box of this node
 		virtual const core::aabbox3d<f32>& getBoundingBox() const _IRR_OVERRIDE_;
@@ -37,7 +37,8 @@ namespace scene
 		virtual ESCENE_NODE_TYPE getType() const _IRR_OVERRIDE_ { return ESNT_DUMMY_TRANSFORMATION; }
 
 		//! Creates a clone of this scene node and its children.
-		virtual ISceneNode* clone(ISceneNode* newParent=0, ISceneManager* newManager=0) _IRR_OVERRIDE_;
+		virtual std::shared_ptr<ISceneNode> clone(std::shared_ptr<ISceneNode> newParent = 0,
+		                                          std::shared_ptr<ISceneManager> newManager = 0) _IRR_OVERRIDE_;
 
 
 	private:

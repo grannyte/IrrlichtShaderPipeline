@@ -15,8 +15,8 @@ namespace scene
 
 //! constructor
 CSceneNodeAnimatorCollisionResponse::CSceneNodeAnimatorCollisionResponse(
-		ISceneManager* scenemanager,
-		ITriangleSelector* world, ISceneNode* object,
+		std::shared_ptr<ISceneManager> scenemanager,
+		ITriangleSelector* world,std::shared_ptr<ISceneNode> object,
 		const core::vector3df& ellipsoidRadius,
 		const core::vector3df& gravityPerSecond,
 		const core::vector3df& ellipsoidTranslation,
@@ -138,7 +138,7 @@ ITriangleSelector* CSceneNodeAnimatorCollisionResponse::getWorld() const
 }
 
 
-void CSceneNodeAnimatorCollisionResponse::animateNode(ISceneNode* node, u32 timeMs)
+void CSceneNodeAnimatorCollisionResponse::animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs)
 {
 	CollisionOccurred = false;
 
@@ -186,7 +186,7 @@ void CSceneNodeAnimatorCollisionResponse::animateNode(ISceneNode* node, u32 time
 
 		bool f = false;
 		CollisionResultPosition
-			= SceneManager->getSceneCollisionManager()->getCollisionResultPosition(
+			= SceneManager.lock()->getSceneCollisionManager()->getCollisionResultPosition(
 				World, LastPosition-Translation,
 				Radius, vel, CollisionTriangle, CollisionPoint, f,
 				CollisionNode, SlidingSpeed, FallingVelocity);
@@ -218,7 +218,7 @@ void CSceneNodeAnimatorCollisionResponse::animateNode(ISceneNode* node, u32 time
 	if (AnimateCameraTarget && IsCamera)
 	{
 		const core::vector3df pdiff = Object->getPosition() - LastPosition - vel;
-		ICameraSceneNode* cam = (ICameraSceneNode*)Object;
+		auto cam = std::static_pointer_cast<ICameraSceneNode>(Object);
 		cam->setTarget(cam->getTarget() + pdiff);
 	}
 
@@ -226,7 +226,7 @@ void CSceneNodeAnimatorCollisionResponse::animateNode(ISceneNode* node, u32 time
 }
 
 
-void CSceneNodeAnimatorCollisionResponse::setNode(ISceneNode* node)
+void CSceneNodeAnimatorCollisionResponse::setNode(std::shared_ptr<ISceneNode> node)
 {
 	Object = node;
 
@@ -264,9 +264,9 @@ void CSceneNodeAnimatorCollisionResponse::deserializeAttributes(io::IAttributes*
 }
 
 
-ISceneNodeAnimator* CSceneNodeAnimatorCollisionResponse::createClone(ISceneNode* node, ISceneManager* newManager)
+ISceneNodeAnimator* CSceneNodeAnimatorCollisionResponse::createClone(std::shared_ptr<ISceneNode> node, std::shared_ptr<ISceneManager> newManager)
 {
-	if (!newManager) newManager = SceneManager;
+	if (!newManager) newManager = SceneManager.lock();
 
 	CSceneNodeAnimatorCollisionResponse * newAnimator =
 		new CSceneNodeAnimatorCollisionResponse(newManager, World, Object, Radius,

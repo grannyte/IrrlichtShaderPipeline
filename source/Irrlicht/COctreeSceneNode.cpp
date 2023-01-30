@@ -23,9 +23,9 @@ namespace scene
 
 
 //! constructor
-COctreeSceneNode::COctreeSceneNode(const core::array<scene::IMeshBuffer*>& meshes, ISceneNode* parent,
-					ISceneManager* mgr, s32 id, s32 minimalPolysPerNode)
-	: IMeshSceneNode(parent, mgr, id), StdOctree(0), MinimalPolysPerNode(minimalPolysPerNode), Mesh(0), Shadow(0),
+COctreeSceneNode::COctreeSceneNode(const core::array<scene::IMeshBuffer*>& meshes, 
+					std::shared_ptr<ISceneManager> mgr, s32 id, s32 minimalPolysPerNode)
+	: IMeshSceneNode( mgr, id), StdOctree(0), MinimalPolysPerNode(minimalPolysPerNode), Mesh(0), Shadow(0),
 	UseVBOs(OCTREE_USE_HARDWARE), UseVisibilityAndVBOs(OCTREE_USE_VISIBILITY),
 	BoxBased(OCTREE_BOX_BASED)
 {
@@ -50,8 +50,6 @@ COctreeSceneNode::COctreeSceneNode(const core::array<scene::IMeshBuffer*>& meshe
 //! destructor
 COctreeSceneNode::~COctreeSceneNode()
 {
-	if (Shadow)
-		Shadow->drop();
 	deleteTree();
 
 	for(u32 i = 0; i < StdMeshes.size(); ++i)
@@ -70,7 +68,7 @@ void COctreeSceneNode::OnRegisterSceneNode()
 		// materials, check of what type they are and register this node for the right
 		// render pass according to that.
 
-		video::IVideoDriver* driver = SceneManager->getVideoDriver();
+		video::IVideoDriver* driver = SceneManager.lock()->getVideoDriver();
 
 		PassCount = 0;
 		u32 transparentCount = 0;
@@ -94,10 +92,10 @@ void COctreeSceneNode::OnRegisterSceneNode()
 		// register according to material types counted
 
 		if (solidCount)
-			SceneManager->registerNodeForRendering(this, scene::ESNRP_SOLID);
+			SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), scene::ESNRP_SOLID);
 
 		if (transparentCount)
-			SceneManager->registerNodeForRendering(this, scene::ESNRP_TRANSPARENT);
+			SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), scene::ESNRP_TRANSPARENT);
 
 		ISceneNode::OnRegisterSceneNode();
 	}
@@ -108,17 +106,17 @@ void COctreeSceneNode::OnRegisterSceneNode()
 void COctreeSceneNode::render()
 {
 	IRR_PROFILE(CProfileScope psRender(EPID_OC_RENDER);)
-	video::IVideoDriver* driver = SceneManager->getVideoDriver();
+	video::IVideoDriver* driver = SceneManager.lock()->getVideoDriver();
 
 	if (!driver)
 		return;
 
-	ICameraSceneNode* camera = SceneManager->getActiveCamera();
+	auto camera = SceneManager.lock()->getActiveCamera();
 	if (!camera)
 		return;
 
 	bool isTransparentPass =
-		SceneManager->getSceneNodeRenderPass() == scene::ESNRP_TRANSPARENT;
+		SceneManager.lock()->getSceneNodeRenderPass() == scene::ESNRP_TRANSPARENT;
 	++PassCount;
 
 	driver->setTransform(video::ETS_WORLD, AbsoluteTransformation);
@@ -208,11 +206,10 @@ void COctreeSceneNode::render()
 //! Removes a child from this scene node.
 //! Implemented here, to be able to remove the shadow properly, if there is one,
 //! or to remove attached childs.
-bool COctreeSceneNode::removeChild(ISceneNode* child)
+bool COctreeSceneNode::removeChild(std::shared_ptr<ISceneNode> child)
 {
 	if (child && Shadow == child)
 	{
-		Shadow->drop();
 		Shadow = 0;
 	}
 
@@ -222,19 +219,19 @@ bool COctreeSceneNode::removeChild(ISceneNode* child)
 
 //! Creates shadow volume scene node as child of this node
 //! and returns a pointer to it.
-IShadowVolumeSceneNode* COctreeSceneNode::addShadowVolumeSceneNode(
-		const IMesh* shadowMesh, s32 id, bool zfailmethod, f32 infinity)
+std::shared_ptr<IShadowVolumeSceneNode> COctreeSceneNode::addShadowVolumeSceneNode(
+	const IMesh* shadowMesh, s32 id, bool zfailmethod, f32 infinity)
 {
-	if (!SceneManager->getVideoDriver()->queryFeature(video::EVDF_STENCIL_BUFFER))
+	if (!SceneManager.lock()->getVideoDriver()->queryFeature(video::EVDF_STENCIL_BUFFER))
 		return 0;
 
 	if (!shadowMesh)
 		shadowMesh = Mesh; // if null is given, use the mesh of node
 
 	if (Shadow)
-		Shadow->drop();
+		Shadow.reset();
 
-	Shadow = new CShadowVolumeSceneNode(shadowMesh, this, SceneManager, id,  zfailmethod, infinity);
+	Shadow = std::make_shared<CShadowVolumeSceneNode>(shadowMesh, SceneManager.lock(), id, zfailmethod, infinity);
 	return Shadow;
 }
 
@@ -254,7 +251,7 @@ bool COctreeSceneNode::createTree(IMesh* mesh)
 	if (!mesh)
 		return false;
 
-	MeshName = SceneManager->getMeshCache()->getMeshName(mesh);
+	MeshName = SceneManager.lock()->getMeshCache()->getMeshName(mesh);
 
     mesh->grab();
 	deleteTree();
@@ -279,7 +276,7 @@ bool COctreeSceneNode::createTree(IMesh* mesh)
 
 		for ( i=0; i < mesh->getMeshBufferCount(); ++i)
 		{
-			const scene::IMeshManipulator* meshManipulator = SceneManager->getMeshManipulator();
+			const scene::IMeshManipulator* meshManipulator = SceneManager.lock()->getMeshManipulator();
 
 			IMeshBuffer* meshBuffer = mesh->getMeshBuffer(i);
 			IMeshBuffer* nchunk = StdMeshes[i];
@@ -382,7 +379,7 @@ void COctreeSceneNode::deserializeAttributes(io::IAttributes* in, io::SAttribute
 	if (newMeshStr == "")
 		newMeshStr = MeshName;
 
-	IAnimatedMesh* newAnimatedMesh = SceneManager->getMesh(newMeshStr.c_str());
+	IAnimatedMesh* newAnimatedMesh = SceneManager.lock()->getMesh(newMeshStr.c_str());
 
 	if (newAnimatedMesh)
 		newMesh = newAnimatedMesh->getMesh(0);

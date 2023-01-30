@@ -16,8 +16,8 @@ namespace scene
 
 //! constructor
 CSkyBoxSceneNode::CSkyBoxSceneNode(video::ITexture* top, video::ITexture* bottom, video::ITexture* left,
-			video::ITexture* right, video::ITexture* front, video::ITexture* back, ISceneNode* parent, ISceneManager* mgr, s32 id)
-: ISceneNode(parent, mgr, id)
+			video::ITexture* right, video::ITexture* front, video::ITexture* back, std::shared_ptr<ISceneManager> mgr, s32 id)
+: ISceneNode( mgr, id)
 {
 	#ifdef _DEBUG
 	setDebugName("CSkyBoxSceneNode");
@@ -201,8 +201,8 @@ CSkyBoxSceneNode::~CSkyBoxSceneNode()
 //! renders the node.
 void CSkyBoxSceneNode::render()
 {
-	video::IVideoDriver* driver = SceneManager->getVideoDriver();
-	scene::ICameraSceneNode* camera = SceneManager->getActiveCamera();
+	video::IVideoDriver* driver = SceneManager.lock()->getVideoDriver();
+	auto camera = SceneManager.lock()->getActiveCamera();
 
 	if (!camera || !driver)
 		return;
@@ -285,7 +285,7 @@ const core::aabbox3d<f32>& CSkyBoxSceneNode::getBoundingBox() const
 void CSkyBoxSceneNode::OnRegisterSceneNode()
 {
 	if (IsVisible)
-		SceneManager->registerNodeForRendering(this, ESNRP_SKY_BOX);
+		SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), ESNRP_SKY_BOX);
 
 	ISceneNode::OnRegisterSceneNode();
 }
@@ -310,15 +310,15 @@ u32 CSkyBoxSceneNode::getMaterialCount() const
 
 
 //! Creates a clone of this scene node and its children.
-ISceneNode* CSkyBoxSceneNode::clone(ISceneNode* newParent, ISceneManager* newManager)
+std::shared_ptr<ISceneNode> CSkyBoxSceneNode::clone(std::shared_ptr<ISceneNode> newParent,
+                                                    std::shared_ptr<ISceneManager> newManager)
 {
-	if (!newParent) newParent = Parent;
-	if (!newManager) newManager = SceneManager;
+	if (!newParent) newParent = Parent.lock();
+	if (!newManager) newManager = SceneManager.lock();
 
-	CSkyBoxSceneNode* nb = new CSkyBoxSceneNode(0,0,0,0,0,0, newParent,
-		newManager, ID);
-
-	nb->cloneMembers(this, newManager);
+	auto nb = std::make_shared< CSkyBoxSceneNode>(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,	newManager, ID);
+	newParent->addChild(nb);
+	nb->cloneMembers(std::dynamic_pointer_cast<CSkyBoxSceneNode>(shared_from_this()), newManager);
 
 	for (u32 i = 0; i < 6; ++i)
 	{
@@ -326,8 +326,6 @@ ISceneNode* CSkyBoxSceneNode::clone(ISceneNode* newParent, ISceneManager* newMan
 		nb->MeshBuffer[i]->getBoundingBox() = MeshBuffer[i]->getBoundingBox();
 	}
 
-	if ( newParent )
-		nb->drop();
 	return nb;
 }
 

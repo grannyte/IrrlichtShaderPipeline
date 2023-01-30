@@ -14,9 +14,9 @@ namespace irr
 	{
 
 		//! constructor
-		CInstancedMeshSceneNode::CInstancedMeshSceneNode(IMesh* mesh, ISceneNode* parent, ISceneManager* mgr, s32 id,
+		CInstancedMeshSceneNode::CInstancedMeshSceneNode(IMesh* mesh, std::shared_ptr<ISceneManager> mgr, s32 id,
 			const core::vector3df& position, const core::vector3df& rotation, const core::vector3df& scale)
-			: IInstancedMeshSceneNode(parent, mgr, id, position, rotation, scale),
+			: IInstancedMeshSceneNode( mgr, id, position, rotation, scale),
 			baseMesh(NULL), readOnlyMaterial(false), staticInstances(false)
 		{
 #ifdef _DEBUG
@@ -39,7 +39,7 @@ namespace irr
 		{
 			if (IsVisible)
 			{
-				SceneManager->registerNodeForRendering(this);
+				SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()));
 
 				ISceneNode::OnRegisterSceneNode();
 			}
@@ -48,7 +48,7 @@ namespace irr
 		/*Creates an empty scenenode and return the pointer to the user
 		this empty scene node is used for irrlicht and the user to manage the instance
 		Each instance can be manipulated individualy through thier own empty scenenode*/
-		ISceneNode* CInstancedMeshSceneNode::addInstance(scene::ISceneNode* node)
+		std::shared_ptr<ISceneNode> CInstancedMeshSceneNode::addInstance(std::shared_ptr<ISceneNode> node)
 		{
 			return addInstance(node->getPosition(), node->getRotation(), node->getScale(), node->getID());
 		}
@@ -56,10 +56,10 @@ namespace irr
 		/*Creates an empty scenenode and return the pointer to the user
 		this empty scene node is used for irrlicht and the user to manage the instance
 		Each instance can be manipulated individualy through thier own empty scenenode*/
-		ISceneNode* CInstancedMeshSceneNode::addInstance(const core::vector3df& position, const core::vector3df& rotation,
+		std::shared_ptr<ISceneNode> CInstancedMeshSceneNode::addInstance(const core::vector3df& position, const core::vector3df& rotation,
 			const core::vector3df& scale, s32 id)
 		{
-			ISceneNode* empty = SceneManager->addEmptySceneNode(this, id);
+			std::shared_ptr<ISceneNode> empty = SceneManager.lock()->addEmptySceneNode(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), id);
 
 			empty->setPosition(position);
 			empty->setScale(scale);
@@ -78,14 +78,13 @@ namespace irr
 
 			removeChild(instanceNodeArray[index]);
 
-			instanceNodeArray[index]->drop();
 			instanceNodeArray[index] = instanceNodeArray[instanceNodeArray.size() - 1];
 			instanceNodeArray.erase(instanceNodeArray.size() - 1);
 
 			return true;
 		}
 
-		bool CInstancedMeshSceneNode::removeInstance(ISceneNode* instance)
+		bool CInstancedMeshSceneNode::removeInstance(std::shared_ptr<ISceneNode> instance)
 		{
 			const u32 size = instanceNodeArray.size();
 
@@ -95,7 +94,6 @@ namespace irr
 				{
 					removeChild(instanceNodeArray[i]);
 
-					instanceNodeArray[i]->drop();
 					instanceNodeArray[i] = instanceNodeArray[instanceNodeArray.size() - 1];
 					instanceNodeArray.erase(instanceNodeArray.size() - 1);
 
@@ -116,7 +114,6 @@ namespace irr
 				{
 					removeChild(instanceNodeArray[i]);
 
-					instanceNodeArray[i]->drop();
 					instanceNodeArray[i] = instanceNodeArray[instanceNodeArray.size() - 1];
 					instanceNodeArray.erase(instanceNodeArray.size() - 1);
 
@@ -127,7 +124,7 @@ namespace irr
 			return false;
 		}
 
-		ISceneNode* CInstancedMeshSceneNode::getInstance(u32 index) const
+		std::shared_ptr<ISceneNode> CInstancedMeshSceneNode::getInstance(u32 index) const
 		{
 			if (index > instanceNodeArray.size())
 				return NULL;
@@ -135,7 +132,7 @@ namespace irr
 			return instanceNodeArray[index];
 		}
 
-		ISceneNode* CInstancedMeshSceneNode::getInstanceById(s32 id) const
+		std::shared_ptr<ISceneNode> CInstancedMeshSceneNode::getInstanceById(s32 id) const
 		{
 			const u32 size = instanceNodeArray.size();
 
@@ -158,7 +155,7 @@ namespace irr
 		//! renders the node.
 		void CInstancedMeshSceneNode::render()
 		{
-			if (!IsVisible || !SceneManager->getActiveCamera())
+			if (!IsVisible || !SceneManager.lock()->getActiveCamera())
 				return;
 
 			if (!baseMesh || baseMesh->getMeshBuffer(0)->getVertexBuffer(1)->getVertexCount() == 0)
@@ -166,7 +163,7 @@ namespace irr
 
 			IMeshBuffer* renderBuffer = baseMesh->getMeshBuffer(0);
 
-			video::IVideoDriver* driver = SceneManager->getVideoDriver();
+			video::IVideoDriver* driver = SceneManager.lock()->getVideoDriver();
 			driver->setTransform(video::ETS_WORLD, AbsoluteTransformation);
 			driver->setMaterial(readOnlyMaterial ? material : renderBuffer->getMaterial());
 
@@ -230,7 +227,7 @@ namespace irr
 				core::aabbox3df instanceBox = renderBuffer->getBoundingBox();
 				instanceNodeArray[i]->getAbsoluteTransformation().transformBoxEx(instanceBox);
 
-				if (!SceneManager->isCulled(instanceNodeArray[i]))
+				if (!SceneManager.lock()->isCulled(instanceNodeArray[i]))
 					renderBuffer->getVertexBuffer(1)->setVertex(i, &instanceNodeArray[i]->getAbsoluteTransformation());
 
 				box.addInternalPoint(instanceNodeArray[i]->getAbsolutePosition());
@@ -273,7 +270,7 @@ namespace irr
 		//! Sets a new mesh
 		void CInstancedMeshSceneNode::setMesh(IMesh* mesh)
 		{
-			video::IVideoDriver* driver = SceneManager->getVideoDriver();
+			video::IVideoDriver* driver = SceneManager.lock()->getVideoDriver();
 			if (baseMesh)
 			{
 				baseMesh->drop();
@@ -297,12 +294,12 @@ namespace irr
 
 				renderBuffer->setHardwareMappingHint(scene::EHM_STATIC);
 
-				video::IVertexDescriptor* index = SceneManager->getVideoDriver()->getVertexDescriptor("BaseInstanceIndex");
+				video::IVertexDescriptor* index = SceneManager.lock()->getVideoDriver()->getVertexDescriptor("BaseInstanceIndex");
 
 				if (!index)
 				{
-					video::IVertexDescriptor* stdv = SceneManager->getVideoDriver()->getVertexDescriptor(0);
-					index = SceneManager->getVideoDriver()->addVertexDescriptor("BaseInstanceIndex");
+					video::IVertexDescriptor* stdv = SceneManager.lock()->getVideoDriver()->getVertexDescriptor(0);
+					index = SceneManager.lock()->getVideoDriver()->addVertexDescriptor("BaseInstanceIndex");
 
 					for (u32 i = 0; i < stdv->getAttributeCount(); ++i)
 					{
@@ -330,17 +327,18 @@ namespace irr
 		}
 
 		//! Creates a clone of this scene node and its children.
-		ISceneNode* CInstancedMeshSceneNode::clone(ISceneNode* newParent, ISceneManager* newManager)
+		std::shared_ptr<ISceneNode> CInstancedMeshSceneNode::clone(std::shared_ptr<ISceneNode> newParent,
+		                                                           std::shared_ptr<ISceneManager> newManager)
 		{
 			if (!newParent)
-				newParent = Parent;
+				newParent = Parent.lock();
 			if (!newManager)
-				newManager = SceneManager;
+				newManager = SceneManager.lock();
 
-			CInstancedMeshSceneNode* nb = new CInstancedMeshSceneNode(baseMesh, newParent,
+			auto nb = std::make_shared< CInstancedMeshSceneNode>(baseMesh, 
 				newManager, ID, RelativeTranslation, RelativeRotation, RelativeScale);
-
-			nb->cloneMembers(this, newManager);
+			newParent->addChild(nb);
+			nb->cloneMembers(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), newManager);
 
 			nb->readOnlyMaterial = readOnlyMaterial;
 			nb->instanceNodeArray = instanceNodeArray;
@@ -352,8 +350,6 @@ namespace irr
 			nb->box = box;
 			nb->material = material;
 
-			if (newParent)
-				nb->drop();
 			return nb;
 		}
 
@@ -363,7 +359,8 @@ namespace irr
 		}
 
 
-		IShadowVolumeSceneNode* CInstancedMeshSceneNode::addShadowVolumeSceneNode(const IMesh* shadowMesh,
+		std::shared_ptr<IShadowVolumeSceneNode> CInstancedMeshSceneNode::addShadowVolumeSceneNode(
+			const IMesh* shadowMesh,
 			s32 id, bool zfailmethod, f32 infinity)
 		{
 			return NULL;

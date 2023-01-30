@@ -23,7 +23,7 @@ CSceneNodeAnimatorRotation::CSceneNodeAnimatorRotation(u32 time, const core::vec
 
 
 //! animates a scene node
-void CSceneNodeAnimatorRotation::animateNode(ISceneNode* node, u32 timeMs)
+void CSceneNodeAnimatorRotation::animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs)
 {
 	if (node) // thanks to warui for this fix
 	{
@@ -65,7 +65,8 @@ void CSceneNodeAnimatorRotation::deserializeAttributes(io::IAttributes* in, io::
 }
 
 
-ISceneNodeAnimator* CSceneNodeAnimatorRotation::createClone(ISceneNode* node, ISceneManager* newManager)
+ISceneNodeAnimator* CSceneNodeAnimatorRotation::createClone(std::shared_ptr<ISceneNode> node,
+                                                            std::shared_ptr<ISceneManager> newManager)
 {
 	CSceneNodeAnimatorRotation * newAnimator =
 		new CSceneNodeAnimatorRotation(StartTime, Rotation);

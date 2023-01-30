@@ -5,6 +5,8 @@
 #ifndef __C_DEFAULT_SCENE_NODE_ANIMATOR_FACTORY_H_INCLUDED__
 #define __C_DEFAULT_SCENE_NODE_ANIMATOR_FACTORY_H_INCLUDED__
 
+#include <memory>
+
 #include "ISceneNodeAnimatorFactory.h"
 
 namespace irr
@@ -32,14 +34,14 @@ namespace scene
 		\param target: Target scene node of the new animator.
 		\return Returns pointer to the new scene node animator or null if not successful. You need to
 		drop this pointer after calling this, see IReferenceCounted::drop() for details. */
-		virtual ISceneNodeAnimator* createSceneNodeAnimator(ESCENE_NODE_ANIMATOR_TYPE type, ISceneNode* target) _IRR_OVERRIDE_;
+		virtual ISceneNodeAnimator* createSceneNodeAnimator(ESCENE_NODE_ANIMATOR_TYPE type,std::shared_ptr<ISceneNode> target) _IRR_OVERRIDE_;
 
 		//! creates a scene node animator based on its type name
 		/** \param typeName: Type of the scene node animator to add.
 		\param target: Target scene node of the new animator.
 		\return Returns pointer to the new scene node animator or null if not successful. You need to
 		drop this pointer after calling this, see IReferenceCounted::drop() for details. */
-		virtual ISceneNodeAnimator* createSceneNodeAnimator(const char* typeName, ISceneNode* target) _IRR_OVERRIDE_;
+		virtual ISceneNodeAnimator* createSceneNodeAnimator(const char* typeName,std::shared_ptr<ISceneNode> target) _IRR_OVERRIDE_;
 
 		//! returns amount of scene node animator types this factory is able to create
 		virtual u32 getCreatableSceneNodeAnimatorTypeCount() const _IRR_OVERRIDE_;

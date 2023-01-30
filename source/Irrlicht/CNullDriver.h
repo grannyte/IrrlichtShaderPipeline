@@ -404,11 +404,11 @@ namespace irr
 
 			//! Create occlusion query.
 			/** Use node for identification and mesh for occlusion test. */
-			virtual void addOcclusionQuery(scene::ISceneNode* node,
+			virtual void addOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node,
 				const scene::IMesh* mesh = 0) _IRR_OVERRIDE_;
 
 			//! Remove occlusion query.
-			virtual void removeOcclusionQuery(scene::ISceneNode* node) _IRR_OVERRIDE_;
+			virtual void removeOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node) _IRR_OVERRIDE_;
 
 			//! Remove all occlusion queries.
 			virtual void removeAllOcclusionQueries() _IRR_OVERRIDE_;
@@ -416,7 +416,7 @@ namespace irr
 			//! Run occlusion query. Draws mesh stored in query.
 			/** If the mesh shall not be rendered visible, use
 			overrideMaterial to disable the color and depth buffer. */
-			virtual void runOcclusionQuery(scene::ISceneNode* node, bool visible = false) _IRR_OVERRIDE_;
+			virtual void runOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool visible = false) _IRR_OVERRIDE_;
 
 			//! Run all occlusion queries. Draws all meshes stored in queries.
 			/** If the meshes shall not be rendered visible, use
@@ -426,7 +426,7 @@ namespace irr
 			//! Update occlusion query. Retrieves results from GPU.
 			/** If the query shall not block, set the flag to false.
 			Update might not occur in this case, though */
-			virtual void updateOcclusionQuery(scene::ISceneNode* node, bool block = true) _IRR_OVERRIDE_;
+			virtual void updateOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool block = true) _IRR_OVERRIDE_;
 
 			//! Update all occlusion queries. Retrieves results from GPU.
 			/** If the query shall not block, set the flag to false.
@@ -437,7 +437,7 @@ namespace irr
 			/** Return value is the number of visible pixels/fragments.
 			The value is a safe approximation, i.e. can be larger than the
 			actual value of pixels. */
-			virtual u32 getOcclusionQueryResult(scene::ISceneNode* node) const _IRR_OVERRIDE_;
+			virtual u32 getOcclusionQueryResult(std::shared_ptr<scene::ISceneNode> node) const _IRR_OVERRIDE_;
 
 			//! Only used by the engine internally.
 			/** Used to notify the driver that the window was resized. */
@@ -802,26 +802,20 @@ namespace irr
 
 			struct SOccQuery
 			{
-				SOccQuery(scene::ISceneNode* node, const scene::IMesh* mesh = 0) : Node(node), Mesh(mesh), PID(0), Result(0xffffffff), Run(0xffffffff)
+				SOccQuery(std::shared_ptr<irr::scene::ISceneNode> node, const scene::IMesh* mesh = 0) : Node(node), Mesh(mesh), PID(0), Result(0xffffffff), Run(0xffffffff)
 				{
-					if (Node)
-						Node->grab();
 					if (Mesh)
 						Mesh->grab();
 				}
 
 				SOccQuery(const SOccQuery& other) : Node(other.Node), Mesh(other.Mesh), PID(other.PID), Result(other.Result), Run(other.Run)
 				{
-					if (Node)
-						Node->grab();
 					if (Mesh)
 						Mesh->grab();
 				}
 
 				~SOccQuery()
 				{
-					if (Node)
-						Node->drop();
 					if (Mesh)
 						Mesh->drop();
 				}
@@ -833,8 +827,6 @@ namespace irr
 					PID = other.PID;
 					Result = other.Result;
 					Run = other.Run;
-					if (Node)
-						Node->grab();
 					if (Mesh)
 						Mesh->grab();
 					return *this;
@@ -845,7 +837,7 @@ namespace irr
 					return other.Node == Node;
 				}
 
-				scene::ISceneNode* Node;
+				std::shared_ptr<irr::scene::ISceneNode> Node;
 				const scene::IMesh* Mesh;
 				union
 				{

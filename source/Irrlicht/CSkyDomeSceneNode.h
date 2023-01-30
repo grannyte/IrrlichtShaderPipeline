@@ -19,7 +19,7 @@ class CSkyDomeSceneNode : public ISceneNode
 	public:
 		CSkyDomeSceneNode(video::ITexture* texture, u32 horiRes, u32 vertRes,
 			f32 texturePercentage, f32 spherePercentage, f32 radius,
-			ISceneNode* parent, ISceneManager* smgr, s32 id);
+			std::shared_ptr<ISceneManager> smgr, s32 id);
 		virtual ~CSkyDomeSceneNode();
 		virtual void OnRegisterSceneNode() _IRR_OVERRIDE_;
 		virtual void render() _IRR_OVERRIDE_;
@@ -30,7 +30,8 @@ class CSkyDomeSceneNode : public ISceneNode
 
 		virtual void serializeAttributes(io::IAttributes* out, io::SAttributeReadWriteOptions* options) const _IRR_OVERRIDE_;
 		virtual void deserializeAttributes(io::IAttributes* in, io::SAttributeReadWriteOptions* options) _IRR_OVERRIDE_;
-		virtual ISceneNode* clone(ISceneNode* newParent=0, ISceneManager* newManager=0) _IRR_OVERRIDE_;
+		virtual std::shared_ptr<ISceneNode> clone(std::shared_ptr<ISceneNode> newParent = 0,
+		                                          std::shared_ptr<ISceneManager> newManager = 0) _IRR_OVERRIDE_;
 
 	private:
 

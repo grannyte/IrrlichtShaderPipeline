@@ -27,11 +27,11 @@ namespace scene
 
 //! constructor
 CAnimatedMeshSceneNode::CAnimatedMeshSceneNode(IAnimatedMesh* mesh,
-		ISceneNode* parent, ISceneManager* mgr, s32 id,
+		 std::shared_ptr<ISceneManager> mgr, s32 id,
 		const core::vector3df& position,
 		const core::vector3df& rotation,
 		const core::vector3df& scale)
-: IAnimatedMeshSceneNode(parent, mgr, id, position, rotation, scale), Mesh(0),
+: IAnimatedMeshSceneNode( mgr, id, position, rotation, scale), Mesh(0),
 	StartFrame(0), EndFrame(0), FramesPerSecond(0.025f),
 	CurrentFrameNr(0.f), LastTimeMs(0),
 	TransitionTime(0), Transiting(0.f), TransitingBlend(0.f),
@@ -56,8 +56,6 @@ CAnimatedMeshSceneNode::~CAnimatedMeshSceneNode()
 	if (Mesh)
 		Mesh->drop();
 
-	if (Shadow)
-		Shadow->drop();
 
 	if (LoopCallBack)
 		LoopCallBack->drop();
@@ -152,7 +150,7 @@ void CAnimatedMeshSceneNode::OnRegisterSceneNode()
 		// materials, check of what type they are and register this node for the right
 		// render pass according to that.
 
-		video::IVideoDriver* driver = SceneManager->getVideoDriver();
+		video::IVideoDriver* driver = SceneManager.lock()->getVideoDriver();
 
 		PassCount = 0;
 		int transparentCount = 0;
@@ -176,10 +174,10 @@ void CAnimatedMeshSceneNode::OnRegisterSceneNode()
 		// register according to material types counted
 
 		if (solidCount)
-			SceneManager->registerNodeForRendering(this, scene::ESNRP_SOLID);
+			SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), scene::ESNRP_SOLID);
 
 		if (transparentCount)
-			SceneManager->registerNodeForRendering(this, scene::ESNRP_TRANSPARENT);
+			SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), scene::ESNRP_TRANSPARENT);
 
 		ISceneNode::OnRegisterSceneNode();
 	}
@@ -218,7 +216,7 @@ IMesh * CAnimatedMeshSceneNode::getMeshForCurrentFrame()
 
 			//---slow---
 			for (u32 n=0;n<JointChildSceneNodes.size();++n)
-				if (JointChildSceneNodes[n]->getParent()==this)
+				if (JointChildSceneNodes[n]->getParent()== std::dynamic_pointer_cast<ISceneNode>(shared_from_this()))
 				{
 					JointChildSceneNodes[n]->updateAbsolutePositionOfAllChildren(); //temp, should be an option
 				}
@@ -264,14 +262,14 @@ void CAnimatedMeshSceneNode::OnAnimate(u32 timeMs)
 //! renders the node.
 void CAnimatedMeshSceneNode::render()
 {
-	video::IVideoDriver* driver = SceneManager->getVideoDriver();
+	video::IVideoDriver* driver = SceneManager.lock()->getVideoDriver();
 
 	if (!Mesh || !driver)
 		return;
 
 
 	bool isTransparentPass =
-		SceneManager->getSceneNodeRenderPass() == scene::ESNRP_TRANSPARENT;
+		SceneManager.lock()->getSceneNodeRenderPass() == scene::ESNRP_TRANSPARENT;
 
 	++PassCount;
 
@@ -357,8 +355,8 @@ void CAnimatedMeshSceneNode::render()
 		// show normals
 		if (DebugDataVisible & scene::EDS_NORMALS)
 		{
-			const f32 debugNormalLength = SceneManager->getParameters()->getAttributeAsFloat(DEBUG_NORMAL_LENGTH);
-			const video::SColor debugNormalColor = SceneManager->getParameters()->getAttributeAsColor(DEBUG_NORMAL_COLOR);
+			const f32 debugNormalLength = SceneManager.lock()->getParameters()->getAttributeAsFloat(DEBUG_NORMAL_LENGTH);
+			const video::SColor debugNormalColor = SceneManager.lock()->getParameters()->getAttributeAsColor(DEBUG_NORMAL_COLOR);
 			const u32 count = m->getMeshBufferCount();
 
 			// draw normals
@@ -412,14 +410,14 @@ void CAnimatedMeshSceneNode::render()
 			if (Mesh->getMeshType() == EAMT_MD3)
 			{
 				IAnimatedMesh * arrow =
-					SceneManager->addArrowMesh (
+					SceneManager.lock()->addArrowMesh (
 							"__tag_show",
 							0xFF0000FF, 0xFF000088,
 							4, 8, 5.f, 4.f, 0.5f,
 							1.f);
 				if (!arrow)
 				{
-					arrow = SceneManager->getMesh ( "__tag_show" );
+					arrow = SceneManager.lock()->getMesh ( "__tag_show" );
 				}
 				IMesh *arrowMesh = arrow->getMesh(0);
 
@@ -547,25 +545,23 @@ u32 CAnimatedMeshSceneNode::getMaterialCount() const
 
 //! Creates shadow volume scene node as child of this node
 //! and returns a pointer to it.
-IShadowVolumeSceneNode* CAnimatedMeshSceneNode::addShadowVolumeSceneNode(
+std::shared_ptr<IShadowVolumeSceneNode> CAnimatedMeshSceneNode::addShadowVolumeSceneNode(
 		const IMesh* shadowMesh, s32 id, bool zfailmethod, f32 infinity)
 {
-	if (!SceneManager->getVideoDriver()->queryFeature(video::EVDF_STENCIL_BUFFER))
+	if (!SceneManager.lock()->getVideoDriver()->queryFeature(video::EVDF_STENCIL_BUFFER))
 		return 0;
 
 	if (!shadowMesh)
 		shadowMesh = Mesh; // if null is given, use the mesh of node
 
-	if (Shadow)
-		Shadow->drop();
 
-	Shadow = new CShadowVolumeSceneNode(shadowMesh, this, SceneManager, id,  zfailmethod, infinity);
+	Shadow = std::make_shared<CShadowVolumeSceneNode>(shadowMesh,  SceneManager.lock(), id, zfailmethod, infinity);
 	return Shadow;
 }
 
 //! Returns a pointer to a child node, which has the same transformation as
 //! the corresponding joint, if the mesh in this scene node is a skinned mesh.
-IBoneSceneNode* CAnimatedMeshSceneNode::getJointNode(const c8* jointName)
+std::shared_ptr<IBoneSceneNode> CAnimatedMeshSceneNode::getJointNode(const c8* jointName)
 {
 #ifndef _IRR_COMPILE_WITH_SKINNED_MESH_SUPPORT_
 	os::Printer::log("Compiled without _IRR_COMPILE_WITH_SKINNED_MESH_SUPPORT_", ELL_WARNING);
@@ -604,7 +600,7 @@ IBoneSceneNode* CAnimatedMeshSceneNode::getJointNode(const c8* jointName)
 
 //! Returns a pointer to a child node, which has the same transformation as
 //! the corresponding joint, if the mesh in this scene node is a skinned mesh.
-IBoneSceneNode* CAnimatedMeshSceneNode::getJointNode(u32 jointID)
+std::shared_ptr<IBoneSceneNode> CAnimatedMeshSceneNode::getJointNode(u32 jointID)
 {
 #ifndef _IRR_COMPILE_WITH_SKINNED_MESH_SUPPORT_
 	os::Printer::log("Compiled without _IRR_COMPILE_WITH_SKINNED_MESH_SUPPORT_", ELL_WARNING);
@@ -649,11 +645,10 @@ u32 CAnimatedMeshSceneNode::getJointCount() const
 //! Removes a child from this scene node.
 //! Implemented here, to be able to remove the shadow properly, if there is one,
 //! or to remove attached childs.
-bool CAnimatedMeshSceneNode::removeChild(ISceneNode* child)
+bool CAnimatedMeshSceneNode::removeChild(std::shared_ptr<ISceneNode> child)
 {
 	if (child && Shadow == child)
 	{
-		Shadow->drop();
 		Shadow = 0;
 	}
 
@@ -764,13 +759,13 @@ void CAnimatedMeshSceneNode::serializeAttributes(io::IAttributes* out, io::SAttr
 
 	if (options && (options->Flags&io::EARWF_USE_RELATIVE_PATHS) && options->Filename)
 	{
-		const io::path path = SceneManager->getFileSystem()->getRelativeFilename(
-				SceneManager->getFileSystem()->getAbsolutePath(SceneManager->getMeshCache()->getMeshName(Mesh).getPath()),
+		const io::path path = SceneManager.lock()->getFileSystem()->getRelativeFilename(
+				SceneManager.lock()->getFileSystem()->getAbsolutePath(SceneManager.lock()->getMeshCache()->getMeshName(Mesh).getPath()),
 				options->Filename);
 		out->addString("Mesh", path.c_str());
 	}
 	else
-		out->addString("Mesh", SceneManager->getMeshCache()->getMeshName(Mesh).getPath().c_str());
+		out->addString("Mesh", SceneManager.lock()->getMeshCache()->getMeshName(Mesh).getPath().c_str());
 	out->addBool("Looping", Looping);
 	out->addBool("ReadOnlyMaterials", ReadOnlyMaterials);
 	out->addFloat("FramesPerSecond", FramesPerSecond);
@@ -784,7 +779,7 @@ void CAnimatedMeshSceneNode::deserializeAttributes(io::IAttributes* in, io::SAtt
 {
 	IAnimatedMeshSceneNode::deserializeAttributes(in, options);
 
-	io::path oldMeshStr = SceneManager->getMeshCache()->getMeshName(Mesh);
+	io::path oldMeshStr = SceneManager.lock()->getMeshCache()->getMeshName(Mesh);
 	io::path newMeshStr = in->getAttributeAsString("Mesh");
 
 	Looping = in->getAttributeAsBool("Looping");
@@ -795,7 +790,7 @@ void CAnimatedMeshSceneNode::deserializeAttributes(io::IAttributes* in, io::SAtt
 
 	if (newMeshStr != "" && oldMeshStr != newMeshStr)
 	{
-		IAnimatedMesh* newAnimatedMesh = SceneManager->getMesh(newMeshStr.c_str());
+		IAnimatedMesh* newAnimatedMesh = SceneManager.lock()->getMesh(newMeshStr.c_str());
 
 		if (newAnimatedMesh)
 			setMesh(newAnimatedMesh);
@@ -880,9 +875,9 @@ void CAnimatedMeshSceneNode::updateAbsolutePosition()
 		}
 
 		SMD3QuaternionTag parent ( MD3Special->Tagname );
-		if (Parent && Parent->getType() == ESNT_ANIMATED_MESH)
+		if (Parent.lock() && Parent.lock()->getType() == ESNT_ANIMATED_MESH)
 		{
-			const SMD3QuaternionTag * p = ((IAnimatedMeshSceneNode*) Parent)->getMD3TagTransformation
+			const SMD3QuaternionTag * p = std::dynamic_pointer_cast<IAnimatedMeshSceneNode> (Parent.lock())->getMD3TagTransformation
 									( MD3Special->Tagname );
 
 			if (p)
@@ -999,7 +994,7 @@ void CAnimatedMeshSceneNode::animateJoints(bool CalculateAbsolutePositions)
 			//---slow---
 			for (u32 n=0;n<JointChildSceneNodes.size();++n)
 			{
-				if (JointChildSceneNodes[n]->getParent()==this)
+				if (JointChildSceneNodes[n]->getParent()==std::dynamic_pointer_cast<ISceneNode>(shared_from_this()))
 				{
 					JointChildSceneNodes[n]->updateAbsolutePositionOfAllChildren(); //temp, should be an option
 				}
@@ -1027,7 +1022,7 @@ void CAnimatedMeshSceneNode::checkJoints()
 		JointChildSceneNodes.clear();
 
 		//Create joints for SkinnedMesh
-		((CSkinnedMesh*)Mesh)->addJoints(JointChildSceneNodes, this, SceneManager);
+		((CSkinnedMesh*)Mesh)->addJoints(JointChildSceneNodes, std::dynamic_pointer_cast<IAnimatedMeshSceneNode>(shared_from_this()), SceneManager.lock());
 		((CSkinnedMesh*)Mesh)->recoverJointsFromMesh(JointChildSceneNodes);
 
 		JointsUsed=true;
@@ -1064,24 +1059,24 @@ void CAnimatedMeshSceneNode::beginTransition()
 
 /*!
 */
-ISceneNode* CAnimatedMeshSceneNode::clone(ISceneNode* newParent, ISceneManager* newManager)
+std::shared_ptr<ISceneNode> CAnimatedMeshSceneNode::clone(std::shared_ptr<ISceneNode> newParent,
+                                                          std::shared_ptr<ISceneManager> newManager)
 {
 	if (!newParent)
-		newParent = Parent;
+		newParent = Parent.lock();
 	if (!newManager)
-		newManager = SceneManager;
+		newManager = SceneManager.lock();
 
-	CAnimatedMeshSceneNode* newNode =
-		new CAnimatedMeshSceneNode(Mesh, NULL, newManager, ID, RelativeTranslation,
+	auto newNode =
+		std::make_shared< CAnimatedMeshSceneNode>(Mesh, newManager, ID, RelativeTranslation,
 						 RelativeRotation, RelativeScale);
 
 	if (newParent)
 	{
 		newNode->setParent(newParent); 	// not in constructor because virtual overload for updateAbsolutePosition won't be called
-		newNode->drop();
 	}
 
-	newNode->cloneMembers(this, newManager);
+	newNode->cloneMembers(std::dynamic_pointer_cast<IAnimatedMeshSceneNode>(shared_from_this()), newManager);
 
 	newNode->Materials = Materials;
 	newNode->Box = Box;
@@ -1102,8 +1097,6 @@ ISceneNode* CAnimatedMeshSceneNode::clone(ISceneNode* newParent, ISceneManager* 
 		newNode->LoopCallBack->grab();
 	newNode->PassCount = PassCount;
 	newNode->Shadow = Shadow;
-	if (newNode->Shadow)
-		newNode->Shadow->grab();
 	newNode->JointChildSceneNodes = JointChildSceneNodes;
 	newNode->PretransitingSave = PretransitingSave;
 	newNode->RenderFromIdentity = RenderFromIdentity;

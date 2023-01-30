@@ -17,7 +17,7 @@ namespace scene
 	public:
 
 		//! constructor
-		CEmptySceneNode(ISceneNode* parent, ISceneManager* mgr, irr::s32 id);
+		CEmptySceneNode(std::shared_ptr<ISceneManager> mgr, irr::s32 id);
 
 		//! returns the axis aligned bounding box of this node
 		const irr::core::aabbox3d<f32>& getBoundingBox() const _IRR_OVERRIDE_;
@@ -32,7 +32,7 @@ namespace scene
 		ESCENE_NODE_TYPE getType() const _IRR_OVERRIDE_ { return ESNT_EMPTY; }
 
 		//! Creates a clone of this scene node and its children.
-		ISceneNode* clone(ISceneNode* newParent=0, ISceneManager* newManager=0) _IRR_OVERRIDE_;
+		std::shared_ptr<ISceneNode> clone(std::shared_ptr<ISceneNode> newParent=0, std::shared_ptr<ISceneManager> newManager=0) _IRR_OVERRIDE_;
 
 	private:
 

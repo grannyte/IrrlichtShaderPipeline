@@ -15,9 +15,9 @@ namespace scene
 {
 
 //! constructor
-CLightSceneNode::CLightSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id,
+CLightSceneNode::CLightSceneNode(std::shared_ptr<ISceneManager> mgr, s32 id,
 		const core::vector3df& position, video::SColorf color, f32 radius)
-: ILightSceneNode(parent, mgr, id, position), DriverLightIndex(-1), LightIsOn(true)
+: ILightSceneNode(mgr, id, position), DriverLightIndex(-1), LightIsOn(true)
 {
 	#ifdef _DEBUG
 	setDebugName("CLightSceneNode");
@@ -37,7 +37,7 @@ void CLightSceneNode::OnRegisterSceneNode()
 	doLightRecalc();
 
 	if (IsVisible)
-		SceneManager->registerNodeForRendering(this, ESNRP_LIGHT);
+		SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), ESNRP_LIGHT);
 
 	ISceneNode::OnRegisterSceneNode();
 }
@@ -46,7 +46,7 @@ void CLightSceneNode::OnRegisterSceneNode()
 //! render
 void CLightSceneNode::render()
 {
-	video::IVideoDriver* driver = SceneManager->getVideoDriver();
+	video::IVideoDriver* driver = SceneManager.lock()->getVideoDriver();
 	if (!driver)
 		return;
 
@@ -105,7 +105,7 @@ void CLightSceneNode::setVisible(bool isVisible)
 
 	if(DriverLightIndex < 0)
 		return;
-	video::IVideoDriver* driver = SceneManager->getVideoDriver();
+	video::IVideoDriver* driver = SceneManager.lock()->getVideoDriver();
 	if (!driver)
 		return;
 
@@ -251,22 +251,23 @@ void CLightSceneNode::deserializeAttributes(io::IAttributes* in, io::SAttributeR
 }
 
 //! Creates a clone of this scene node and its children.
-ISceneNode* CLightSceneNode::clone(ISceneNode* newParent, ISceneManager* newManager)
+std::shared_ptr<ISceneNode> CLightSceneNode::clone(std::shared_ptr<ISceneNode> newParent,
+                                                   std::shared_ptr<ISceneManager> newManager)
 {
 	if (!newParent)
-		newParent = Parent;
+		newParent = Parent.lock();
 	if (!newManager)
-		newManager = SceneManager;
+		newManager = SceneManager.lock();
 
-	CLightSceneNode* nb = new CLightSceneNode(newParent,
+	auto nb = std::make_shared<CLightSceneNode>(
 		newManager, ID, RelativeTranslation, LightData.DiffuseColor, LightData.Radius);
 
-	nb->cloneMembers(this, newManager);
+	if (newParent)
+		newParent->addChild(nb);
+	nb->cloneMembers(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), newManager);
 	nb->LightData = LightData;
 	nb->BBox = BBox;
 
-	if ( newParent )
-		nb->drop();
 	return nb;
 }
 

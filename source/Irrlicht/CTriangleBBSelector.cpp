@@ -11,7 +11,7 @@ namespace scene
 {
 
 //! constructor
-CTriangleBBSelector::CTriangleBBSelector(ISceneNode* node)
+CTriangleBBSelector::CTriangleBBSelector(std::shared_ptr<ISceneNode> node)
 : CTriangleSelector(node)
 {
 	#ifdef _DEBUG

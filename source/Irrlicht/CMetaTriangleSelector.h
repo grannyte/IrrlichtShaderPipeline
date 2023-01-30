@@ -52,7 +52,7 @@ public:
 	virtual void removeAllTriangleSelectors() _IRR_OVERRIDE_;
 
 	//! Get the scene node associated with a given triangle.
-	virtual ISceneNode* getSceneNodeForTriangle(u32 triangleIndex) const _IRR_OVERRIDE_;
+	virtual std::shared_ptr<ISceneNode> getSceneNodeForTriangle(u32 triangleIndex) const _IRR_OVERRIDE_;
 
 	// Get the number of TriangleSelectors that are part of this one
 	virtual u32 getSelectorCount() const _IRR_OVERRIDE_;

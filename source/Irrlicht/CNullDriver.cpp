@@ -1805,7 +1805,7 @@ namespace irr
 
 		//! Create occlusion query.
 		/** Use node for identification and mesh for occlusion test. */
-		void CNullDriver::addOcclusionQuery(scene::ISceneNode* node, const scene::IMesh* mesh)
+		void CNullDriver::addOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, const scene::IMesh* mesh)
 		{
 			if (!node)
 				return;
@@ -1814,9 +1814,9 @@ namespace irr
 				if ((node->getType() != scene::ESNT_MESH) && (node->getType() != scene::ESNT_ANIMATED_MESH))
 					return;
 				else if (node->getType() == scene::ESNT_MESH)
-					mesh = static_cast<scene::IMeshSceneNode*>(node)->getMesh();
+					mesh = std::static_pointer_cast<scene::IMeshSceneNode>(node)->getMesh();
 				else
-					mesh = static_cast<scene::IAnimatedMeshSceneNode*>(node)->getMesh()->getMesh(0);
+					mesh = std::static_pointer_cast<scene::IAnimatedMeshSceneNode>(node)->getMesh()->getMesh(0);
 				if (!mesh)
 					return;
 			}
@@ -1840,7 +1840,7 @@ namespace irr
 		}
 
 		//! Remove occlusion query.
-		void CNullDriver::removeOcclusionQuery(scene::ISceneNode* node)
+		void CNullDriver::removeOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node)
 		{
 			//search for query
 			s32 index = OcclusionQueries.linear_search(SOccQuery(node));
@@ -1863,7 +1863,7 @@ namespace irr
 		//! Run occlusion query. Draws mesh stored in query.
 		/** If the mesh shall be rendered visible, use
 		flag to enable the proper material setting. */
-		void CNullDriver::runOcclusionQuery(scene::ISceneNode* node, bool visible)
+		void CNullDriver::runOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool visible)
 		{
 			if (!node)
 				return;
@@ -1903,7 +1903,7 @@ namespace irr
 		//! Update occlusion query. Retrieves results from GPU.
 		/** If the query shall not block, set the flag to false.
 		Update might not occur in this case, though */
-		void CNullDriver::updateOcclusionQuery(scene::ISceneNode* node, bool block)
+		void CNullDriver::updateOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool block)
 		{
 		}
 
@@ -1927,7 +1927,7 @@ namespace irr
 		/** Return value is the number of visible pixels/fragments.
 		The value is a safe approximation, i.e. can be larger then the
 		actual value of pixels. */
-		u32 CNullDriver::getOcclusionQueryResult(scene::ISceneNode* node) const
+		u32 CNullDriver::getOcclusionQueryResult(std::shared_ptr<scene::ISceneNode> node) const
 		{
 			return ~0;
 		}

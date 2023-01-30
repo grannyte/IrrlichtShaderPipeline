@@ -9,37 +9,39 @@
 
 namespace irr
 {
-namespace scene
-{
-	class CSceneNodeAnimatorDelete : public ISceneNodeAnimatorFinishing
+	namespace scene
 	{
-	public:
-
-		//! constructor
-		CSceneNodeAnimatorDelete(ISceneManager* manager, u32 when);
-
-		//! animates a scene node
-		virtual void animateNode(ISceneNode* node, u32 timeMs) _IRR_OVERRIDE_;
-
-		//! Returns type of the scene node animator
-		virtual ESCENE_NODE_ANIMATOR_TYPE getType() const _IRR_OVERRIDE_
+		class CSceneNodeAnimatorDelete : public ISceneNodeAnimatorFinishing
 		{
-			return ESNAT_DELETION;
-		}
+		public:
 
-		//! Creates a clone of this animator.
-		/** Please note that you will have to drop
-		(IReferenceCounted::drop()) the returned pointer after calling
-		this. */
-		virtual ISceneNodeAnimator* createClone(ISceneNode* node, ISceneManager* newManager=0) _IRR_OVERRIDE_;
+			//! constructor
+			CSceneNodeAnimatorDelete(std::shared_ptr<ISceneManager> manager, u32 when);
 
-	private:
+			//! animates a scene node
+			virtual void animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs) _IRR_OVERRIDE_;
 
-		ISceneManager* SceneManager;
-	};
+			//! Returns type of the scene node animator
+			virtual ESCENE_NODE_ANIMATOR_TYPE getType() const _IRR_OVERRIDE_
+			{
+				return ESNAT_DELETION;
+			}
+
+			//! Creates a clone of this animator.
+			/** Please note that you will have to drop
+			(IReferenceCounted::drop()) the returned pointer after calling
+			this. */
+			virtual ISceneNodeAnimator* createClone(std::shared_ptr<ISceneNode> node,
+				std::shared_ptr<ISceneManager> newManager = 0)
+				_IRR_OVERRIDE_;
+
+		private:
+
+			std::shared_ptr<ISceneManager> SceneManager;
+		};
 
 
-} // end namespace scene
+	} // end namespace scene
 } // end namespace irr
 
 #endif

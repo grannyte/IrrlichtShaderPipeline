@@ -18,10 +18,10 @@ namespace irr
 	namespace scene
 	{
 		//! constructor
-		CMeshSceneNode::CMeshSceneNode(IMesh* mesh, ISceneNode* parent, ISceneManager* mgr, s32 id,
+		CMeshSceneNode::CMeshSceneNode(IMesh* mesh, std::shared_ptr<ISceneManager> mgr, s32 id,
 			const core::vector3df& position, const core::vector3df& rotation,
 			const core::vector3df& scale)
-			: IMeshSceneNode(parent, mgr, id, position, rotation, scale), Mesh(0), Shadow(0),
+			: IMeshSceneNode( mgr, id, position, rotation, scale), Mesh(0), Shadow(0),
 			PassCount(0), ReadOnlyMaterials(false)
 		{
 #ifdef _DEBUG
@@ -34,8 +34,6 @@ namespace irr
 		//! destructor
 		CMeshSceneNode::~CMeshSceneNode()
 		{
-			if (Shadow)
-				Shadow->drop();
 			if (Mesh)
 				Mesh->drop();
 		}
@@ -50,7 +48,7 @@ namespace irr
 				// materials, check of what type they are and register this node for the right
 				// render pass according to that.
 
-				video::IVideoDriver* driver = SceneManager->getVideoDriver();
+				video::IVideoDriver* driver = SceneManager.lock()->getVideoDriver();
 
 				PassCount = 0;
 				int transparentCount = 0;
@@ -97,10 +95,10 @@ namespace irr
 				// register according to material types counted
 
 				if (solidCount)
-					SceneManager->registerNodeForRendering(this, scene::ESNRP_SOLID);
+					SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<CMeshSceneNode>(shared_from_this()), scene::ESNRP_SOLID);
 
 				if (transparentCount)
-					SceneManager->registerNodeForRendering(this, scene::ESNRP_TRANSPARENT);
+					SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<CMeshSceneNode>(shared_from_this()), scene::ESNRP_TRANSPARENT);
 
 				ISceneNode::OnRegisterSceneNode();
 			}
@@ -109,13 +107,13 @@ namespace irr
 		//! renders the node.
 		void CMeshSceneNode::render()
 		{
-			video::IVideoDriver* driver = SceneManager->getVideoDriver();
+			video::IVideoDriver* driver = SceneManager.lock()->getVideoDriver();
 
 			if (!Mesh || !driver)
 				return;
 
 			bool isTransparentPass =
-				SceneManager->getSceneNodeRenderPass() == scene::ESNRP_TRANSPARENT;
+				SceneManager.lock()->getSceneNodeRenderPass() == scene::ESNRP_TRANSPARENT;
 
 			++PassCount;
 
@@ -196,8 +194,8 @@ namespace irr
 				if (DebugDataVisible & scene::EDS_NORMALS)
 				{
 					// draw normals
-					const f32 debugNormalLength = SceneManager->getParameters()->getAttributeAsFloat(DEBUG_NORMAL_LENGTH);
-					const video::SColor debugNormalColor = SceneManager->getParameters()->getAttributeAsColor(DEBUG_NORMAL_COLOR);
+					const f32 debugNormalLength = SceneManager.lock()->getParameters()->getAttributeAsFloat(DEBUG_NORMAL_LENGTH);
+					const video::SColor debugNormalColor = SceneManager.lock()->getParameters()->getAttributeAsColor(DEBUG_NORMAL_COLOR);
 					const u32 count = Mesh->getMeshBufferCount();
 
 					for (u32 i = 0; i != count; ++i)
@@ -223,12 +221,11 @@ namespace irr
 		//! Removes a child from this scene node.
 		//! Implemented here, to be able to remove the shadow properly, if there is one,
 		//! or to remove attached childs.
-		bool CMeshSceneNode::removeChild(ISceneNode* child)
+		bool CMeshSceneNode::removeChild(std::shared_ptr<ISceneNode> child)
 		{
 			if (child && Shadow == child)
 			{
-				Shadow->drop();
-				Shadow = 0;
+				Shadow.reset();
 			}
 
 			return ISceneNode::removeChild(child);
@@ -284,19 +281,19 @@ namespace irr
 
 		//! Creates shadow volume scene node as child of this node
 		//! and returns a pointer to it.
-		IShadowVolumeSceneNode* CMeshSceneNode::addShadowVolumeSceneNode(
+		std::shared_ptr<IShadowVolumeSceneNode> CMeshSceneNode::addShadowVolumeSceneNode(
 			const IMesh* shadowMesh, s32 id, bool zfailmethod, f32 infinity)
 		{
-			if (!SceneManager->getVideoDriver()->queryFeature(video::EVDF_STENCIL_BUFFER))
+			if (!SceneManager.lock()->getVideoDriver()->queryFeature(video::EVDF_STENCIL_BUFFER))
 				return 0;
 
 			if (!shadowMesh)
 				shadowMesh = Mesh; // if null is given, use the mesh of node
 
 			if (Shadow)
-				Shadow->drop();
+				Shadow.reset();
 
-			Shadow = new CShadowVolumeSceneNode(shadowMesh, this, SceneManager, id, zfailmethod, infinity);
+			Shadow = std::make_shared< CShadowVolumeSceneNode>(shadowMesh, SceneManager.lock(), id, zfailmethod, infinity);
 			return Shadow;
 		}
 
@@ -326,27 +323,27 @@ namespace irr
 
 			if (options && (options->Flags & io::EARWF_USE_RELATIVE_PATHS) && options->Filename)
 			{
-				const io::path path = SceneManager->getFileSystem()->getRelativeFilename(
-					SceneManager->getFileSystem()->getAbsolutePath(SceneManager->getMeshCache()->getMeshName(Mesh).getPath()),
+				const io::path path = SceneManager.lock()->getFileSystem()->getRelativeFilename(
+					SceneManager.lock()->getFileSystem()->getAbsolutePath(SceneManager.lock()->getMeshCache()->getMeshName(Mesh).getPath()),
 					options->Filename);
 				out->addString("Mesh", path.c_str());
 			}
 			else
-				out->addString("Mesh", SceneManager->getMeshCache()->getMeshName(Mesh).getPath().c_str());
+				out->addString("Mesh", SceneManager.lock()->getMeshCache()->getMeshName(Mesh).getPath().c_str());
 			out->addBool("ReadOnlyMaterials", ReadOnlyMaterials);
 		}
 
 		//! Reads attributes of the scene node.
 		void CMeshSceneNode::deserializeAttributes(io::IAttributes* in, io::SAttributeReadWriteOptions* options)
 		{
-			io::path oldMeshStr = SceneManager->getMeshCache()->getMeshName(Mesh);
+			io::path oldMeshStr = SceneManager.lock()->getMeshCache()->getMeshName(Mesh);
 			io::path newMeshStr = in->getAttributeAsString("Mesh");
 			ReadOnlyMaterials = in->getAttributeAsBool("ReadOnlyMaterials");
 
 			if (newMeshStr != "" && oldMeshStr != newMeshStr)
 			{
 				IMesh* newMesh = 0;
-				IAnimatedMesh* newAnimatedMesh = SceneManager->getMesh(newMeshStr.c_str());
+				IAnimatedMesh* newAnimatedMesh = SceneManager.lock()->getMesh(newMeshStr.c_str());
 
 				if (newAnimatedMesh)
 					newMesh = newAnimatedMesh->getMesh(0);
@@ -401,25 +398,24 @@ namespace irr
 		}
 
 		//! Creates a clone of this scene node and its children.
-		ISceneNode* CMeshSceneNode::clone(ISceneNode* newParent, ISceneManager* newManager)
+		std::shared_ptr<ISceneNode> CMeshSceneNode::clone(std::shared_ptr<ISceneNode> newParent,
+		                                                  std::shared_ptr<ISceneManager> newManager)
 		{
 			if (!newParent)
-				newParent = Parent;
+				newParent = Parent.lock();
 			if (!newManager)
-				newManager = SceneManager;
+				newManager = SceneManager.lock();
 
-			CMeshSceneNode* nb = new CMeshSceneNode(Mesh, newParent,
+			auto nb = std::make_shared<CMeshSceneNode>(Mesh, 
 				newManager, ID, RelativeTranslation, RelativeRotation, RelativeScale);
 
-			nb->cloneMembers(this, newManager);
+			if (newParent)
+				newParent->addChild(nb);
+			nb->cloneMembers(std::dynamic_pointer_cast<CMeshSceneNode>(shared_from_this()), newManager);
 			nb->ReadOnlyMaterials = ReadOnlyMaterials;
 			nb->Materials = Materials;
 			nb->Shadow = Shadow;
-			if (nb->Shadow)
-				nb->Shadow->grab();
 
-			if (newParent)
-				nb->drop();
 			return nb;
 		}
 	} // end namespace scene

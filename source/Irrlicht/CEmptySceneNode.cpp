@@ -12,8 +12,8 @@ namespace scene
 {
 
 //! constructor
-CEmptySceneNode::CEmptySceneNode(ISceneNode* parent, ISceneManager* mgr, irr::s32 id)
-: ISceneNode(parent, mgr, id)
+CEmptySceneNode::CEmptySceneNode(std::shared_ptr<ISceneManager> mgr, irr::s32 id)
+: ISceneNode( mgr, id)
 {
 	#ifdef _DEBUG
 	setDebugName("CEmptySceneNode");
@@ -27,7 +27,7 @@ CEmptySceneNode::CEmptySceneNode(ISceneNode* parent, ISceneManager* mgr, irr::s3
 void CEmptySceneNode::OnRegisterSceneNode()
 {
 	if (IsVisible)
-		SceneManager->registerNodeForRendering(this);
+		SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()));
 
 	ISceneNode::OnRegisterSceneNode();
 }
@@ -45,7 +45,7 @@ void CEmptySceneNode::render()
 		{
 			video::SMaterial m;
 			m.Lighting = false;
-			auto driver = SceneManager->getVideoDriver();
+			auto driver = SceneManager.lock()->getVideoDriver();
 			driver->setMaterial(m);
 			driver->setTransform(video::ETS_WORLD, AbsoluteTransformation);
 			driver->draw3DBox(Box, video::SColor(255, 255, 255, 255));
@@ -65,21 +65,19 @@ const irr::core::aabbox3d<f32>& CEmptySceneNode::getBoundingBox() const
 
 
 //! Creates a clone of this scene node and its children.
-ISceneNode* CEmptySceneNode::clone(ISceneNode* newParent, ISceneManager* newManager)
+std::shared_ptr<ISceneNode> CEmptySceneNode::clone(std::shared_ptr<ISceneNode> newParent,
+                                                   std::shared_ptr<ISceneManager> newManager)
 {
 	if (!newParent)
-		newParent = Parent;
+		newParent = Parent.lock();
 	if (!newManager)
-		newManager = SceneManager;
+		newManager = SceneManager.lock();
 
-	CEmptySceneNode* nb = new CEmptySceneNode(newParent,
+	auto  nb = std::make_shared< CEmptySceneNode>(
 		newManager, ID);
-
-	nb->cloneMembers(this, newManager);
+	newParent->addChild(nb);
+	nb->cloneMembers(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), newManager);
 	nb->Box = Box;
-
-	if ( newParent )
-		nb->drop();
 	return nb;
 }
 

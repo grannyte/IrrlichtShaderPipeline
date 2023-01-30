@@ -191,27 +191,27 @@ namespace video
 
 		//! Create occlusion query.
 /** Use node for identification and mesh for occlusion test. */
-		virtual void addOcclusionQuery(scene::ISceneNode* node,
+		virtual void addOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node,
 			const scene::IMesh* mesh = 0);
 
 		//! Remove occlusion query.
-		virtual void removeOcclusionQuery(scene::ISceneNode* node);
+		virtual void removeOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node);
 
 		//! Run occlusion query. Draws mesh stored in query.
 		/** If the mesh shall not be rendered visible, use
 		overrideMaterial to disable the color and depth buffer. */
-		virtual void runOcclusionQuery(scene::ISceneNode* node, bool visible = false);
+		virtual void runOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool visible = false);
 
 		//! Update occlusion query. Retrieves results from GPU.
 		/** If the query shall not block, set the flag to false.
 		Update might not occur in this case, though */
-		virtual void updateOcclusionQuery(scene::ISceneNode* node, bool block = true);
+		virtual void updateOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool block = true);
 
 		//! Return query result.
 		/** Return value is the number of visible pixels/fragments.
 		The value is a safe approximation, i.e. can be larger then the
 		actual value of pixels. */
-		virtual u32 getOcclusionQueryResult(scene::ISceneNode* node) const;
+		virtual u32 getOcclusionQueryResult(std::shared_ptr<scene::ISceneNode> node) const;
 
 		//! sets a render target
 		virtual bool setRenderTarget(video::ITexture* texture, bool clearBackBuffer,

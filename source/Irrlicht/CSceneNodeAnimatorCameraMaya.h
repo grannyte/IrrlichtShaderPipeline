@@ -12,104 +12,105 @@
 namespace irr
 {
 
-namespace gui
-{
-	class ICursorControl;
-}
-
-namespace scene
-{
-
-	//! Special scene node animator for FPS cameras
-	/** This scene node animator can be attached to a camera to make it act
-	like a 3d modelling tool camera
-	*/
-	class CSceneNodeAnimatorCameraMaya : public ISceneNodeAnimatorCameraMaya
+	namespace gui
 	{
-	public:
-		//! Constructor
-		CSceneNodeAnimatorCameraMaya(gui::ICursorControl* cursor, f32 rotateSpeed = -1500.f,
-			f32 zoomSpeed = 200.f, f32 translationSpeed = 1500.f, f32 distance=70.f);
+		class ICursorControl;
+	}
 
-		//! Destructor
-		virtual ~CSceneNodeAnimatorCameraMaya();
+	namespace scene
+	{
 
-		//! Animates the scene node, currently only works on cameras
-		virtual void animateNode(ISceneNode* node, u32 timeMs) _IRR_OVERRIDE_;
-
-		//! Event receiver
-		virtual bool OnEvent(const SEvent& event) _IRR_OVERRIDE_;
-
-		//! Returns the speed of movement in units per millisecond
-		virtual f32 getMoveSpeed() const _IRR_OVERRIDE_;
-
-		//! Sets the speed of movement in units per millisecond
-		virtual void setMoveSpeed(f32 moveSpeed) _IRR_OVERRIDE_;
-
-		//! Returns the rotation speed
-		virtual f32 getRotateSpeed() const _IRR_OVERRIDE_;
-
-		//! Set the rotation speed
-		virtual void setRotateSpeed(f32 rotateSpeed) _IRR_OVERRIDE_;
-
-		//! Returns the zoom speed
-		virtual f32 getZoomSpeed() const _IRR_OVERRIDE_;
-
-		//! Set the zoom speed
-		virtual void setZoomSpeed(f32 zoomSpeed) _IRR_OVERRIDE_;
-
-		//! Returns the current distance, i.e. orbit radius
-		virtual f32 getDistance() const _IRR_OVERRIDE_;
-
-		//! Set the distance
-		virtual void setDistance(f32 distance) _IRR_OVERRIDE_;
-
-		//! This animator will receive events when attached to the active camera
-		virtual bool isEventReceiverEnabled() const _IRR_OVERRIDE_
+		//! Special scene node animator for FPS cameras
+		/** This scene node animator can be attached to a camera to make it act
+		like a 3d modelling tool camera
+		*/
+		class CSceneNodeAnimatorCameraMaya : public ISceneNodeAnimatorCameraMaya
 		{
-			return true;
-		}
+		public:
+			//! Constructor
+			CSceneNodeAnimatorCameraMaya(gui::ICursorControl* cursor, f32 rotateSpeed = -1500.f,
+				f32 zoomSpeed = 200.f, f32 translationSpeed = 1500.f, f32 distance = 70.f);
 
-		//! Returns type of the scene node
-		virtual ESCENE_NODE_ANIMATOR_TYPE getType() const _IRR_OVERRIDE_
-		{
-			return ESNAT_CAMERA_MAYA;
-		}
+			//! Destructor
+			virtual ~CSceneNodeAnimatorCameraMaya();
 
-		//! Creates a clone of this animator.
-		/** Please note that you will have to drop
-		(IReferenceCounted::drop()) the returned pointer after calling
-		this. */
-		virtual ISceneNodeAnimator* createClone(ISceneNode* node, ISceneManager* newManager=0) _IRR_OVERRIDE_;
+			//! Animates the scene node, currently only works on cameras
+			virtual void animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs) _IRR_OVERRIDE_;
 
-	private:
+			//! Event receiver
+			virtual bool OnEvent(const SEvent& event) _IRR_OVERRIDE_;
 
-		void allKeysUp();
-		void animate();
-		bool isMouseKeyDown(s32 key) const;
+			//! Returns the speed of movement in units per millisecond
+			virtual f32 getMoveSpeed() const _IRR_OVERRIDE_;
 
-		bool MouseKeys[3];
+			//! Sets the speed of movement in units per millisecond
+			virtual void setMoveSpeed(f32 moveSpeed) _IRR_OVERRIDE_;
 
-		gui::ICursorControl *CursorControl;
-		scene::ICameraSceneNode* OldCamera;
-		core::vector3df OldTarget;
-		core::vector3df LastCameraTarget;	// to find out if the camera target was moved outside this animator
-		core::position2df RotateStart;
-		core::position2df ZoomStart;
-		core::position2df TranslateStart;
-		core::position2df MousePos;
-		f32 ZoomSpeed;
-		f32 RotateSpeed;
-		f32 TranslateSpeed;
-		f32 CurrentZoom;
-		f32 RotX, RotY;
-		bool Zooming;
-		bool Rotating;
-		bool Moving;
-		bool Translating;
-	};
+			//! Returns the rotation speed
+			virtual f32 getRotateSpeed() const _IRR_OVERRIDE_;
 
-} // end namespace scene
+			//! Set the rotation speed
+			virtual void setRotateSpeed(f32 rotateSpeed) _IRR_OVERRIDE_;
+
+			//! Returns the zoom speed
+			virtual f32 getZoomSpeed() const _IRR_OVERRIDE_;
+
+			//! Set the zoom speed
+			virtual void setZoomSpeed(f32 zoomSpeed) _IRR_OVERRIDE_;
+
+			//! Returns the current distance, i.e. orbit radius
+			virtual f32 getDistance() const _IRR_OVERRIDE_;
+
+			//! Set the distance
+			virtual void setDistance(f32 distance) _IRR_OVERRIDE_;
+
+			//! This animator will receive events when attached to the active camera
+			virtual bool isEventReceiverEnabled() const _IRR_OVERRIDE_
+			{
+				return true;
+			}
+
+			//! Returns type of the scene node
+			virtual ESCENE_NODE_ANIMATOR_TYPE getType() const _IRR_OVERRIDE_
+			{
+				return ESNAT_CAMERA_MAYA;
+			}
+
+			//! Creates a clone of this animator.
+			/** Please note that you will have to drop
+			(IReferenceCounted::drop()) the returned pointer after calling
+			this. */
+			virtual ISceneNodeAnimator* createClone(std::shared_ptr<ISceneNode> node,
+			                                        std::shared_ptr<ISceneManager> newManager = 0) _IRR_OVERRIDE_;
+
+		private:
+
+			void allKeysUp();
+			void animate();
+			bool isMouseKeyDown(s32 key) const;
+
+			bool MouseKeys[3];
+
+			gui::ICursorControl* CursorControl;
+			std::shared_ptr<scene::ICameraSceneNode> OldCamera;
+			core::vector3df OldTarget;
+			core::vector3df LastCameraTarget;	// to find out if the camera target was moved outside this animator
+			core::position2df RotateStart;
+			core::position2df ZoomStart;
+			core::position2df TranslateStart;
+			core::position2df MousePos;
+			f32 ZoomSpeed;
+			f32 RotateSpeed;
+			f32 TranslateSpeed;
+			f32 CurrentZoom;
+			f32 RotX, RotY;
+			bool Zooming;
+			bool Rotating;
+			bool Moving;
+			bool Translating;
+		};
+
+	} // end namespace scene
 } // end namespace irr
 
 #endif
