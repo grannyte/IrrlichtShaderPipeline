@@ -1367,9 +1367,11 @@
     <ClInclude Include="CD3D12Driver.h">
       <Filter>Irrlicht\video\Direct3D12</Filter>
     </ClInclude>
-    <ClInclude Include="CCommandBufferDriver.h" />
     <ClInclude Include="DDSTextureLoader.h">
       <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClInclude>
+    <ClInclude Include="CCommandBufferDriver.h">
+      <Filter>Irrlicht\video</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -2357,9 +2359,11 @@
     <ClCompile Include="CD3D12Driver.cpp">
       <Filter>Irrlicht\video\Direct3D12</Filter>
     </ClCompile>
-    <ClCompile Include="CCommandBufferDriver.cpp" />
     <ClCompile Include="DDSTextureLoader.cpp">
       <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClCompile>
+    <ClCompile Include="CCommandBufferDriver.cpp">
+      <Filter>Irrlicht\video</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

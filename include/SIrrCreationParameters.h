@@ -28,6 +28,7 @@ namespace irr
 			Bits(16),
 			ZBufferBits(16),
 			Fullscreen(false),
+			WindowsBorder(true),
 			Stencilbuffer(false),
 			Vsync(false),
 			AntiAlias(0),
@@ -64,6 +65,7 @@ namespace irr
 			Bits = other.Bits;
 			ZBufferBits = other.ZBufferBits;
 			Fullscreen = other.Fullscreen;
+			WindowsBorder = other.WindowsBorder;
 			Stencilbuffer = other.Stencilbuffer;
 			Vsync = other.Vsync;
 			AntiAlias = other.AntiAlias;
@@ -117,6 +119,10 @@ namespace irr
 		//! Should be set to true if the device should run in fullscreen.
 		/** Otherwise the device runs in windowed mode. Default: false. */
 		bool Fullscreen;
+
+		//! Should always be true unless you wanna get rid of the border
+		/** Only supported on windows for now*/
+		bool WindowsBorder;
 
 		//! Specifies if the stencil buffer should be enabled.
 		/** Set this to true, if you want the engine be able to draw

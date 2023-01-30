@@ -1052,7 +1052,7 @@ CIrrDeviceWin32::CIrrDeviceWin32(const SIrrlichtCreationParameters& params)
 
 		DWORD style = WS_POPUP;
 
-		if (!CreationParams.Fullscreen)
+		if (!CreationParams.Fullscreen && CreationParams.WindowsBorder)
 			style = WS_SYSMENU | WS_BORDER | WS_CAPTION | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
 
 		AdjustWindowRect(&clientSize, style, FALSE);
