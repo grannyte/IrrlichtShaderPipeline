@@ -282,7 +282,7 @@ namespace irr
 			//! Get the id of the scene node.
 			/** This id can be used to identify the node.
 			\return The id. */
-			virtual s32 getID() const
+			virtual s64 getID() const
 			{
 				return ID;
 			}
