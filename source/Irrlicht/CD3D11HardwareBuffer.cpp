@@ -38,7 +38,7 @@ namespace irr
 			RemoveFromArray(true), LinkedBuffer(0)
 		{
 #ifdef _DEBUG
-			setDebugName("CD3D11HardwareBuffer");
+			//setDebugName("CD3D11HardwareBuffer");
 #endif
 
 			Device = driver->getExposedVideoData().D3D11.D3DDev11;
@@ -63,7 +63,7 @@ namespace irr
 			LastMapDirection((D3D11_MAP)0), RemoveFromArray(true), LinkedBuffer(0)
 		{
 #ifdef _DEBUG
-			setDebugName("CD3D11HardwareBuffer");
+			//setDebugName("CD3D11HardwareBuffer");
 #endif
 
 			Device = Driver->getExposedVideoData().D3D11.D3DDev11;
@@ -83,7 +83,6 @@ namespace irr
 
 				RequiredUpdate = false;
 
-				indexBuffer->setHardwareBuffer(this);
 				LinkedBuffer = indexBuffer;
 			}
 		}
@@ -94,7 +93,7 @@ namespace irr
 			LastMapDirection((D3D11_MAP)0), RemoveFromArray(true), LinkedBuffer(0)
 		{
 #ifdef _DEBUG
-			setDebugName("CD3D11HardwareBuffer");
+			//setDebugName("CD3D11HardwareBuffer");
 #endif
 
 			Device = Driver->getExposedVideoData().D3D11.D3DDev11;
@@ -115,7 +114,6 @@ namespace irr
 
 				RequiredUpdate = false;
 
-				vertexBuffer->setHardwareBuffer(this);
 			}
 		}
 
@@ -125,7 +123,7 @@ namespace irr
 			{
 				for (u32 i = 0; i < Driver->HardwareBuffer.size(); ++i)
 				{
-					if (Driver->HardwareBuffer[i] == this)
+					if (Driver->HardwareBuffer[i] == shared_from_this())
 					{
 						Driver->HardwareBuffer[i] = 0;
 						break;
@@ -138,18 +136,16 @@ namespace irr
 				switch (Type)
 				{
 				case EHBT_INDEX:
-					((scene::IIndexBuffer*)LinkedBuffer)->setHardwareBuffer(0, true);
+					((scene::IIndexBuffer*)LinkedBuffer)->setHardwareBuffer(0);
 					break;
 				case EHBT_VERTEX:
-					((scene::IVertexBuffer*)LinkedBuffer)->setHardwareBuffer(0, true);
+					((scene::IVertexBuffer*)LinkedBuffer)->setHardwareBuffer(0);
 					break;
 				default:
 					break;
 				}
 			}
 
-			if (TempStagingBuffer)
-				TempStagingBuffer->drop();
 
 			if (SRView)
 				SRView->Release();
@@ -176,7 +172,6 @@ namespace irr
 				{
 					if (TempStagingBuffer)
 					{
-						TempStagingBuffer->drop();
 						TempStagingBuffer = NULL;
 					}
 
@@ -211,7 +206,6 @@ namespace irr
 			{
 				if (TempStagingBuffer)
 				{
-					TempStagingBuffer->drop();
 					TempStagingBuffer = NULL;
 				}
 
@@ -320,7 +314,6 @@ namespace irr
 			{
 				if (TempStagingBuffer)
 				{
-					TempStagingBuffer->drop();
 					TempStagingBuffer = NULL;
 				}
 

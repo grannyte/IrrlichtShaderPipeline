@@ -394,9 +394,9 @@ namespace irr
 
 			virtual u32 getVertexDescriptorCount() const;
 
-			virtual IHardwareBuffer* createHardwareBuffer(scene::IIndexBuffer* indexBuffer) _IRR_OVERRIDE_;
+			virtual std::shared_ptr<IHardwareBuffer> createHardwareBuffer(scene::IIndexBuffer* indexBuffer) _IRR_OVERRIDE_;
 
-			virtual IHardwareBuffer* createHardwareBuffer(scene::IVertexBuffer* vertexBuffer) _IRR_OVERRIDE_;
+			virtual std::shared_ptr<IHardwareBuffer> createHardwareBuffer(scene::IVertexBuffer* vertexBuffer) _IRR_OVERRIDE_;
 
 
 			//! Draw hardware buffer with instancing (only some drivers can

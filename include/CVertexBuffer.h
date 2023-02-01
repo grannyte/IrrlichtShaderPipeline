@@ -38,9 +38,6 @@ namespace scene
 		virtual ~CVertexBuffer()
 		{
 			Vertices.clear();
-
-			if (HardwareBuffer)
-				HardwareBuffer->drop();
 		}
 
 		virtual void clear()

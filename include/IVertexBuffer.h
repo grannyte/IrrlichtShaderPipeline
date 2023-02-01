@@ -20,10 +20,8 @@ namespace scene
 		{
 		}
 
-		virtual ~IVertexBuffer()
+		virtual ~IVertexBuffer() override
 		{
-			if (HardwareBuffer)
-				HardwareBuffer->drop();
 		}
 
 		virtual void clear() = 0;
@@ -68,25 +66,19 @@ namespace scene
 
 		virtual u32 getChangedID() const = 0;
 
-		video::IHardwareBuffer* getHardwareBuffer() const
+		std::shared_ptr<video::IHardwareBuffer> getHardwareBuffer() const
 		{
 			return HardwareBuffer;
 		}
 
 		// externalMemoryHandler parameter is used only by hardware buffers.
-		void setHardwareBuffer(video::IHardwareBuffer* hardwareBuffer, bool externalMemoryHandler = false)
+		void setHardwareBuffer(std::shared_ptr<video::IHardwareBuffer> hardwareBuffer)
 		{
-			if (!externalMemoryHandler && HardwareBuffer)
-				HardwareBuffer->drop();
-
 			HardwareBuffer = hardwareBuffer;
-
-			if (!externalMemoryHandler && HardwareBuffer)
-				HardwareBuffer->grab();
 		}
 
 	protected:
-		video::IHardwareBuffer* HardwareBuffer;
+		std::shared_ptr<video::IHardwareBuffer> HardwareBuffer;
 		E_BUFFER_TYPE BufferType;
 	};
 }

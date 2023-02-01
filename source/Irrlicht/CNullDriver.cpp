@@ -1769,12 +1769,12 @@ namespace irr
 			return VertexDescriptor.size();
 		}
 
-		IHardwareBuffer* CNullDriver::createHardwareBuffer(scene::IIndexBuffer* indexBuffer)
+		std::shared_ptr<IHardwareBuffer> CNullDriver::createHardwareBuffer(scene::IIndexBuffer* indexBuffer)
 		{
 			return 0;
 		}
 
-		IHardwareBuffer* CNullDriver::createHardwareBuffer(scene::IVertexBuffer* vertexBuffer)
+		std::shared_ptr<IHardwareBuffer> CNullDriver::createHardwareBuffer(scene::IVertexBuffer* vertexBuffer)
 		{
 			return 0;
 		}

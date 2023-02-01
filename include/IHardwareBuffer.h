@@ -56,7 +56,7 @@ enum E_HARDWARE_BUFFER_FLAGS
 	EHBF_COMPUTE_CONSUME = 1 << 9
 };
 
-class IHardwareBuffer : public virtual IReferenceCounted
+class IHardwareBuffer : public std::enable_shared_from_this<IHardwareBuffer>
 {
 public:
 	IHardwareBuffer(const scene::E_HARDWARE_MAPPING mapping, const u32 flags, const u32 size, const E_HARDWARE_BUFFER_TYPE type, const E_DRIVER_TYPE driverType) :

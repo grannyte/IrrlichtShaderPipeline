@@ -166,7 +166,7 @@ namespace irr
 			FreeLibrary(D3DLibrary);
 		}
 
-		inline CD3D11HardwareBuffer* CD3D11Driver::GetTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, const void* initialData)
+		inline std::shared_ptr<CD3D11HardwareBuffer> CD3D11Driver::GetTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, const void* initialData)
 		{
 			if (!MeshBuffer2dQueue.empty())
 			{
@@ -183,9 +183,9 @@ namespace irr
 			return CreateTempBuffer(type, size, flags, initialData);
 		}
 
-		inline CD3D11HardwareBuffer* CD3D11Driver::CreateTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, const void* initialData)
+		inline std::shared_ptr<CD3D11HardwareBuffer> CD3D11Driver::CreateTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, const void* initialData)
 		{
-			auto hwbuf = new CD3D11HardwareBuffer(this, type, irr::scene::E_HARDWARE_MAPPING::EHM_DYNAMIC, size, flags, initialData);
+			auto hwbuf = std::make_shared<CD3D11HardwareBuffer>(this, type, irr::scene::E_HARDWARE_MAPPING::EHM_DYNAMIC, size, flags, initialData);
 			MeshBuffer2dBack.push(hwbuf);
 			//std::cout << "created buffer type : " << type << " size : " << size << std::endl;
 			return hwbuf;
@@ -862,14 +862,13 @@ namespace irr
 			//we lie to the user we are always using hardware buffers in dx11 it's much faster and avoid stalling the pipeline when writting to a buffer that needs to be used for rendering
 			for (u32 i = 0; i < mb->getVertexBufferCount(); ++i)
 			{
-				video::IHardwareBuffer* hwBuff = mb->getVertexBuffer(i)->getHardwareBuffer();
+				auto hwBuff = mb->getVertexBuffer(i)->getHardwareBuffer();
 				if (mb->getVertexBuffer(i)->getVertexCount() < 1)
 					return;
 
 				if (!hwBuff && mb->getVertexBuffer(i)->getVertexCount() > 0)
 				{
-					IHardwareBuffer* hw = createHardwareBuffer(mb->getVertexBuffer(i));
-					hw->drop();
+					createHardwareBuffer(mb->getVertexBuffer(i));
 				}
 				else if (hwBuff)
 				{
@@ -878,12 +877,11 @@ namespace irr
 				}
 			}
 
-			video::IHardwareBuffer* indBuff = mb->getIndexBuffer()->getHardwareBuffer();
+			auto indBuff = mb->getIndexBuffer()->getHardwareBuffer();
 
 			if (!indBuff && (mb->getIndexBuffer()->getIndexCount() > 0))
 			{
-				IHardwareBuffer* hw = createHardwareBuffer(mb->getIndexBuffer());
-				hw->drop();
+				createHardwareBuffer(mb->getIndexBuffer());
 			}
 			else if (indBuff)
 			{
@@ -907,7 +905,7 @@ namespace irr
 				offsets.push_back(0);
 				strides.push_back(mb->getVertexBuffer(i)->getVertexSize());
 				if (mb->getVertexBuffer(i)->getHardwareBuffer())
-					vbuffers.push_back(((CD3D11HardwareBuffer*)mb->getVertexBuffer(i)->getHardwareBuffer())->getBuffer());
+					vbuffers.push_back(((CD3D11HardwareBuffer*)mb->getVertexBuffer(i)->getHardwareBuffer().get())->getBuffer());
 				else
 					vbuffers.push_back(0);
 
@@ -934,7 +932,7 @@ namespace irr
 
 			// set index buffer
 			if (ib->getHardwareBuffer())
-				Context->IASetIndexBuffer(((CD3D11HardwareBuffer*)ib->getHardwareBuffer())->getBuffer(), mb->getIndexBuffer()->getType() == video::EIT_16BIT ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT, 0);
+				Context->IASetIndexBuffer(((CD3D11HardwareBuffer*)ib->getHardwareBuffer().get())->getBuffer(), mb->getIndexBuffer()->getType() == video::EIT_16BIT ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT, 0);
 			else
 				Context->IASetIndexBuffer(NULL, DXGI_FORMAT_R32_UINT, 0);
 
@@ -1002,13 +1000,13 @@ namespace irr
 				Context->DrawIndexed(indexCount, 0, 0);
 		}
 
-		IHardwareBuffer* CD3D11Driver::createHardwareBuffer(scene::IIndexBuffer* indexBuffer)
+		std::shared_ptr<video::IHardwareBuffer> CD3D11Driver::createHardwareBuffer(scene::IIndexBuffer* indexBuffer)
 		{
 			if (!indexBuffer)
 				return 0;
 
-			CD3D11HardwareBuffer* hardwareBuffer = new CD3D11HardwareBuffer(indexBuffer, this);
-
+			auto hardwareBuffer = std::make_shared<CD3D11HardwareBuffer>(indexBuffer, this);
+			indexBuffer->setHardwareBuffer(hardwareBuffer);
 			bool extendArray = true;
 
 			for (u32 i = 0; i < HardwareBuffer.size(); ++i)
@@ -1027,13 +1025,13 @@ namespace irr
 			return hardwareBuffer;
 		}
 
-		IHardwareBuffer* CD3D11Driver::createHardwareBuffer(scene::IVertexBuffer* vertexBuffer)
+		std::shared_ptr<video::IHardwareBuffer> CD3D11Driver::createHardwareBuffer(scene::IVertexBuffer* vertexBuffer)
 		{
 			if (!vertexBuffer)
 				return 0;
 
-			CD3D11HardwareBuffer* hardwareBuffer = new CD3D11HardwareBuffer(vertexBuffer, this);
-
+			auto hardwareBuffer = std::make_shared<CD3D11HardwareBuffer>(vertexBuffer, this);
+			vertexBuffer->setHardwareBuffer(hardwareBuffer);
 			bool extendArray = true;
 
 			for (u32 i = 0; i < HardwareBuffer.size(); ++i)
@@ -1059,7 +1057,6 @@ namespace irr
 				if (HardwareBuffer[i])
 				{
 					HardwareBuffer[i]->removeFromArray(false);
-					delete HardwareBuffer[i];
 				}
 			}
 
@@ -3491,12 +3488,11 @@ namespace irr
 				Context->SOSetTargets(1, &buffers, &offset);
 				return true;
 			}
-			video::IHardwareBuffer* hwBuff = buffer->getHardwareBuffer();
+			auto hwBuff = buffer->getHardwareBuffer();
 
 			if (!hwBuff)
 			{
-				hwBuff = createHardwareBuffer(buffer);
-				hwBuff->drop();
+				createHardwareBuffer(buffer);
 			}
 
 			// Validate buffer
@@ -3512,7 +3508,7 @@ namespace irr
 			}
 
 			// Set stream output buffer
-			buffers = static_cast<CD3D11HardwareBuffer*>(hwBuff)->getBuffer();
+			buffers = std::static_pointer_cast<CD3D11HardwareBuffer>(hwBuff)->getBuffer();
 			Context->SOSetTargets(1, &buffers, &offset);
 
 			return true;

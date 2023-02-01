@@ -572,9 +572,9 @@ namespace irr
 			0 or another texture first. */
 			virtual void removeAllTextures() = 0;
 
-			virtual IHardwareBuffer* createHardwareBuffer(scene::IIndexBuffer* indexBuffer) = 0;
+			virtual std::shared_ptr<IHardwareBuffer> createHardwareBuffer(scene::IIndexBuffer* indexBuffer) = 0;
 
-			virtual IHardwareBuffer* createHardwareBuffer(scene::IVertexBuffer* vertexBuffer) = 0;
+			virtual std::shared_ptr<IHardwareBuffer> createHardwareBuffer(scene::IVertexBuffer* vertexBuffer) = 0;
 
 			//! Create occlusion query.
 			/** Use node for identification and mesh for occlusion test. */

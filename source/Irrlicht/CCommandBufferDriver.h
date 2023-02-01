@@ -58,8 +58,8 @@ namespace irr
 			virtual ITexture* addRenderTargetTexture(const core::dimension2d<u32>& size, const io::path& name = "rt", const ECOLOR_FORMAT format = ECF_UNKNOWN) override;
 			virtual void removeTexture(ITexture* texture) override;
 			virtual void removeAllTextures() override;
-			virtual IHardwareBuffer* createHardwareBuffer(scene::IIndexBuffer* indexBuffer) override;
-			virtual IHardwareBuffer* createHardwareBuffer(scene::IVertexBuffer* vertexBuffer) override;
+			virtual std::shared_ptr<video::IHardwareBuffer> createHardwareBuffer(scene::IIndexBuffer* indexBuffer) override;
+			virtual std::shared_ptr<video::IHardwareBuffer> createHardwareBuffer(scene::IVertexBuffer* vertexBuffer) override;
 			virtual void addOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, const scene::IMesh* mesh = 0) override;
 			virtual void removeOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node) override;
 			virtual void removeAllOcclusionQueries() override;
