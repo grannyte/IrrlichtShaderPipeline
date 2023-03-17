@@ -407,6 +407,13 @@ namespace irr
 					TabOrder = index;
 			}
 
+			//! Returns the Gui environement pointer
+			IGUIEnvironment* getGUIEnvironment() const
+			{
+				return Environment;
+			}
+
+
 			//! Returns the number in the tab order sequence
 			s32 getTabOrder() const
 			{
