@@ -27,6 +27,7 @@
 #pragma comment(lib, "dinput8.lib")
 #pragma comment(lib, "dxguid.lib")
 #endif
+#include <map>
 #else
 #ifdef _MSC_VER
 #pragma comment(lib, "winmm.lib")
@@ -992,6 +993,32 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 namespace irr
 {
 
+
+	BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor, HDC hdcMonitor, LPRECT lprcMonitor, LPARAM dwData)
+
+	{
+		auto& allMonitors = *(std::map<int, irr::core::vector2di>*)dwData;
+
+		MONITORINFOEX monitorInfo;
+		monitorInfo.cbSize = sizeof(monitorInfo);
+		if (GetMonitorInfo(hMonitor, &monitorInfo)) {
+
+			printf("Monitor: %s, Coordinates: (%d, %d)\n", monitorInfo.szDevice, monitorInfo.rcMonitor.left, monitorInfo.rcMonitor.top);
+
+			// Get the upper-left corner coordinates
+			int x = monitorInfo.rcMonitor.left;
+			int y = monitorInfo.rcMonitor.top;
+
+			// Create an Irrlicht 2D vector for the upper-left corner
+			irr::core::vector2di pos(x, y);
+
+			// Add the monitor number and position to the map
+			allMonitors[allMonitors.size()] = pos;
+		}
+
+		return TRUE;
+	}
+
 //! constructor
 CIrrDeviceWin32::CIrrDeviceWin32(const SIrrlichtCreationParameters& params)
 : CIrrDeviceStub(params), HWnd(0), ChangedToFullScreen(false), Resized(false),
@@ -1060,17 +1087,17 @@ CIrrDeviceWin32::CIrrDeviceWin32(const SIrrlichtCreationParameters& params)
 		const s32 realWidth = clientSize.right - clientSize.left;
 		const s32 realHeight = clientSize.bottom - clientSize.top;
 
-		s32 windowLeft = (CreationParams.WindowPosition.X == -1 ?
-		                     (GetSystemMetrics(SM_CXSCREEN) - realWidth) / 2 :
-		                     CreationParams.WindowPosition.X);
-		s32 windowTop = (CreationParams.WindowPosition.Y == -1 ?
-		                     (GetSystemMetrics(SM_CYSCREEN) - realHeight) / 2 :
-		                     CreationParams.WindowPosition.Y);
+		// list available monitors
+		std::map<int, irr::core::vector2di> displayMap;
 
-		if ( windowLeft < 0 )
-			windowLeft = 0;
-		if ( windowTop < 0 )
-			windowTop = 0;	// make sure window menus are in screen on creation
+		EnumDisplayMonitors(NULL, NULL, MonitorEnumProc, (LPARAM) & displayMap);
+
+
+		s32 windowLeft = displayMap[params.Monitor].X+ params.WindowPosition.X;
+		s32 windowTop = displayMap[params.Monitor].Y+ params.WindowPosition.Y;
+
+		printf("DisplayRequested: %d, Coordinates: (%d, %d)\n", params.Monitor, windowLeft, windowTop);
+
 
 		if (CreationParams.Fullscreen)
 		{
@@ -1085,7 +1112,6 @@ CIrrDeviceWin32::CIrrDeviceWin32(const SIrrlichtCreationParameters& params)
 		CreationParams.WindowId = HWnd;
 //		CreationParams.WindowSize.Width = realWidth;
 //		CreationParams.WindowSize.Height = realHeight;
-
 		ShowWindow(HWnd, SW_SHOWNORMAL);
 		UpdateWindow(HWnd);
 

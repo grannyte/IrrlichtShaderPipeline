@@ -46,6 +46,7 @@ namespace irr
 			LoggingLevel(ELL_INFORMATION),
 #endif
 			DisplayAdapter(0),
+			Monitor(0),
 			DriverMultithreaded(false),
 			UsePerformanceTimer(true),
 			SDK_version_do_not_use(IRRLICHT_SDK_VERSION)
@@ -80,6 +81,7 @@ namespace irr
 			LoggingLevel = other.LoggingLevel;
 			DriverMultithreaded = other.DriverMultithreaded;
 			DisplayAdapter = other.DisplayAdapter;
+			Monitor = other.Monitor;
 			UsePerformanceTimer = other.UsePerformanceTimer;
 			return *this;
 		}
@@ -281,6 +283,10 @@ namespace irr
 		//! Allows to select which graphic card is used for rendering when more than one card is in the system.
 		/** So far only supported on D3D */
 		u32 DisplayAdapter;
+
+
+		//! Allows to specify a monitor by its number when using more than one monitor.
+		u32 Monitor;
 
 		//! Create the driver multithreaded.
 		/** Default is false. Enabling this can slow down your application.
