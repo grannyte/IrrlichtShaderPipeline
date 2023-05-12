@@ -12,6 +12,7 @@
 #include "CImage.h"
 #include "CColorConverter.h"
 #include "DDSTextureLoader.h"
+#include <iostream>
 
 namespace irr
 {
@@ -320,6 +321,8 @@ namespace irr
 
 			if (FAILED(hr))
 			{
+				// print every single variable to find out what is wrong
+
 				logFormatError(hr, "Could not map texture buffer");
 
 				return NULL;
@@ -332,7 +335,7 @@ namespace irr
 
 		void CD3D11Texture::MapArraySlice(HRESULT& hr, const irr::u32& mipmapLevel, const irr::u32& arraySlice, D3D11_MAPPED_SUBRESOURCE& mappedData, D3D11_MAP MapDirection, ID3D11Resource* LocalTextureBuffer)
 		{
-			hr = Context->Map(LocalTextureBuffer,
+				hr = Context->Map(LocalTextureBuffer,
 				D3D11CalcSubresource(mipmapLevel,		// mip level to lock
 					arraySlice,		// array slice (only 1 slice for now)
 					NumberOfMipLevels), 	// number of mip levels

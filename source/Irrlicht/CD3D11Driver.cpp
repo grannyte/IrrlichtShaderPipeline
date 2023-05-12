@@ -1011,7 +1011,7 @@ namespace irr
 
 			for (u32 i = 0; i < HardwareBuffer.size(); ++i)
 			{
-				if (!HardwareBuffer[i])
+				if (!HardwareBuffer[i].lock())
 				{
 					HardwareBuffer[i] = hardwareBuffer;
 					extendArray = false;
@@ -1036,7 +1036,7 @@ namespace irr
 
 			for (u32 i = 0; i < HardwareBuffer.size(); ++i)
 			{
-				if (!HardwareBuffer[i])
+				if (!HardwareBuffer[i].lock())
 				{
 					HardwareBuffer[i] = hardwareBuffer;
 					extendArray = false;
@@ -1052,14 +1052,6 @@ namespace irr
 
 		void CD3D11Driver::removeAllHardwareBuffers()
 		{
-			for (u32 i = 0; i < HardwareBuffer.size(); ++i)
-			{
-				if (HardwareBuffer[i])
-				{
-					HardwareBuffer[i]->removeFromArray(false);
-				}
-			}
-
 			HardwareBuffer.clear();
 		}
 

@@ -554,7 +554,7 @@ namespace irr
 			SColorf AmbientLight;
 			u32 MaxActiveLights;
 
-			std::vector<std::shared_ptr<CD3D11HardwareBuffer>> HardwareBuffer;
+			std::vector<std::weak_ptr<CD3D11HardwareBuffer>> HardwareBuffer;
 
 			core::stringc VendorName;
 			u16 VendorID;

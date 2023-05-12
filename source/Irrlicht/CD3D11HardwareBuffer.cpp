@@ -35,7 +35,7 @@ namespace irr
 			: IHardwareBuffer(mapping, flags, size, type, driver->getDriverType()),
 			Device(NULL), Context(NULL), Buffer(NULL), UAView(NULL), SRView(NULL), Driver(driver),
 			TempStagingBuffer(NULL), UseTempStagingBuffer(false), LastMapDirection((D3D11_MAP)0),
-			RemoveFromArray(true), LinkedBuffer(0)
+			 LinkedBuffer(0)
 		{
 #ifdef _DEBUG
 			//setDebugName("CD3D11HardwareBuffer");
@@ -60,7 +60,7 @@ namespace irr
 		CD3D11HardwareBuffer::CD3D11HardwareBuffer(scene::IIndexBuffer* indexBuffer, CD3D11Driver* driver) :
 			IHardwareBuffer(scene::EHM_NEVER, 0, 0, EHBT_INDEX, EDT_DIRECT3D11), Device(NULL), Context(NULL),
 			Buffer(NULL), UAView(NULL), SRView(NULL), Driver(driver), TempStagingBuffer(NULL), UseTempStagingBuffer(false),
-			LastMapDirection((D3D11_MAP)0), RemoveFromArray(true), LinkedBuffer(0)
+			LastMapDirection((D3D11_MAP)0),  LinkedBuffer(0)
 		{
 #ifdef _DEBUG
 			//setDebugName("CD3D11HardwareBuffer");
@@ -90,7 +90,7 @@ namespace irr
 		CD3D11HardwareBuffer::CD3D11HardwareBuffer(scene::IVertexBuffer* vertexBuffer, CD3D11Driver* driver) :
 			IHardwareBuffer(scene::EHM_NEVER, 0, 0, ConvertBufferType(vertexBuffer->getBufferType()), EDT_DIRECT3D11), Device(NULL), Context(NULL),
 			Buffer(NULL), UAView(NULL), SRView(NULL), Driver(driver), TempStagingBuffer(NULL), UseTempStagingBuffer(false),
-			LastMapDirection((D3D11_MAP)0), RemoveFromArray(true), LinkedBuffer(0)
+			LastMapDirection((D3D11_MAP)0),  LinkedBuffer(0)
 		{
 #ifdef _DEBUG
 			//setDebugName("CD3D11HardwareBuffer");
@@ -119,18 +119,6 @@ namespace irr
 
 		CD3D11HardwareBuffer::~CD3D11HardwareBuffer()
 		{
-			if (RemoveFromArray)
-			{
-				for (u32 i = 0; i < Driver->HardwareBuffer.size(); ++i)
-				{
-					if (Driver->HardwareBuffer[i] == shared_from_this())
-					{
-						Driver->HardwareBuffer[i] = 0;
-						break;
-					}
-				}
-			}
-
 			if (LinkedBuffer)
 			{
 				switch (Type)
@@ -543,10 +531,6 @@ namespace irr
 			return Buffer;
 		}
 
-		void CD3D11HardwareBuffer::removeFromArray(bool status)
-		{
-			RemoveFromArray = status;
-		}
 	}
 }
 

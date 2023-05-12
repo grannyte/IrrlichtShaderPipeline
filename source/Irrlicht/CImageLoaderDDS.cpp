@@ -122,7 +122,7 @@ extracts relevant info from a dds texture, returns 0 on success
 		file->read(&d10header, sizeof(DDS_HEADER_DXT10));
 		if (d10header.dxgiFormat == DXGI_FORMAT_BC7_UNORM)
 			*pf = DDS_PF_BC7_U;
-		else if (d10header.dxgiFormat == DXGI_FORMAT_BC7_UNORM)
+		else if (d10header.dxgiFormat == DXGI_FORMAT_BC7_UNORM_SRGB)
 			*pf = DDS_PF_BC7_S;
 		else if (d10header.dxgiFormat == DXGI_FORMAT_BC6H_UF16)
 			*pf = DDS_PF_BC6_U;
@@ -905,7 +905,7 @@ IImage* CImageLoaderDDS::loadImage(io::IReadFile* file) const
 				case DDS_PF_BC6_U:
 				{
 					u32 curHeight = header.Height;
-					u32 curWidth = header.Height;
+					u32 curWidth = header.Width;
 					dataSize = curHeight * curHeight;
 					do
 					{
@@ -923,7 +923,7 @@ IImage* CImageLoaderDDS::loadImage(io::IReadFile* file) const
 				case DDS_PF_BC6_S:
 				{
 					u32 curHeight = header.Height;
-					u32 curWidth = header.Height;
+					u32 curWidth = header.Width;
 					dataSize = curHeight * curHeight;
 					do
 					{
@@ -941,7 +941,7 @@ IImage* CImageLoaderDDS::loadImage(io::IReadFile* file) const
 				case DDS_PF_BC7_U:
 				{
 					u32 curHeight = header.Height;
-					u32 curWidth = header.Height;
+					u32 curWidth = header.Width;
 					dataSize = curHeight * curHeight; 
 					do
 					{
@@ -959,7 +959,7 @@ IImage* CImageLoaderDDS::loadImage(io::IReadFile* file) const
 				case DDS_PF_BC7_S:
 				{
 					u32 curHeight = header.Height;
-					u32 curWidth = header.Height;
+					u32 curWidth = header.Width;
 					dataSize = curHeight * curHeight;
 					do
 					{
@@ -995,16 +995,16 @@ IImage* CImageLoaderDDS::loadImage(io::IReadFile* file) const
 						file->seek(0);
 					}
 
-
-					u8* data = new u8[dataSize];
-					u32 readsize = file->read(data, dataSize);
+					file->getSize();
+					u8* data = new u8[file->getSize()+1];
+					u32 readsize = file->read(data, file->getSize());
 
 					bool hasMipMap = (mipMapCount > 0) ? true : false;
 
 
 					image = new CImage(format, core::dimension2d<u32>(header.Width, header.Height), data, true, true, true, mipMapCount);
 
-					((CImage*)image)->CompressedSize = readsize;
+					((CImage*)image)->CompressedSize = file->getSize();
 
 
 

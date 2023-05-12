@@ -55,8 +55,6 @@ public:
 	//! return DX 11 buffer
 	ID3D11Buffer* getBuffer() const;
 
-	void removeFromArray(bool status);
-
 private:
 	bool createInternalBuffer(const void* initialData);
 
@@ -71,9 +69,6 @@ private:
 
 	bool UseTempStagingBuffer;
 	D3D11_MAP LastMapDirection;
-
-	bool RemoveFromArray;
-
 	void* LinkedBuffer;
 };
 
