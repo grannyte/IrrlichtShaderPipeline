@@ -720,8 +720,7 @@
       <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
       <AdditionalIncludeDirectories>..\..\include;zlib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;WIN64;NDEBUG;_WINDOWS;_USRDLL;IRRLICHT_EXPORTS;ZLIB_DLL;_CRT_SECURE_NO_DEPRECATE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <StringPooling>
-      </StringPooling>
+      <StringPooling>true</StringPooling>
       <ExceptionHandling>Sync</ExceptionHandling>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <BufferSecurityCheck>true</BufferSecurityCheck>
@@ -739,7 +738,7 @@
       <OpenMPSupport>false</OpenMPSupport>
       <AdditionalOptions> /Qvec-report:2</AdditionalOptions>
       <AssemblerOutput>NoListing</AssemblerOutput>
-      <OmitFramePointers>false</OmitFramePointers>
+      <OmitFramePointers>true</OmitFramePointers>
       <LoopUnrolling>5</LoopUnrolling>
       <DisableIntelLangExtensions>true</DisableIntelLangExtensions>
       <OpenMP>GenerateParallelCode</OpenMP>
