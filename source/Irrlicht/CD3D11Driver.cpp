@@ -168,11 +168,11 @@ namespace irr
 
 		inline std::shared_ptr<CD3D11HardwareBuffer> CD3D11Driver::GetTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, const void* initialData)
 		{
-			if (!MeshBuffer2dQueue.empty())
+			if (!MeshBuffer2dQueues[type].empty())
 			{
-				auto  mb2d = MeshBuffer2dQueue.front();
-				MeshBuffer2dQueue.pop();
-				MeshBuffer2dBack.push(mb2d);
+				auto  mb2d = MeshBuffer2dQueues[type].front();
+				MeshBuffer2dQueues[type].pop();
+				MeshBuffer2dBacks[type].push(mb2d);
 
 				//std::cout << "Grabbed buffer type : " << type << " size : " <<size << std::endl;
 
@@ -186,7 +186,7 @@ namespace irr
 		inline std::shared_ptr<CD3D11HardwareBuffer> CD3D11Driver::CreateTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, const void* initialData)
 		{
 			auto hwbuf = std::make_shared<CD3D11HardwareBuffer>(this, type, irr::scene::E_HARDWARE_MAPPING::EHM_DYNAMIC, size, flags, initialData);
-			MeshBuffer2dBack.push(hwbuf);
+			MeshBuffer2dBacks[type].push(hwbuf);
 			//std::cout << "created buffer type : " << type << " size : " << size << std::endl;
 			return hwbuf;
 		}
@@ -194,11 +194,11 @@ namespace irr
 		inline void CD3D11Driver::revertTempHWBuffers()
 		{
 			//std::cout << "Buffers  count : " << MeshBuffer2dBack.size() << std::endl;
-
-			while (!MeshBuffer2dBack.empty())
+			for(int type = 0; type < (irr::video::E_HARDWARE_BUFFER_TYPE::EHBT_SYSTEM+1); type++)
+			while (!MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type].empty())
 			{
-				MeshBuffer2dQueue.push(MeshBuffer2dBack.front());
-				MeshBuffer2dBack.pop();
+				MeshBuffer2dQueues[(irr::video::E_HARDWARE_BUFFER_TYPE)type].push(MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type].front());
+				MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type].pop();
 			}
 		}
 
@@ -361,6 +361,7 @@ namespace irr
 
 					Name += "WARP ";
 				}
+				Name += "11 Feature:";
 
 				Name +=
 					(FeatureLevel == D3D_FEATURE_LEVEL_12_1) ? "12.1" :
@@ -369,12 +370,17 @@ namespace irr
 					(FeatureLevel == D3D_FEATURE_LEVEL_11_0) ? "11.0" :
 					(FeatureLevel == D3D_FEATURE_LEVEL_10_1) ? "10.1" : "10.0";
 			}
+			return BuildDriverInternal(hr, hwnd);
+		
+		}
 
+		bool CD3D11Driver::BuildDriverInternal(HRESULT& hr, const HWND& hwnd)
+		{
 			printVersion();
 
 			// Get adapter used by this device and query informations
-			IDXGIDevice1* DXGIDevice = NULL;
-			Device->QueryInterface(__uuidof(IDXGIDevice1), reinterpret_cast<void**>(&DXGIDevice));
+			IDXGIDevice4* DXGIDevice = NULL;
+			Device->QueryInterface(__uuidof(IDXGIDevice4), reinterpret_cast<void**>(&DXGIDevice));
 			if (SUCCEEDED(DXGIDevice->GetAdapter(&Adapter)))
 			{
 				DXGI_ADAPTER_DESC adapDesc;
@@ -387,10 +393,10 @@ namespace irr
 				os::Printer::log(tmp, ELL_INFORMATION);
 
 				// Assign vendor name based on vendor id.
-				VendorID = static_cast<u16>(adapDesc.VendorId);
+				VendorID = adapDesc.VendorId;
 				switch (VendorID)
 				{
-				case 0x1002: VendorName = "ATI Technologies Inc."; break;
+				case 0x1002: VendorName = "Advanced Micro Devices, inc."; break;
 				case 0x10DE: VendorName = "NVIDIA Corporation"; break;
 				case 0x102B: VendorName = "Matrox Electronic Systems Ltd."; break;
 				case 0x121A: VendorName = "3dfx Interactive Inc"; break;
@@ -401,7 +407,7 @@ namespace irr
 			}
 
 			// get DXGI factory
-			hr = Adapter->GetParent(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&DXGIFactory));
+			hr = Adapter->GetParent(__uuidof(IDXGIFactory4), reinterpret_cast<void**>(&DXGIFactory));
 			if (FAILED(hr))
 			{
 				logFormatError(hr, "Could not get DXGI factory");
@@ -592,8 +598,7 @@ namespace irr
 
 			// clear textures
 			disableTextures();
-
-			return true;
+			return  true;
 		}
 
 		//! Create occlusion query.
@@ -1048,6 +1053,58 @@ namespace irr
 				HardwareBuffer.push_back(hardwareBuffer);
 
 			return hardwareBuffer;
+		}
+
+		std::shared_ptr<video::IHardwareBuffer> CD3D11Driver::createHardwareBuffer(scene::IComputeBuffer* computeBuffer)
+		{
+			if (!computeBuffer)
+				return 0;
+
+			auto hardwareBuffer = std::make_shared<CD3D11HardwareBuffer>(computeBuffer, this);
+			computeBuffer->setHardwareBuffer(hardwareBuffer);
+			bool extendArray = true;
+
+			for (u32 i = 0; i < HardwareBuffer.size(); ++i)
+			{
+				if (!HardwareBuffer[i].lock())
+				{
+					HardwareBuffer[i] = hardwareBuffer;
+					extendArray = false;
+					break;
+				}
+			}
+
+			if (extendArray)
+				HardwareBuffer.push_back(hardwareBuffer);
+
+			return hardwareBuffer;
+		}
+
+		void CD3D11Driver::dispatchComputeShader(const core::vector3d<u32>& groupCount, scene::IComputeBuffer* Src, scene::IComputeBuffer* Dst)
+		{
+			if (!Src || !Dst)
+				return;
+
+			setComputeState();
+
+			// check if the src buffer has a hardware buffer and if the src buffer has more than 0 elements
+			if (!Src->getHardwareBuffer() && Src->getStructureCount() > 0)
+				createHardwareBuffer(Src);
+			else if (Src->getStructureCount() > 0 && Src->getHardwareBuffer()->isRequiredUpdate())
+				Src->getHardwareBuffer()->update(Src->getHardwareMappingHint(), Src->getStructureCount() * Src->getStructureStride(), Src->getBufferPointer());
+
+
+			// check if the dst buffer has a hardware buffer and if the dst buffer has more than 0 elements
+			if (!Dst->getHardwareBuffer() && Dst->getStructureCount() > 0)
+				createHardwareBuffer(Dst);
+			else if (Dst->getStructureCount() > 0 && Dst->getHardwareBuffer()->isRequiredUpdate())
+				Dst->getHardwareBuffer()->update(Dst->getHardwareMappingHint(), Dst->getStructureCount() * Dst->getStructureStride(), Dst->getBufferPointer());
+
+
+			ID3D11UnorderedAccessView* ppUAViewNULL[1] = { std::static_pointer_cast<CD3D11HardwareBuffer>(Dst->getHardwareBuffer())->getUnorderedAccessView() };
+			Context->CSSetUnorderedAccessViews(0, 1, ppUAViewNULL,
+				NULL);
+
 		}
 
 		void CD3D11Driver::removeAllHardwareBuffers()
@@ -2025,6 +2082,47 @@ namespace irr
 			ScreenSize = size;
 
 			reset();
+		}
+
+		bool CD3D11Driver::setComputeState()
+		{
+			if (!Device)
+				return false;
+
+			if (CurrentRenderMode != ERM_COMPUTE)
+			{
+				Transformation3DChanged = true;
+				ResetRenderStates = true;
+			}
+
+			//if (ResetRenderStates || LastMaterial != Material)
+			{
+				// unset old material
+				if (CurrentRenderMode == ERM_COMPUTE &&
+					LastMaterial.MaterialType != Material.MaterialType &&
+					LastMaterial.MaterialType >= 0 && LastMaterial.MaterialType < (s32)MaterialRenderers.size())
+					MaterialRenderers[LastMaterial.MaterialType].Renderer->OnUnsetMaterial();
+
+				// set new material.
+				if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
+					MaterialRenderers[Material.MaterialType].Renderer->OnSetMaterial(
+						Material, LastMaterial, ResetRenderStates, this);
+			}
+
+			BridgeCalls->setShaderResources(SamplerDesc, CurrentTexture);
+
+			bool shaderOK = true;
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
+				shaderOK = MaterialRenderers[Material.MaterialType].Renderer->OnCompute(this);
+
+			ResetRenderStates = false;
+
+			CurrentRenderMode = ERM_COMPUTE;
+			LastMaterial = Material;
+
+			return shaderOK;
+
+
 		}
 
 		//! sets the needed renderstates
@@ -3181,7 +3279,7 @@ namespace irr
 				logFormatError(hr, "Could not resize back buffer");
 
 				return;
-			}
+		}
 #endif
 
 			// Get default render target
@@ -3227,7 +3325,7 @@ namespace irr
 
 			setFog(FogColor, FogType, FogStart, FogEnd, FogDensity, PixelFog, RangeFog);
 			setAmbientLight(AmbientLight);
-		}
+	}
 
 		// returns the current size of the screen or rendertarget
 		const core::dimension2d<u32>& CD3D11Driver::getCurrentRenderTargetSize() const
@@ -3298,7 +3396,20 @@ namespace irr
 
 			return id;
 		}
-
+		s32 CD3D11Driver::addComputeShader(const c8* computeShaderProgram,
+			const c8* computeShaderEntryPointName,
+			E_COMPUTE_SHADER_TYPE csCompileTarget,
+			IShaderConstantSetCallBack* callback ,
+			s32 userData)
+		{
+			s32 id = -1;
+			CD3D11MaterialRenderer* rend =
+				new CD3D11MaterialRenderer(Device, this, BridgeCalls, id,
+										computeShaderProgram, computeShaderEntryPointName, csCompileTarget,
+										(scene::E_PRIMITIVE_TYPE)0,(scene::E_PRIMITIVE_TYPE)0,0,0,
+										callback,0, userData, FileSystem, E_GPU_SHADING_LANGUAGE::EGSL_DEFAULT);
+			return id;
+		}
 		//! Adds a new material renderer to the VideoDriver, using pixel and/or
 		//! vertex shaders to render geometry.
 		s32 CD3D11Driver::addShaderMaterial(const c8* vertexShaderProgram,
@@ -3365,6 +3476,15 @@ namespace irr
 				return r->getVariableID(name, EST_DOMAIN_SHADER);
 			}
 
+			return -1;
+		}
+		s32 CD3D11Driver::getComputeShaderConstantID(const c8* name)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
+			{
+				CD3D11FixedPipelineRenderer* r = (CD3D11FixedPipelineRenderer*)MaterialRenderers[Material.MaterialType].Renderer;
+				return r->getVariableID(name, EST_COMPUTE_SHADER);
+			}
 			return -1;
 		}
 
@@ -3444,6 +3564,14 @@ namespace irr
 
 			return false;
 		}
+		bool CD3D11Driver::setComputeShaderConstant(s32 index, const f32* floats, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)MaterialRenderers[Material.MaterialType].Renderer;
+				return r->setVariable(index, floats, count, EST_COMPUTE_SHADER);
+			}
+		}
 
 		bool CD3D11Driver::setVertexShaderConstant(s32 index, const s32* ints, int count)
 		{
@@ -3471,13 +3599,15 @@ namespace irr
 
 		bool CD3D11Driver::setStreamOutputBuffer(scene::IVertexBuffer* buffer)
 		{
-			ID3D11Buffer* buffers = 0;
-			UINT offset = 0;
 
 			// If buffer is null, remove from pipeline
 			if (!buffer)
 			{
-				Context->SOSetTargets(1, &buffers, &offset);
+				SSBObuffers[0] = nullptr;
+				SSBObuffers[1] = nullptr;
+				SSBObuffers[2] = nullptr;
+				SSBObuffers[3] = nullptr;
+				Context->SOSetTargets(0, nullptr, nullptr);
 				return true;
 			}
 			auto hwBuff = buffer->getHardwareBuffer();
@@ -3485,6 +3615,8 @@ namespace irr
 			if (!hwBuff)
 			{
 				createHardwareBuffer(buffer);
+				hwBuff = buffer->getHardwareBuffer();
+
 			}
 
 			// Validate buffer
@@ -3500,8 +3632,8 @@ namespace irr
 			}
 
 			// Set stream output buffer
-			buffers = std::static_pointer_cast<CD3D11HardwareBuffer>(hwBuff)->getBuffer();
-			Context->SOSetTargets(1, &buffers, &offset);
+			SSBObuffers[0] = std::static_pointer_cast<CD3D11HardwareBuffer>(hwBuff)->getBuffer();
+			Context->SOSetTargets(1, SSBObuffers, SSBOoffset);
 
 			return true;
 		}
@@ -3537,7 +3669,7 @@ namespace irr
 
 			return vertexDescriptor;
 		}
-	} // end namespace video
+} // end namespace video
 } // end namespace irr
 
 #endif

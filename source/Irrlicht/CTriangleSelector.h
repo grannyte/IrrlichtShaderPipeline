@@ -31,7 +31,7 @@ public:
 
 	//! Constructs a selector based on an animated mesh scene node
 	//!\param node An animated mesh scene node, which must have a valid mesh
-	CTriangleSelector(IAnimatedMeshSceneNode* node);
+	CTriangleSelector(std::shared_ptr<IAnimatedMeshSceneNode > node);
 
 	//! Constructs a selector based on a bounding box
 	CTriangleSelector(const core::aabbox3d<f32>& box,std::shared_ptr<ISceneNode> node);
@@ -53,7 +53,7 @@ public:
 	virtual s32 getTriangleCount() const _IRR_OVERRIDE_;
 
 	//! Return the scene node associated with a given triangle.
-	virtual std::shared_ptr<ISceneNode> getSceneNodeForTriangle(u32 triangleIndex) const _IRR_OVERRIDE_ { return SceneNode; }
+	virtual std::shared_ptr<ISceneNode> getSceneNodeForTriangle(u32 triangleIndex) const _IRR_OVERRIDE_ { return SceneNode.lock(); }
 
 	// Get the number of TriangleSelectors that are part of this one
 	virtual u32 getSelectorCount() const _IRR_OVERRIDE_;
@@ -76,11 +76,11 @@ protected:
 	//! since the last time it was updated.
 	virtual void update(void) const;
 
-	std::shared_ptr<ISceneNode> SceneNode;
+	std::weak_ptr<ISceneNode> SceneNode;
 	mutable core::array<core::triangle3df> Triangles; // (mutable for CTriangleBBSelector)
 	mutable core::aabbox3df BoundingBox; // Allows for trivial rejection
 
-	IAnimatedMeshSceneNode* AnimatedNode;
+	std::weak_ptr<IAnimatedMeshSceneNode> AnimatedNode;
 	mutable u32 LastMeshFrame;
 };
 

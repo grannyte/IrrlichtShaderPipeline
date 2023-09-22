@@ -116,9 +116,9 @@ void COctreeTriangleSelector::getTriangles(core::triangle3df* triangles,
 	core::matrix4 mat(core::matrix4::EM4CONST_NOTHING);
 	core::aabbox3d<f32> invbox = box;
 
-	if (SceneNode)
+	if ( auto grabbed = SceneNode.lock())
 	{
-		SceneNode->getAbsoluteTransformation().getInverse(mat);
+		grabbed->getAbsoluteTransformation().getInverse(mat);
 		mat.transformBoxEx(invbox);
 	}
 
@@ -127,8 +127,8 @@ void COctreeTriangleSelector::getTriangles(core::triangle3df* triangles,
 	else
 		mat.makeIdentity();
 
-	if (SceneNode)
-		mat *= SceneNode->getAbsoluteTransformation();
+	if (auto grabbed = SceneNode.lock())
+		mat *= grabbed->getAbsoluteTransformation();
 
 	s32 trianglesWritten = 0;
 
@@ -194,9 +194,10 @@ void COctreeTriangleSelector::getTriangles(core::triangle3df* triangles, s32 arr
 	core::matrix4 mat ( core::matrix4::EM4CONST_NOTHING );
 
 	core::vector3df vectStartInv ( line.start ), vectEndInv ( line.end );
-	if (SceneNode)
+
+	if (auto grabbed = SceneNode.lock())
 	{
-		mat = SceneNode->getAbsoluteTransformation();
+		mat = grabbed->getAbsoluteTransformation();
 		mat.makeInverse();
 		mat.transformVect(vectStartInv, line.start);
 		mat.transformVect(vectEndInv, line.end);
@@ -208,8 +209,8 @@ void COctreeTriangleSelector::getTriangles(core::triangle3df* triangles, s32 arr
 	if (transform)
 		mat = (*transform);
 
-	if (SceneNode)
-		mat *= SceneNode->getAbsoluteTransformation();
+	if (auto grabbed = SceneNode.lock())
+		mat *= grabbed->getAbsoluteTransformation();
 
 	s32 trianglesWritten = 0;
 

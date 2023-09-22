@@ -1,8 +1,12 @@
 #include "CCommandBufferDriver.h"
-#if 0
-bool irr::video::CCommandBufferDriver::beginScene(bool backBuffer = true, bool zBuffer = true, SColor color = SColor(255, 0, 0, 0), const SExposedVideoData& videoData = SExposedVideoData(), core::rect<s32>* sourceRect = 0)
+
+#include "IImageLoader.h"
+#include "IImageWriter.h"
+
+
+bool irr::video::CCommandBufferDriver::beginScene(bool backBuffer, bool zBuffer, SColor color, const SExposedVideoData& videoData, core::rect<s32>* sourceRect )
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
+	deferedcalls.push([backBuffer, zBuffer, color, videoData, sourceRect](IVideoDriver* driver) {
 		driver->beginScene(backBuffer, zBuffer, color, videoData, sourceRect);
 		});
 	return true;
@@ -10,7 +14,7 @@ bool irr::video::CCommandBufferDriver::beginScene(bool backBuffer = true, bool z
 
 bool irr::video::CCommandBufferDriver::endScene()
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
+	deferedcalls.push([](IVideoDriver* driver) {
 		driver->endScene();
 		});
 	return true;
@@ -21,9 +25,9 @@ bool irr::video::CCommandBufferDriver::queryFeature(E_VIDEO_DRIVER_FEATURE featu
 	return Driver->queryFeature(feature);
 }
 
-void irr::video::CCommandBufferDriver::disableFeature(E_VIDEO_DRIVER_FEATURE feature, bool flag = true)
+void irr::video::CCommandBufferDriver::disableFeature(E_VIDEO_DRIVER_FEATURE feature, bool flag)
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
+	deferedcalls.push([feature, flag](IVideoDriver* driver) {
 		driver->disableFeature(feature, flag);
 		});
 }
@@ -40,14 +44,16 @@ bool irr::video::CCommandBufferDriver::checkDriverReset()
 
 void irr::video::CCommandBufferDriver::setTransform(E_TRANSFORMATION_STATE state, const core::matrix4& mat)
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
-		driver->setTransform(state, mat);
+	Matrices[state] = mat;
+	deferedcalls.push([state, matb = mat
+	](IVideoDriver* driver) {
+		driver->setTransform(state, matb);
 		});
 }
 
 const irr::core::matrix4& irr::video::CCommandBufferDriver::getTransform(E_TRANSFORMATION_STATE state) const
 {
-	// TODO: insert return statement here
+	return Matrices[state];
 }
 
 irr::u32 irr::video::CCommandBufferDriver::getImageLoaderCount() const
@@ -72,8 +78,8 @@ irr::video::IImageWriter* irr::video::CCommandBufferDriver::getImageWriter(u32 n
 
 void irr::video::CCommandBufferDriver::setMaterial(const SMaterial& material)
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
-		driver->setMaterial(material);
+	deferedcalls.push([materialb = material](IVideoDriver* driver) {
+		driver->setMaterial(materialb);
 		});
 }
 
@@ -104,29 +110,30 @@ irr::u32 irr::video::CCommandBufferDriver::getTextureCount() const
 
 void irr::video::CCommandBufferDriver::renameTexture(ITexture* texture, const io::path& newName)
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
-		driver->renameTexture(texture,newName);
+	deferedcalls.push([texture, newNameb = newName
+	](IVideoDriver* driver) {
+		driver->renameTexture(texture, newNameb);
 		});
 }
 
-irr::video::ITexture* irr::video::CCommandBufferDriver::addTexture(const core::dimension2d<u32>& size, const io::path& name, ECOLOR_FORMAT format = ECF_A8R8G8B8)
+irr::video::ITexture* irr::video::CCommandBufferDriver::addTexture(const core::dimension2d<u32>& size, const io::path& name, ECOLOR_FORMAT format)
 {
 	return Driver->addTexture(size,name,format);
 }
 
-irr::video::ITexture* irr::video::CCommandBufferDriver::addTexture(const io::path& name, IImage* image, void* mipmapData = 0)
+irr::video::ITexture* irr::video::CCommandBufferDriver::addTexture(const io::path& name, IImage* image, void* mipmapData)
 {
 	return Driver->addTexture(name,image,mipmapData);
 }
 
-irr::video::ITexture* irr::video::CCommandBufferDriver::addRenderTargetTexture(const core::dimension2d<u32>& size, const io::path& name = "rt", const ECOLOR_FORMAT format = ECF_UNKNOWN)
+irr::video::ITexture* irr::video::CCommandBufferDriver::addRenderTargetTexture(const core::dimension2d<u32>& size, const io::path& name, const ECOLOR_FORMAT format)
 {
 	return Driver->addRenderTargetTexture(size,name,format);
 }
 
 void irr::video::CCommandBufferDriver::removeTexture(ITexture* texture)
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
+	deferedcalls.push([texture	](IVideoDriver* driver) {
 		driver->removeTexture(texture);
 		});
 
@@ -134,67 +141,57 @@ void irr::video::CCommandBufferDriver::removeTexture(ITexture* texture)
 
 void irr::video::CCommandBufferDriver::removeAllTextures()
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
+	deferedcalls.push([](IVideoDriver* driver) {
 		driver->removeAllTextures();
 		});
 }
 
-irr::video::IHardwareBuffer* irr::video::CCommandBufferDriver::createHardwareBuffer(scene::IIndexBuffer* indexBuffer)
+void irr::video::CCommandBufferDriver::addOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, const scene::IMesh* mesh)
 {
-	return Driver->createHardwareBuffer(indexBuffer);
-}
-
-irr::video::IHardwareBuffer* irr::video::CCommandBufferDriver::createHardwareBuffer(scene::IVertexBuffer* vertexBuffer)
-{
-	return Driver->createHardwareBuffer(vertexBuffer);
-}
-
-void irr::video::CCommandBufferDriver::addOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, const scene::IMesh* mesh = 0)
-{
-	deferedcalls.push([&](IVideoDriver* driver) {
+	deferedcalls.push([node, mesh](IVideoDriver* driver) {
 		driver->addOcclusionQuery(node, mesh);
 		});
 }
 
 void irr::video::CCommandBufferDriver::removeOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node)
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
+	deferedcalls.push([node](IVideoDriver* driver) {
 		driver->removeOcclusionQuery(node);
 		});
 }
 
 void irr::video::CCommandBufferDriver::removeAllOcclusionQueries()
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
+	deferedcalls.push([](IVideoDriver* driver) {
 		driver->removeAllOcclusionQueries();
 		});
 }
 
-void irr::video::CCommandBufferDriver::runOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool visible = false)
+void irr::video::CCommandBufferDriver::runOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool visible )
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
+	deferedcalls.push([ node, visible](IVideoDriver* driver) {
 		driver->runOcclusionQuery(node,visible);
 		});
 }
 
-void irr::video::CCommandBufferDriver::runAllOcclusionQueries(bool visible = false)
+void irr::video::CCommandBufferDriver::runAllOcclusionQueries(bool visible)
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
+	deferedcalls.push([ visible](IVideoDriver* driver) {
 		driver->runAllOcclusionQueries();
 		});
 }
 
-void irr::video::CCommandBufferDriver::updateOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool block = true)
+void irr::video::CCommandBufferDriver::updateOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool block)
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
+	deferedcalls.push([ node, block](IVideoDriver* driver) {
 		driver->updateOcclusionQuery(node,block);
 		});
 }
 
-void irr::video::CCommandBufferDriver::updateAllOcclusionQueries(bool block = true)
+void irr::video::CCommandBufferDriver::updateAllOcclusionQueries(bool block)
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
-		driver->updateAllOcclusionQueries();
+	deferedcalls.push([ block](IVideoDriver* driver) {
+		driver->updateAllOcclusionQueries(block);
 		});
 }
 
@@ -203,49 +200,50 @@ irr::u32 irr::video::CCommandBufferDriver::getOcclusionQueryResult(std::shared_p
 	return Driver->getOcclusionQueryResult(node);
 }
 
-void irr::video::CCommandBufferDriver::makeColorKeyTexture(video::ITexture* texture, video::SColor color, bool zeroTexels = false) const
+void irr::video::CCommandBufferDriver::makeColorKeyTexture(video::ITexture* texture, video::SColor color, bool zeroTexels ) const
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
+	deferedcalls.push([ texture, color, zeroTexels](IVideoDriver* driver) {
 		driver->makeColorKeyTexture(texture, color, zeroTexels);
 		});
 }
 
-void irr::video::CCommandBufferDriver::makeColorKeyTexture(video::ITexture* texture, core::position2d<s32> colorKeyPixelPos, bool zeroTexels = false) const
+void irr::video::CCommandBufferDriver::makeColorKeyTexture(video::ITexture* texture, core::position2d<s32> colorKeyPixelPos, bool zeroTexels) const
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
+	deferedcalls.push([ texture, colorKeyPixelPos, zeroTexels](IVideoDriver* driver) {
 		driver->makeColorKeyTexture(texture, colorKeyPixelPos, zeroTexels);
 		});
 }
 
-void irr::video::CCommandBufferDriver::makeNormalMapTexture(video::ITexture* texture, f32 amplitude = 1.0f) const
+void irr::video::CCommandBufferDriver::makeNormalMapTexture(video::ITexture* texture, f32 amplitude ) const
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
+	deferedcalls.push([ texture, amplitude](IVideoDriver* driver) {
 		driver->makeColorKeyTexture(texture, amplitude, amplitude);
 		});
 }
 
-bool irr::video::CCommandBufferDriver::setRenderTarget(video::ITexture* texture, bool clearBackBuffer = true, bool clearZBuffer = true, SColor color = video::SColor(0, 0, 0, 0), video::ITexture* depthStencil = 0)
+bool irr::video::CCommandBufferDriver::setRenderTarget(video::ITexture* texture, bool clearBackBuffer , bool clearZBuffer, SColor color, video::ITexture* depthStencil)
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
+	deferedcalls.push([texture, clearBackBuffer, clearZBuffer, color, depthStencil](IVideoDriver* driver) {
 		driver->setRenderTarget(texture, clearBackBuffer, clearZBuffer,color,depthStencil);
 		});
 	return true;
 }
 
-bool irr::video::CCommandBufferDriver::setRenderTarget(const core::array<video::IRenderTarget>& texture, bool clearBackBuffer = true, bool clearZBuffer = true, SColor color = video::SColor(0, 0, 0, 0), video::ITexture* depthStencil = 0)
+bool irr::video::CCommandBufferDriver::setRenderTarget(const core::array<video::IRenderTarget>& texture, const core::array<bool>& clearBackBuffer, bool clearZBuffer, SColor color, video::ITexture* depthStencil)
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
-		driver->setRenderTarget(texture, clearBackBuffer, clearZBuffer, color, depthStencil);
+	deferedcalls.push([textureb = texture, clearBackBufferb = clearBackBuffer, clearZBuffer, color, depthStencil](IVideoDriver* driver) {
+		driver->setRenderTarget(textureb, clearBackBufferb, clearZBuffer, color, depthStencil);
 		});
 	return true;
 }
 
-bool irr::video::CCommandBufferDriver::setRenderTarget(E_RENDER_TARGET target, bool clearTarget = true, bool clearZBuffer = true, SColor color = video::SColor(0, 0, 0, 0))
+bool irr::video::CCommandBufferDriver::setRenderTarget(E_RENDER_TARGET target, bool clearTarget , bool clearZBuffer, SColor color)
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
-		driver->setRenderTarget(target, clearTarget, clearZBuffer, color);
-		});
-	return true;
+		if (ERT_FRAME_BUFFER == target)
+			return setRenderTarget(0, clearTarget, clearZBuffer, color, 0);
+		else
+			return false;
+
 }
 
 bool irr::video::CCommandBufferDriver::setStreamOutputBuffer(scene::IVertexBuffer* buffer)
@@ -258,366 +256,558 @@ bool irr::video::CCommandBufferDriver::setStreamOutputBuffer(scene::IVertexBuffe
 
 void irr::video::CCommandBufferDriver::setViewPort(const core::rect<s32>& area)
 {
-	deferedcalls.push([&](IVideoDriver* driver) {
-		driver->setViewPort(area);
+	CNullDriverCommon::setViewPort(area);
+	deferedcalls.push([areab = area](IVideoDriver* driver) {
+		driver->setViewPort(areab);
 		});
 }
 
-const irr::core::rect<irr::s32>& irr::video::CCommandBufferDriver::getViewPort() const
+void irr::video::CCommandBufferDriver::draw2DVertexPrimitiveList(const void* vertices, u32 vertexCount, const void* indexList, u32 primCount, E_VERTEX_TYPE vType, scene::E_PRIMITIVE_TYPE pType, E_INDEX_TYPE iType)
 {
-	return Driver->getViewPort();
+	deferedcalls.push([vertices, vertexCount, indexList, primCount, vType, pType, iType](IVideoDriver* driver) {
+		driver->draw2DVertexPrimitiveList(vertices, vertexCount, indexList, primCount, vType, pType, iType);
+		});
 }
 
-void irr::video::CCommandBufferDriver::draw2DVertexPrimitiveList(const void* vertices, u32 vertexCount, const void* indexList, u32 primCount, E_VERTEX_TYPE vType = EVT_STANDARD, scene::E_PRIMITIVE_TYPE pType = scene::EPT_TRIANGLES, E_INDEX_TYPE iType = EIT_16BIT)
+void irr::video::CCommandBufferDriver::draw3DLine(const core::vector3df& start, const core::vector3df& end, SColor color)
 {
+	deferedcalls.push([startb = start, endb =end, color](IVideoDriver* driver) {
+		driver->draw3DLine(startb, endb, color);
+		});
 }
 
-void irr::video::CCommandBufferDriver::draw3DLine(const core::vector3df& start, const core::vector3df& end, SColor color = SColor(255, 255, 255, 255))
+void irr::video::CCommandBufferDriver::draw3DTriangle(const core::triangle3df& triangle, SColor color )
 {
+	deferedcalls.push([triangleb = triangle, color](IVideoDriver* driver) {
+		driver->draw3DTriangle(triangleb, color);
+		});
 }
 
-void irr::video::CCommandBufferDriver::draw3DTriangle(const core::triangle3df& triangle, SColor color = SColor(255, 255, 255, 255))
+void irr::video::CCommandBufferDriver::draw3DBox(const core::aabbox3d<f32>& box, SColor color)
 {
-}
-
-void irr::video::CCommandBufferDriver::draw3DBox(const core::aabbox3d<f32>& box, SColor color = SColor(255, 255, 255, 255))
-{
+	deferedcalls.push([boxb = box, color](IVideoDriver* driver) {
+		driver->draw3DBox(boxb, color);
+		});
 }
 
 void irr::video::CCommandBufferDriver::draw2DImage(const video::ITexture* texture, const core::position2d<s32>& destPos)
 {
+	deferedcalls.push([texture, destPosb = destPos](IVideoDriver* driver) {
+		driver->draw2DImage(texture, destPosb);
+		});
 }
 
-void irr::video::CCommandBufferDriver::draw2DImage(const video::ITexture* texture, const core::position2d<s32>& destPos, const core::rect<s32>& sourceRect, const core::rect<s32>* clipRect = 0, SColor color = SColor(255, 255, 255, 255), bool useAlphaChannelOfTexture = false)
+void irr::video::CCommandBufferDriver::draw2DImage(const video::ITexture* texture, const core::position2d<s32>& destPos, const core::rect<s32>& sourceRect, const core::rect<s32>* clipRect, SColor color, bool useAlphaChannelOfTexture)
 {
+	if (clipRect == nullptr)
+	{
+
+		deferedcalls.push([texture, destPosb = destPos, sourceRectb = sourceRect, color, useAlphaChannelOfTexture](IVideoDriver* driver) {
+			driver->draw2DImage(texture, destPosb, sourceRectb, nullptr, color, useAlphaChannelOfTexture);
+			});
+	}
+	else
+	{
+		deferedcalls.push([texture, destPosb = destPos, sourceRectb = sourceRect, clipRectb = *clipRect, color, useAlphaChannelOfTexture](IVideoDriver* driver) {
+			driver->draw2DImage(texture, destPosb, sourceRectb, &clipRectb, color, useAlphaChannelOfTexture);
+			});
+	}
 }
 
-void irr::video::CCommandBufferDriver::draw2DImageBatch(const video::ITexture* texture, const core::position2d<s32>& pos, const core::array<core::rect<s32>>& sourceRects, const core::array<s32>& indices, s32 kerningWidth = 0, const core::rect<s32>* clipRect = 0, SColor color = SColor(255, 255, 255, 255), bool useAlphaChannelOfTexture = false)
+void irr::video::CCommandBufferDriver::draw2DImageBatch(const video::ITexture* texture, const core::position2d<s32>& pos, const core::array<core::rect<s32>>& sourceRects, const core::array<s32>& indices, s32 kerningWidth , const core::rect<s32>* clipRect , SColor color , bool useAlphaChannelOfTexture)
 {
+	if (clipRect == nullptr)
+	{
+		deferedcalls.push([texture, posb = pos, sourceRectsb = sourceRects, indicesb = indices, kerningWidth, color, useAlphaChannelOfTexture](IVideoDriver* driver) {
+			driver->draw2DImageBatch(texture, posb, sourceRectsb, indicesb, kerningWidth, nullptr, color, useAlphaChannelOfTexture);
+			});
+	}
+	else
+	{
+		deferedcalls.push([texture, posb = pos, sourceRectsb = sourceRects, indicesb = indices, kerningWidth, clipRectb = *clipRect, color, useAlphaChannelOfTexture](IVideoDriver* driver) {
+			driver->draw2DImageBatch(texture, posb, sourceRectsb, indicesb, kerningWidth, &clipRectb, color, useAlphaChannelOfTexture);
+			});
+	}
 }
 
-void irr::video::CCommandBufferDriver::draw2DImageBatch(const video::ITexture* texture, const core::array<core::position2d<s32>>& positions, const core::array<core::rect<s32>>& sourceRects, const core::rect<s32>* clipRect = 0, SColor color = SColor(255, 255, 255, 255), bool useAlphaChannelOfTexture = false)
+void irr::video::CCommandBufferDriver::draw2DImageBatch(const video::ITexture* texture, const core::array<core::position2d<s32>>& positions, const core::array<core::rect<s32>>& sourceRects, const core::rect<s32>* clipRect, SColor color, bool useAlphaChannelOfTexture )
 {
+	if (clipRect == nullptr)
+	{
+		deferedcalls.push([texture, positionsb = positions, sourceRectsb = sourceRects, color, useAlphaChannelOfTexture](IVideoDriver* driver) {
+			driver->draw2DImageBatch(texture, positionsb, sourceRectsb, nullptr, color, useAlphaChannelOfTexture);
+			});
+	}
+	else
+	{
+		deferedcalls.push([texture, positionsb = positions, sourceRectsb = sourceRects, clipRectb = *clipRect, color, useAlphaChannelOfTexture](IVideoDriver* driver) {
+			driver->draw2DImageBatch(texture, positionsb, sourceRectsb, &clipRectb, color, useAlphaChannelOfTexture);
+			});
+	}
 }
 
-void irr::video::CCommandBufferDriver::draw2DImage(const video::ITexture* texture, const core::rect<s32>& destRect, const core::rect<s32>& sourceRect, const core::rect<s32>* clipRect = 0, const video::SColor* const colors = 0, bool useAlphaChannelOfTexture = false)
+void irr::video::CCommandBufferDriver::draw2DImage(const video::ITexture* texture, const core::rect<s32>& destRect, const core::rect<s32>& sourceRect, const core::rect<s32>* clipRect, const video::SColor* const colors , bool useAlphaChannelOfTexture)
 {
+	if (clipRect == nullptr)
+	{
+		deferedcalls.push([texture, destRectb = destRect, sourceRectb = sourceRect, colors, useAlphaChannelOfTexture](IVideoDriver* driver) {
+			driver->draw2DImage(texture, destRectb, sourceRectb, nullptr, colors, useAlphaChannelOfTexture);
+			});
+	}
+	else
+	{
+		deferedcalls.push([texture, destRectb = destRect, sourceRectb = sourceRect, clipRectb = *clipRect, colors, useAlphaChannelOfTexture](IVideoDriver* driver) {
+			driver->draw2DImage(texture, destRectb, sourceRectb, &clipRectb, colors, useAlphaChannelOfTexture);
+			});
+	}
 }
 
-void irr::video::CCommandBufferDriver::draw2DRectangle(SColor color, const core::rect<s32>& pos, const core::rect<s32>* clip = 0)
+void irr::video::CCommandBufferDriver::draw2DRectangle(SColor color, const core::rect<s32>& pos, const core::rect<s32>* clip)
 {
+	if (clip == nullptr)
+	{
+		deferedcalls.push([color, posb = pos](IVideoDriver* driver) {
+			driver->draw2DRectangle(color, posb, nullptr);
+			});
+	}
+	else
+	{
+		deferedcalls.push([color, posb = pos, clipb = *clip](IVideoDriver* driver) {
+			driver->draw2DRectangle(color, posb, &clipb);
+			});
+	}
 }
 
-void irr::video::CCommandBufferDriver::draw2DRectangle(const core::rect<s32>& pos, SColor colorLeftUp, SColor colorRightUp, SColor colorLeftDown, SColor colorRightDown, const core::rect<s32>* clip = 0)
+void irr::video::CCommandBufferDriver::draw2DRectangle(const core::rect<s32>& pos, SColor colorLeftUp, SColor colorRightUp, SColor colorLeftDown, SColor colorRightDown, const core::rect<s32>* clip)
 {
+	if (clip == nullptr)
+	{
+		deferedcalls.push([posb = pos, colorLeftUp, colorRightUp, colorLeftDown, colorRightDown](IVideoDriver* driver) {
+			driver->draw2DRectangle(posb, colorLeftUp, colorRightUp, colorLeftDown, colorRightDown, nullptr);
+			});
+	}
+	else
+	{
+		deferedcalls.push([posb = pos, colorLeftUp, colorRightUp, colorLeftDown, colorRightDown, clipb = *clip](IVideoDriver* driver) {
+			driver->draw2DRectangle(posb, colorLeftUp, colorRightUp, colorLeftDown, colorRightDown, &clipb);
+			});
+	}
 }
 
-void irr::video::CCommandBufferDriver::draw2DRectangleOutline(const core::recti& pos, SColor color = SColor(255, 255, 255, 255))
+void irr::video::CCommandBufferDriver::draw2DRectangleOutline(const core::recti& pos, SColor color)
 {
+	deferedcalls.push([posb = pos, color](IVideoDriver* driver) {
+		driver->draw2DRectangleOutline(posb, color);
+		});
 }
 
-void irr::video::CCommandBufferDriver::draw2DLine(const core::position2d<s32>& start, const core::position2d<s32>& end, SColor color = SColor(255, 255, 255, 255))
+void irr::video::CCommandBufferDriver::draw2DLine(const core::position2d<s32>& start, const core::position2d<s32>& end, SColor color)
 {
+	deferedcalls.push([startb = start, endb = end, color](IVideoDriver* driver) {
+		driver->draw2DLine(startb, endb, color);
+		});
 }
 
 void irr::video::CCommandBufferDriver::drawPixel(u32 x, u32 y, const SColor& color)
 {
+	deferedcalls.push([x, y, colorb = color](IVideoDriver* driver) {
+		driver->drawPixel(x, y, colorb);
+		});
 }
 
-void irr::video::CCommandBufferDriver::draw2DPolygon(core::position2d<s32> center, f32 radius, video::SColor color = SColor(100, 255, 255, 255), s32 vertexCount = 10)
+void irr::video::CCommandBufferDriver::draw2DPolygon(core::position2d<s32> center, f32 radius, video::SColor color, s32 vertexCount)
 {
+	deferedcalls.push([centerb = center, radius, color, vertexCount](IVideoDriver* driver) {
+		driver->draw2DPolygon(centerb, radius, color, vertexCount);
+		});
 }
 
-void irr::video::CCommandBufferDriver::drawStencilShadowVolume(const core::array<core::vector3df>& triangles, bool zfail = true, u32 debugDataVisible = 0)
+void irr::video::CCommandBufferDriver::drawStencilShadowVolume(const core::array<core::vector3df>& triangles, bool zfail, u32 debugDataVisible)
 {
+	deferedcalls.push([trianglesb = triangles, zfail, debugDataVisible](IVideoDriver* driver) {
+		driver->drawStencilShadowVolume(trianglesb, zfail, debugDataVisible);
+		});
 }
 
-void irr::video::CCommandBufferDriver::drawStencilShadow(bool clearStencilBuffer = false, video::SColor leftUpEdge = video::SColor(255, 0, 0, 0), video::SColor rightUpEdge = video::SColor(255, 0, 0, 0), video::SColor leftDownEdge = video::SColor(255, 0, 0, 0), video::SColor rightDownEdge = video::SColor(255, 0, 0, 0))
+void irr::video::CCommandBufferDriver::drawStencilShadow(bool clearStencilBuffer, video::SColor leftUpEdge, video::SColor rightUpEdge, video::SColor leftDownEdge, video::SColor rightDownEdge)
 {
+	deferedcalls.push([clearStencilBuffer, leftUpEdge, rightUpEdge, leftDownEdge, rightDownEdge](IVideoDriver* driver) {
+		driver->drawStencilShadow(clearStencilBuffer, leftUpEdge, rightUpEdge, leftDownEdge, rightDownEdge);
+		});
 }
 
 void irr::video::CCommandBufferDriver::drawMeshBuffer(const scene::IMeshBuffer* mb)
 {
+	deferedcalls.push([mb](IVideoDriver* driver) {
+		driver->drawMeshBuffer(mb);
+		});
 }
 
-void irr::video::CCommandBufferDriver::drawMeshBufferNormals(const scene::IMeshBuffer* mb, f32 length = 10.f, SColor color = 0xffffffff)
+void irr::video::CCommandBufferDriver::drawMeshBufferNormals(const scene::IMeshBuffer* mb, f32 length, SColor color )
 {
+	deferedcalls.push([mb, length, color](IVideoDriver* driver) {
+		driver->drawMeshBufferNormals(mb, length, color);
+		});
 }
 
-void irr::video::CCommandBufferDriver::setFog(SColor color = SColor(0, 255, 255, 255), E_FOG_TYPE fogType = EFT_FOG_LINEAR, f32 start = 50.0f, f32 end = 100.0f, f32 density = 0.01f, bool pixelFog = false, bool rangeFog = false)
+void irr::video::CCommandBufferDriver::setFog(SColor color, E_FOG_TYPE fogType, f32 start, f32 end, f32 density , bool pixelFog, bool rangeFog)
 {
+	FogColor = color;
+	FogType = fogType;
+	FogStart = start;
+	FogEnd = end;
+	FogDensity = density;
+	PixelFog = pixelFog;
+	RangeFog = rangeFog;
+	deferedcalls.push([color, fogType, start, end, density, pixelFog, rangeFog](IVideoDriver* driver) {
+		driver->setFog(color, fogType, start, end, density, pixelFog, rangeFog);
+		});
 }
 
 void irr::video::CCommandBufferDriver::getFog(SColor& color, E_FOG_TYPE& fogType, f32& start, f32& end, f32& density, bool& pixelFog, bool& rangeFog)
 {
+	color = FogColor;
+	fogType = FogType;
+	start = FogStart;
+	end = FogEnd;
+	density = FogDensity;
+	pixelFog = PixelFog;
+	rangeFog = RangeFog; 
 }
 
 irr::video::ECOLOR_FORMAT irr::video::CCommandBufferDriver::getColorFormat() const
 {
-	return ECOLOR_FORMAT();
+	return Driver->getColorFormat();
 }
 
 const irr::core::dimension2d<irr::u32>& irr::video::CCommandBufferDriver::getScreenSize() const
 {
-	// TODO: insert return statement here
+	return Driver->getScreenSize();
 }
 
 const irr::core::dimension2d<irr::u32>& irr::video::CCommandBufferDriver::getCurrentRenderTargetSize() const
 {
-	// TODO: insert return statement here
+	if( CurrentRenderTarget )
+		return CurrentRenderTarget->getSize();
+	else
+		return Driver->getCurrentRenderTargetSize();
 }
 
 irr::s32 irr::video::CCommandBufferDriver::getFPS() const
 {
-	return s32();
+	return Driver->getFPS();
 }
 
-irr::u32 irr::video::CCommandBufferDriver::getPrimitiveCountDrawn(u32 mode = 0) const
+irr::u32 irr::video::CCommandBufferDriver::getPrimitiveCountDrawn(u32 mode) const
 {
-	return u32();
+	return Driver->getPrimitiveCountDrawn(mode);
 }
 
 void irr::video::CCommandBufferDriver::deleteAllDynamicLights()
 {
+	deferedcalls.push([](IVideoDriver* driver) {
+		driver->deleteAllDynamicLights();
+		});
 }
 
 irr::s32 irr::video::CCommandBufferDriver::addDynamicLight(const SLight& light)
 {
-	return s32();
+	deferedcalls.push([lightb = light](IVideoDriver* driver) {
+		driver->addDynamicLight(lightb);
+		});
+	return Driver->getDynamicLightCount();
 }
 
 irr::u32 irr::video::CCommandBufferDriver::getMaximalDynamicLightAmount() const
 {
-	return u32();
+	return Driver->getMaximalDynamicLightAmount();
 }
 
 irr::u32 irr::video::CCommandBufferDriver::getDynamicLightCount() const
 {
-	return u32();
+	return Driver->getDynamicLightCount();
 }
 
 const irr::video::SLight& irr::video::CCommandBufferDriver::getDynamicLight(u32 idx) const
 {
-	// TODO: insert return statement here
+	return Driver->getDynamicLight(idx);
 }
 
 void irr::video::CCommandBufferDriver::turnLightOn(s32 lightIndex, bool turnOn)
 {
+	deferedcalls.push([lightIndex, turnOn](IVideoDriver* driver) {
+		driver->turnLightOn(lightIndex, turnOn);
+		});
 }
 
 const wchar_t* irr::video::CCommandBufferDriver::getName() const
 {
-	return nullptr;
+	return L"Irrlicht CommandBufferDevice";
 }
 
 void irr::video::CCommandBufferDriver::addExternalImageLoader(IImageLoader* loader)
 {
+	loader->grab();
+	deferedcalls.push([loader](IVideoDriver* driver) {
+		driver->addExternalImageLoader(loader);
+		loader->drop();
+		});
 }
 
 void irr::video::CCommandBufferDriver::addExternalImageWriter(IImageWriter* writer)
 {
+	writer->grab();
+	deferedcalls.push([writer](IVideoDriver* driver) {
+		driver->addExternalImageWriter(writer);
+		writer->drop();
+		});
+
 }
 
 irr::u32 irr::video::CCommandBufferDriver::getMaximalPrimitiveCount() const
 {
-	return u32();
+	return Driver->getMaximalPrimitiveCount();
 }
 
-void irr::video::CCommandBufferDriver::setTextureCreationFlag(E_TEXTURE_CREATION_FLAG flag, bool enabled = true)
+void irr::video::CCommandBufferDriver::setTextureCreationFlag(E_TEXTURE_CREATION_FLAG flag, bool enabled)
 {
+	deferedcalls.push([flag, enabled](IVideoDriver* driver) {
+		driver->setTextureCreationFlag(flag, enabled);
+		});
 }
 
 bool irr::video::CCommandBufferDriver::getTextureCreationFlag(E_TEXTURE_CREATION_FLAG flag) const
 {
-	return false;
+	return Driver->getTextureCreationFlag(flag);
 }
 
 irr::video::IImage* irr::video::CCommandBufferDriver::createImageFromFile(const io::path& filename)
 {
-	return nullptr;
+	return Driver->createImageFromFile(filename);
 }
 
 irr::video::IImage* irr::video::CCommandBufferDriver::createImageFromFile(io::IReadFile* file)
 {
-	return nullptr;
+	return Driver->createImageFromFile(file);
 }
 
-bool irr::video::CCommandBufferDriver::writeImageToFile(IImage* image, const io::path& filename, u32 param = 0)
+bool irr::video::CCommandBufferDriver::writeImageToFile(IImage* image, const io::path& filename, u32 param)
 {
-	return false;
+	return Driver->writeImageToFile(image, filename, param);
 }
 
-bool irr::video::CCommandBufferDriver::writeImageToFile(IImage* image, io::IWriteFile* file, u32 param = 0)
+bool irr::video::CCommandBufferDriver::writeImageToFile(IImage* image, io::IWriteFile* file, u32 param)
 {
-	return false;
+	return Driver->writeImageToFile(image, file, param);
 }
 
-irr::video::IImage* irr::video::CCommandBufferDriver::createImageFromData(ECOLOR_FORMAT format, const core::dimension2d<u32>& size, void* data, bool ownForeignMemory = false, bool deleteMemory = true)
+irr::video::IImage* irr::video::CCommandBufferDriver::createImageFromData(ECOLOR_FORMAT format, const core::dimension2d<u32>& size, void* data, bool ownForeignMemory, bool deleteMemory)
 {
-	return nullptr;
+	return Driver->createImageFromData(format, size, data, ownForeignMemory, deleteMemory);
 }
 
 irr::video::IImage* irr::video::CCommandBufferDriver::createImage(ECOLOR_FORMAT format, const core::dimension2d<u32>& size)
 {
-	return nullptr;
+	return Driver->createImage(format, size);
 }
 
 _IRR_DEPRECATED_ irr::video::IImage* irr::video::CCommandBufferDriver::createImage(ECOLOR_FORMAT format, IImage* imageToCopy)
 {
-	return nullptr;
+	return Driver->createImage(format, imageToCopy);
 }
 
 _IRR_DEPRECATED_ irr::video::IImage* irr::video::CCommandBufferDriver::createImage(IImage* imageToCopy, const core::position2d<s32>& pos, const core::dimension2d<u32>& size)
 {
-	return nullptr;
+	return Driver->createImage(imageToCopy, pos, size);
 }
 
 irr::video::IImage* irr::video::CCommandBufferDriver::createImage(ITexture* texture, const core::position2d<s32>& pos, const core::dimension2d<u32>& size)
 {
-	return nullptr;
+	return Driver->createImage(texture, pos, size);
 }
 
 void irr::video::CCommandBufferDriver::OnResize(const core::dimension2d<u32>& size)
 {
+	deferedcalls.push([sizeb = size](IVideoDriver* driver) {
+		driver->OnResize(sizeb);
+		});
 }
 
-irr::s32 irr::video::CCommandBufferDriver::addMaterialRenderer(IMaterialRenderer* renderer, const c8* name = 0)
+irr::s32 irr::video::CCommandBufferDriver::addMaterialRenderer(IMaterialRenderer* renderer, const c8* name)
 {
-	return s32();
+	return Driver->addMaterialRenderer(renderer, name);
 }
 
 irr::video::IMaterialRenderer* irr::video::CCommandBufferDriver::getMaterialRenderer(u32 idx)
 {
-	return nullptr;
+	return Driver->getMaterialRenderer(idx);
 }
 
 irr::u32 irr::video::CCommandBufferDriver::getMaterialRendererCount() const
 {
-	return u32();
+	return Driver->getMaterialRendererCount();
 }
 
 const irr::c8* irr::video::CCommandBufferDriver::getMaterialRendererName(u32 idx) const
 {
-	return nullptr;
+	return Driver->getMaterialRendererName(idx);
 }
 
 void irr::video::CCommandBufferDriver::setMaterialRendererName(s32 idx, const c8* name)
 {
+	deferedcalls.push([idx, name](IVideoDriver* driver) {
+		driver->setMaterialRendererName(idx, name);
+		});
 }
 
-irr::io::IAttributes* irr::video::CCommandBufferDriver::createAttributesFromMaterial(const video::SMaterial& material, io::SAttributeReadWriteOptions* options = 0)
+irr::io::IAttributes* irr::video::CCommandBufferDriver::createAttributesFromMaterial(const video::SMaterial& material, io::SAttributeReadWriteOptions* options)
 {
-	return nullptr;
+	return Driver->createAttributesFromMaterial(material, options);
 }
 
 void irr::video::CCommandBufferDriver::fillMaterialStructureFromAttributes(video::SMaterial& outMaterial, io::IAttributes* attributes)
 {
+		Driver->fillMaterialStructureFromAttributes(outMaterial, attributes);
 }
 
 const irr::video::SExposedVideoData& irr::video::CCommandBufferDriver::getExposedVideoData()
 {
-	// TODO: insert return statement here
+	return Driver->getExposedVideoData();
 }
 
 irr::video::E_DRIVER_TYPE irr::video::CCommandBufferDriver::getDriverType() const
 {
-	return E_DRIVER_TYPE();
+	return Driver->getDriverType();
 }
 
 irr::video::IGPUProgrammingServices* irr::video::CCommandBufferDriver::getGPUProgrammingServices()
 {
-	return nullptr;
+	return this;
 }
 
 irr::scene::IMeshManipulator* irr::video::CCommandBufferDriver::getMeshManipulator()
 {
-	return nullptr;
+	return Driver->getMeshManipulator();
 }
 
 void irr::video::CCommandBufferDriver::clearZBuffer()
 {
+	deferedcalls.push([](IVideoDriver* driver) {
+		driver->clearZBuffer();
+		});
 }
 
-irr::video::IImage* irr::video::CCommandBufferDriver::createScreenShot(video::ECOLOR_FORMAT format = video::ECF_UNKNOWN, video::E_RENDER_TARGET target = video::ERT_FRAME_BUFFER)
+irr::video::IImage* irr::video::CCommandBufferDriver::createScreenShot(video::ECOLOR_FORMAT format, video::E_RENDER_TARGET target)
 {
 	return nullptr;
 }
 
 irr::video::ITexture* irr::video::CCommandBufferDriver::findTexture(const io::path& filename)
 {
-	return nullptr;
+	return Driver->findTexture(filename);
 }
 
-bool irr::video::CCommandBufferDriver::setClipPlane(u32 index, const core::plane3df& plane, bool enable = false)
+bool irr::video::CCommandBufferDriver::setClipPlane(u32 index, const core::plane3df& plane, bool enable)
 {
-	return false;
+	return Driver->setClipPlane(index, plane, enable);
 }
 
 void irr::video::CCommandBufferDriver::enableClipPlane(u32 index, bool enable)
 {
+	deferedcalls.push([index, enable](IVideoDriver* driver) {
+		driver->enableClipPlane(index, enable);
+		});
 }
 
 void irr::video::CCommandBufferDriver::setMinHardwareBufferVertexCount(u32 count)
 {
+	deferedcalls.push([count](IVideoDriver* driver) {
+		driver->setMinHardwareBufferVertexCount(count);
+		});
 }
 
 irr::video::SOverrideMaterial& irr::video::CCommandBufferDriver::getOverrideMaterial()
 {
-	// TODO: insert return statement here
+	return OverrideMaterial;
 }
 
 irr::video::SMaterial& irr::video::CCommandBufferDriver::getMaterial2D()
 {
-	// TODO: insert return statement here
+	return OverrideMaterial2D;
 }
 
-void irr::video::CCommandBufferDriver::enableMaterial2D(bool enable = true)
+void irr::video::CCommandBufferDriver::enableMaterial2D(bool enable)
 {
+	deferedcalls.push([enable](IVideoDriver* driver) {
+		driver->enableMaterial2D(enable);
+		});
 }
 
 irr::core::stringc irr::video::CCommandBufferDriver::getVendorInfo()
 {
-	return core::stringc();
+	return Driver->getVendorInfo();
 }
 
 void irr::video::CCommandBufferDriver::setAmbientLight(const SColorf& color)
 {
+	deferedcalls.push([color](IVideoDriver* driver) {
+		driver->setAmbientLight(color);
+		});
 }
 
 void irr::video::CCommandBufferDriver::setAllowZWriteOnTransparent(bool flag)
 {
+	deferedcalls.push([flag](IVideoDriver* driver) {
+		driver->setAllowZWriteOnTransparent(flag);
+		});
 }
 
 irr::core::dimension2du irr::video::CCommandBufferDriver::getMaxTextureSize() const
 {
-	return core::dimension2du();
+	return Driver->getMaxTextureSize();
 }
 
 void irr::video::CCommandBufferDriver::convertColor(const void* sP, ECOLOR_FORMAT sF, s32 sN, void* dP, ECOLOR_FORMAT dF) const
 {
+		Driver->convertColor(sP, sF, sN, dP, dF);
 }
 
 irr::video::IVertexDescriptor* irr::video::CCommandBufferDriver::addVertexDescriptor(const core::stringc& pName)
 {
-	return nullptr;
+	return Driver->addVertexDescriptor(pName);
 }
 
 irr::video::IVertexDescriptor* irr::video::CCommandBufferDriver::getVertexDescriptor(u32 id) const
 {
-	return nullptr;
+	return Driver->getVertexDescriptor(id);
 }
 
 irr::video::IVertexDescriptor* irr::video::CCommandBufferDriver::getVertexDescriptor(const core::stringc& pName) const
 {
-	return nullptr;
+	return Driver->getVertexDescriptor(pName);
 }
 
 irr::u32 irr::video::CCommandBufferDriver::getVertexDescriptorCount() const
 {
-	return u32();
+	return Driver->getVertexDescriptorCount();
 }
 
 void irr::video::CCommandBufferDriver::execute(IVideoDriver* driver)
 {
+	//pop the queue of defered calls and execute them
+	while (!deferedcalls.empty())
+	{
+		deferedcalls.front()(driver);
+		deferedcalls.pop();
+	}
 }
-#endif
+std::shared_ptr<irr::video::IHardwareBuffer> irr::video::CCommandBufferDriver::createHardwareBuffer(scene::IComputeBuffer* computeBuffer)
+{
+	return Driver->createHardwareBuffer(computeBuffer);
+}
+void irr::video::CCommandBufferDriver::dispatchComputeShader(const core::vector3d<u32>& groupCount, scene::IComputeBuffer* Src, scene::IComputeBuffer* Dst)
+{
+	deferedcalls.push([groupCount, Src, Dst](IVideoDriver* driver) {
+		driver->dispatchComputeShader(groupCount, Src, Dst);
+		});
+}

@@ -21,36 +21,22 @@ namespace video
 }
 namespace scene
 {
-	class IIndexBuffer : public virtual IReferenceCounted
+	class IIndexBuffer :public IBuffer
 	{
 	public:
-		IIndexBuffer() : HardwareBuffer(0)
+		IIndexBuffer() : IBuffer(EBT_INDEX)
 		{
 		}
 
-		virtual ~IIndexBuffer()
+		virtual ~IIndexBuffer() override
 		{
 		}
-
-		virtual void clear() = 0;
 
 		virtual u32 getLast() = 0;
-
-		virtual void set_used(u32 used) = 0;
-
-		virtual void reallocate(u32 size) = 0;
-
-		virtual u32 allocated_size() const = 0;
-
-		virtual s32 linear_reverse_search(const u32& element) const = 0;
 
 		virtual video::E_INDEX_TYPE getType() const = 0;
 
 		virtual void setType(video::E_INDEX_TYPE type) = 0;
-
-		virtual E_HARDWARE_MAPPING getHardwareMappingHint() const = 0;
-
-		virtual void setHardwareMappingHint(E_HARDWARE_MAPPING hardwareMappingHint) = 0;
 
 		virtual void addIndex(const u32& index) = 0;
 
@@ -63,24 +49,6 @@ namespace scene
 		virtual u32 getIndexSize() const = 0;
 
 		virtual void setIndex(u32 id, u32 index) = 0;
-
-		virtual void setDirty() = 0;
-
-		virtual u32 getChangedID() const = 0;
-
-		std::shared_ptr<video::IHardwareBuffer> getHardwareBuffer() const
-		{
-			return HardwareBuffer;
-		}
-
-		// externalMemoryHandler parameter is used only by hardware buffers.
-		void setHardwareBuffer(std::shared_ptr<video::IHardwareBuffer > hardwareBuffer)
-		{
-			HardwareBuffer = hardwareBuffer;
-		}
-
-	protected:
-		std::shared_ptr<video::IHardwareBuffer> HardwareBuffer;
 	};
 }
 }

@@ -325,6 +325,13 @@ namespace irr
 
 				logFormatError(hr, "Could not map texture buffer");
 
+				if (hr == DXGI_ERROR_DEVICE_REMOVED)
+				{
+
+					HRESULT hremove = S_OK;
+					hremove = Device->GetDeviceRemovedReason();
+					logFormatError(hremove, "Device removed reason");
+				}
 				return NULL;
 			}
 

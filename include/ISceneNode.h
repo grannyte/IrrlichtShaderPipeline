@@ -26,7 +26,7 @@ namespace irr
 		class ISceneManager;
 
 		//! Typedef for list of scene nodes
-		typedef core::list < std::shared_ptr<ISceneNode>> ISceneNodeList;
+		typedef std::vector< std::shared_ptr<ISceneNode>> ISceneNodeList;
 		//! Typedef for list of scene node animators
 		typedef core::list<ISceneNodeAnimator*> ISceneNodeAnimatorList;
 
@@ -91,9 +91,12 @@ namespace irr
 			{
 				if (IsVisible)
 				{
-					ISceneNodeList::Iterator it = Children.begin();
-					for (; it != Children.end(); ++it)
-						(*it)->OnRegisterSceneNode();
+					ChildLock.lock_read();
+					for (auto child : Children)
+					{
+						child->OnRegisterSceneNode();
+					}
+					ChildLock.unlock();
 				}
 			}
 
@@ -126,13 +129,14 @@ namespace irr
 
 					// update absolute position
 					updateAbsolutePosition();
-
+					ChildLock.lock_read();
 					// perform the post render process on all children
-					if (Children.size() < 250)
+					if (Children.size() < 1000)
 					{
-						ISceneNodeList::Iterator it = Children.begin();
-						for (; it != Children.end(); ++it)
-							(*it)->OnAnimate(timeMs);
+						for (auto child : Children)
+						{
+							child->OnAnimate(timeMs);
+						}
 					}
 					else
 					{
@@ -140,6 +144,7 @@ namespace irr
 							it->OnAnimate(timeMs);
 							});
 					}
+					ChildLock.unlock();
 				}
 			}
 
@@ -314,7 +319,9 @@ namespace irr
 						child->setSceneManager(SceneManager.lock());
 
 					child->remove(); // remove from old parent
+					ChildLock.lock();
 					Children.push_back(child);
+					ChildLock.unlock();
 					child->immediateSetParent(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()));
 				}
 			}
@@ -328,15 +335,18 @@ namespace irr
 			e.g. because it couldn't be found in the children list. */
 			virtual bool removeChild(std::shared_ptr<ISceneNode> child)
 			{
-				ISceneNodeList::Iterator it = Children.begin();
-				for (; it != Children.end(); ++it)
-					if ((*it).get() == child.get())
-					{
-						(*it)->Parent.reset();
-						Children.erase(it);
-						return true;
-					}
+				//find child in children vector and erase it if found
+				ChildLock.lock();
+				auto removed = std::remove(Children.begin(), Children.end(), child);
+				if (removed != Children.end())
+				{
+					child->immediateSetParent(nullptr);
+					Children.erase(removed, Children.end());
+					ChildLock.unlock();
+					return true;
+				}
 
+				ChildLock.unlock();
 				_IRR_IMPLEMENT_MANAGED_MARSHALLING_BUGFIX;
 				return false;
 			}
@@ -348,13 +358,11 @@ namespace irr
 			*/
 			virtual void removeAll()
 			{
-				ISceneNodeList::Iterator it = Children.begin();
-				for (; it != Children.end(); ++it)
-				{
-					(*it)->Parent.reset();
-				}
-
+				for (auto child : Children)
+					child->immediateSetParent(nullptr);
+				ChildLock.lock();
 				Children.clear();
+				ChildLock.unlock();
 			}
 
 
@@ -610,7 +618,7 @@ namespace irr
 
 			//! Returns a const reference to the list of all children.
 			/** \return The list of all children of this node. */
-			const core::list < std::shared_ptr<ISceneNode>>& getChildren() const
+			const ISceneNodeList& getChildren() const
 			{
 				return Children;
 			}
@@ -623,7 +631,7 @@ namespace irr
 				;
 				remove();
 
-				immediateSetParent( newParent);
+				immediateSetParent(newParent);
 
 				if (Parent.lock())
 					Parent.lock()->addChild(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()));
@@ -765,7 +773,7 @@ namespace irr
 			\param newManager An optional new scene manager.
 			\return The newly created clone of this node. */
 			virtual std::shared_ptr<ISceneNode> clone(std::shared_ptr<ISceneNode> newParent = 0,
-			                                          std::shared_ptr<ISceneManager> newManager = 0)
+				std::shared_ptr<ISceneManager> newManager = 0)
 			{
 				return 0; // to be implemented by derived classes
 			}
@@ -802,7 +810,7 @@ namespace irr
 
 				// clone children
 
-				ISceneNodeList::Iterator it = toCopyFrom->Children.begin();
+				auto it = toCopyFrom->Children.begin();
 				for (; it != toCopyFrom->Children.end(); ++it)
 					(*it)->clone(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), newManager);
 
@@ -826,7 +834,7 @@ namespace irr
 			{
 				SceneManager = newManager;
 
-				ISceneNodeList::Iterator it = Children.begin();
+				auto it = Children.begin();
 				for (; it != Children.end(); ++it)
 					(*it)->setSceneManager(newManager);
 			}
@@ -850,7 +858,7 @@ namespace irr
 			std::weak_ptr<ISceneNode> Parent;
 
 			//! List of all children of this node
-			core::list<std::shared_ptr<ISceneNode>> Children;
+			ISceneNodeList Children;
 
 			//! List of all animator nodes
 			core::list<ISceneNodeAnimator*> Animators;
@@ -875,6 +883,9 @@ namespace irr
 
 			//! Is debug object?
 			bool IsDebugObject;
+
+			//! this is a read/write lock for dynamic child lists
+			concurrency::reader_writer_lock ChildLock;
 		};
 
 

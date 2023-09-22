@@ -578,6 +578,18 @@ namespace video
 		no blue and 1.0f, meaning full blue. */
 		void set(f32 aa, f32 rr, f32 gg, f32 bb) {a = aa; r = rr; g =gg; b = bb; }
 
+		//! equality operator 
+		bool operator==(const SColorf& other) const
+		{
+			return a==other.a && r==other.r && g==other.g && b==other.b;
+		}
+
+		//! smaller operator
+		bool operator<(const SColorf& other) const
+		{
+			return (a<other.a && r<other.r && g<other.g && b<other.b);
+		}
+
 		//! Interpolates the color with a f32 value to another color
 		/** \param other: Other color
 		\param d: value between 0.0f and 1.0f

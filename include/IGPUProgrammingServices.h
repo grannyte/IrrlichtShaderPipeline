@@ -614,6 +614,19 @@ namespace irr
 				IShaderConstantSetCallBack* callback = 0,
 				E_MATERIAL_TYPE baseMaterial = video::EMT_SOLID,
 				s32 userData = 0) = 0;
+
+
+			virtual s32 addComputeShader(const c8* computeShaderProgram,
+												const c8* computeShaderEntryPointName = "main",
+												E_COMPUTE_SHADER_TYPE csCompileTarget = ECST_CS_5_0,
+												IShaderConstantSetCallBack* callback = 0,
+												s32 userData = 0) = 0;
+
+			virtual s32 addComputeShaderFromFile(const io::path& computeShaderProgramFileName,
+								const c8* computeShaderEntryPointName = "main",
+								E_COMPUTE_SHADER_TYPE csCompileTarget = ECST_CS_5_0,
+								IShaderConstantSetCallBack* callback = 0,
+								s32 userData = 0) = 0;
 		};
 	} // end namespace video
 } // end namespace irr

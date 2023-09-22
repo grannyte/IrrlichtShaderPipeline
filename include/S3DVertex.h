@@ -26,7 +26,10 @@ enum E_VERTEX_TYPE
 
 	//! Vertex with a tangent and binormal vector, video::S3DVertexTangents.
 	/** Usually used for tangent space normal mapping. */
-	EVT_TANGENTS
+	EVT_TANGENTS,
+
+
+	EVT_STANDARD_COLORF
 };
 
 //! Array holding the built in vertex type names
@@ -35,6 +38,7 @@ const char* const sBuiltInVertexTypeNames[] =
 	"standard",
 	"2tcoords",
 	"tangents",
+	"standardcolorf",
 	0
 };
 
@@ -97,6 +101,69 @@ struct S3DVertex
 				Normal.getInterpolated(other.Normal, d),
 				Color.getInterpolated(other.Color, d),
 				TCoords.getInterpolated(other.TCoords, d));
+	}
+};
+
+//! standard vertex used by the Irrlicht engine.
+struct S3DVertexScolorf
+{
+	//! default constructor
+	S3DVertexScolorf() {}
+
+	//! constructor
+	S3DVertexScolorf(f32 x, f32 y, f32 z, f32 nx, f32 ny, f32 nz, SColorf c, f32 tu, f32 tv)
+		: Pos(x, y, z), Normal(nx, ny, nz), Color(c), TCoords(tu, tv) {}
+
+	//! constructor
+	S3DVertexScolorf(const core::vector3df& pos, const core::vector3df& normal,
+		SColorf color, const core::vector2d<f32>& tcoords)
+		: Pos(pos), Normal(normal), Color(color), TCoords(tcoords) {}
+
+	//! Position
+	core::vector3df Pos;
+	float posw;
+
+	//! Normal vector
+	core::vector3df Normal;
+
+	//! Color
+	SColorf Color;
+
+	//! Texture coordinates
+	core::vector2d<f32> TCoords;
+
+	bool operator==(const S3DVertexScolorf& other) const
+	{
+		return ((Pos == other.Pos) && (Normal == other.Normal) &&
+			(Color == other.Color) && (TCoords == other.TCoords));
+	}
+
+	bool operator!=(const S3DVertexScolorf& other) const
+	{
+		return ((Pos != other.Pos) || (Normal != other.Normal) ||
+			(Color != other.Color) || (TCoords != other.TCoords));
+	}
+
+	bool operator<(const S3DVertexScolorf& other) const
+	{
+		return ((Pos < other.Pos) ||
+			((Pos == other.Pos) && (Normal < other.Normal)) ||
+			((Pos == other.Pos) && (Normal == other.Normal) && (Color < other.Color)) ||
+			((Pos == other.Pos) && (Normal == other.Normal) && (Color == other.Color) && (TCoords < other.TCoords)));
+	}
+
+	E_VERTEX_TYPE getType() const
+	{
+		return EVT_STANDARD;
+	}
+
+	S3DVertexScolorf getInterpolated(const S3DVertexScolorf& other, f32 d)
+	{
+		d = core::clamp(d, 0.0f, 1.0f);
+		return S3DVertexScolorf(Pos.getInterpolated(other.Pos, d),
+			Normal.getInterpolated(other.Normal, d),
+			Color.getInterpolated(other.Color, d),
+			TCoords.getInterpolated(other.TCoords, d));
 	}
 };
 

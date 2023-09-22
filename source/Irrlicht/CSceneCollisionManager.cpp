@@ -77,7 +77,7 @@ namespace irr
 			const ISceneNodeList& children = root->getChildren();
 			const core::vector3df rayVector = ray.getVector().normalize();
 
-			ISceneNodeList::ConstIterator it = children.begin();
+			auto it = children.begin();
 			for (; it != children.end(); ++it)
 			{
 				std::shared_ptr<ISceneNode> current = *it;
@@ -278,7 +278,7 @@ namespace irr
 		{
 			const ISceneNodeList& children = root->getChildren();
 
-			ISceneNodeList::ConstIterator it = children.begin();
+			auto it = children.begin();
 			for (; it != children.end(); ++it)
 			{
 				std::shared_ptr<ISceneNode> current = *it;

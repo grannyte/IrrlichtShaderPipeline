@@ -26,6 +26,7 @@
 #include <map>
 #include <d3d11.h>
 #include <sal.h>
+#include <dxgi1_6.h>
 //#include <d3d11_1.h>
 //#include <d3d11_2.h>
 namespace irr
@@ -180,12 +181,22 @@ namespace irr
 
 			virtual void drawMeshBuffer(const scene::IMeshBuffer* mb) _IRR_OVERRIDE_;
 
+
+			//! Dispatch compute shader
+			/** \param groupCount Number of groups to dispatch
+			* \param Src Source buffer
+			* \param Dst Destination buffer
+			*/
+			virtual void dispatchComputeShader(const core::vector3d<u32>& groupCount, scene::IComputeBuffer* Src, scene::IComputeBuffer* Dst) override;
+
 			virtual void draw2DVertexPrimitiveList(const void* vertices, u32 vertexCount, const void* indices,
 				u32 primitiveCount, E_VERTEX_TYPE vType, scene::E_PRIMITIVE_TYPE pType, E_INDEX_TYPE iType) _IRR_OVERRIDE_;
 
 			virtual std::shared_ptr<video::IHardwareBuffer> createHardwareBuffer(scene::IIndexBuffer* indexBuffer) _IRR_OVERRIDE_;
 
 			virtual std::shared_ptr<video::IHardwareBuffer> createHardwareBuffer(scene::IVertexBuffer* vertexBuffer) _IRR_OVERRIDE_;
+
+			virtual std::shared_ptr<video::IHardwareBuffer> createHardwareBuffer(scene::IComputeBuffer* computeBuffer) _IRR_OVERRIDE_;
 
 			void removeAllHardwareBuffers();
 
@@ -269,6 +280,8 @@ namespace irr
 			//! initialises the Direct3D API
 			bool initDriver(HWND hwnd, bool pureSoftware);
 
+			bool BuildDriverInternal(HRESULT& hr, const HWND& hwnd);
+
 			//! \return Returns the name of the video driver. Example: In case of the DIRECT3D8
 			//! driver, it would return "Direct3D8.1".
 			virtual const wchar_t* getName() const;
@@ -343,19 +356,22 @@ namespace irr
 			//! Get a domain shader constant index.
 			virtual s32 getDomainShaderConstantID(const c8* name) _IRR_OVERRIDE_;
 
+			//! Get a compute shader constant index.
+			virtual s32 getComputeShaderConstantID(const c8* name) _IRR_OVERRIDE_;
+
 			//! Sets a vertex shader constant.
 			virtual void setVertexShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) _IRR_OVERRIDE_;
 
 			//! Sets a pixel shader constant.
 			virtual void setPixelShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) _IRR_OVERRIDE_;
 
-			//! Sets a vertex shader constant.
+			//! Sets a geometry shader constant.
 			virtual void setGeometryShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) _IRR_OVERRIDE_;
 
-			//! Sets a pixel shader constant.
+			//! Sets a hull shader constant.
 			virtual void setHullShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) _IRR_OVERRIDE_;
 
-			//! Sets a pixel shader constant.
+			//! Sets a Domain shader constant.
 			virtual void setDomainShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) _IRR_OVERRIDE_;
 
 			//! Sets a constant for the vertex shader based on a name.
@@ -372,6 +388,9 @@ namespace irr
 
 			//! Sets a constant for the domain shader based on a name.
 			virtual bool setDomainShaderConstant(s32 index, const f32* floats, int count) _IRR_OVERRIDE_;
+
+			//! Sets a constant for the compute shader based on a name.
+			virtual bool setComputeShaderConstant(s32 index, const f32* floats, int count) _IRR_OVERRIDE_;
 
 			//! Int interface for the above.
 			virtual bool setVertexShaderConstant(s32 index, const s32* ints, int count) _IRR_OVERRIDE_;
@@ -470,7 +489,7 @@ namespace irr
 			//! Check multisample quality levels
 			virtual u32 queryMultisampleLevels(ECOLOR_FORMAT format, u32 numSamples) const;
 
-		private:
+		protected:
 
 			// enumeration for rendering modes such as 2d and 3d for minizing the switching of renderStates.
 			enum E_RENDER_MODE
@@ -480,7 +499,8 @@ namespace irr
 				ERM_3D,			// 3d rendering mode
 				ERM_STENCIL_FILL, // stencil fill mode
 				ERM_SHADOW_VOLUME_ZFAIL, // stencil volume draw mode
-				ERM_SHADOW_VOLUME_ZPASS // stencil volume draw mode
+				ERM_SHADOW_VOLUME_ZPASS, // stencil volume draw mode
+				ERM_COMPUTE // compute shader mode
 			};
 			E_RENDER_MODE CurrentRenderMode;
 
@@ -502,7 +522,7 @@ namespace irr
 			IDXGISwapChain* SwapChain;
 			IDXGIAdapter* Adapter;
 			IDXGIOutput* Output;
-			IDXGIFactory* DXGIFactory;
+			IDXGIFactory6* DXGIFactory;
 
 			// D3D 11 Device objects
 			D3D_DRIVER_TYPE DriverType;
@@ -536,6 +556,9 @@ namespace irr
 			// Just one clip plane for now
 			core::array<core::plane3df> ClipPlanes;
 			bool ClipPlaneEnabled[3];
+
+			ID3D11Buffer* SSBObuffers[4] = {nullptr ,nullptr,nullptr,nullptr};
+			UINT SSBOoffset[4] = { 0,0,0,0 };
 
 			core::rect<s32>* SceneSourceRect;
 
@@ -573,8 +596,8 @@ namespace irr
 			DXGI_FORMAT DepthStencilFormat;		// Best format for depth stencil
 			SIrrlichtCreationParameters Params;
 
-			//std::map < E_HARDWARE_BUFFER_TYPE, std::map<irr::u32, 
-			std::queue< std::shared_ptr<CD3D11HardwareBuffer>> MeshBuffer2dQueue;
+			std::map < E_HARDWARE_BUFFER_TYPE, 
+			std::queue< std::shared_ptr<CD3D11HardwareBuffer>>> MeshBuffer2dQueues;
 
 			std::shared_ptr<CD3D11HardwareBuffer> GetTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, const void* initialData);
 
@@ -582,8 +605,8 @@ namespace irr
 
 
 			std::shared_ptr<CD3D11HardwareBuffer> CreateTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, const void* initialData);
-			//std::map < E_HARDWARE_BUFFER_TYPE, std::map<irr::u32, 
-			std::queue< std::shared_ptr<CD3D11HardwareBuffer>> MeshBuffer2dBack;
+			std::map < E_HARDWARE_BUFFER_TYPE,
+			std::queue< std::shared_ptr<CD3D11HardwareBuffer>>> MeshBuffer2dBacks;
 
 			void revertTempHWBuffers();
 
@@ -611,6 +634,14 @@ namespace irr
 				IShaderConstantSetCallBack* callback,
 				E_MATERIAL_TYPE baseMaterial, IVertexDescriptor* vertexTypeOut, s32 userData, E_GPU_SHADING_LANGUAGE shadingLang) _IRR_OVERRIDE_;
 
+
+
+			virtual s32 addComputeShader(const c8* computeShaderProgram,
+				const c8* computeShaderEntryPointName = "main",
+				E_COMPUTE_SHADER_TYPE csCompileTarget = ECST_CS_5_0,
+				IShaderConstantSetCallBack* callback = 0,
+				s32 userData = 0) override;
+
 			virtual s32 addShaderMaterial(const c8* vertexShaderProgram, const c8* pixelShaderProgram, IShaderConstantSetCallBack* callback, E_MATERIAL_TYPE baseMaterial, s32 userData) _IRR_OVERRIDE_;
 
 			void createMaterialRenderers();
@@ -621,6 +652,8 @@ namespace irr
 
 			//! sets the needed renderstates
 			bool setRenderStates3DMode(CD3D11VertexDescriptor* vType);
+
+			bool setComputeState();
 
 			//! sets the needed renderstates
 			void setRenderStates2DMode(bool alpha, bool texture, bool alphaChannel);

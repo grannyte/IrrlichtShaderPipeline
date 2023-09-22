@@ -70,6 +70,8 @@ public:
 	a vertex type other than EVT_TANGENTS. */
 	virtual bool OnRender(IMaterialRendererServices* service, IVertexDescriptor* vtxtype) { return true; }
 
+	virtual bool OnCompute(IMaterialRendererServices* service) { return true; }
+
 	//! Called by the IVideoDriver to unset this material.
 	/** Called during the IVideoDriver::setMaterial() call before the new
 	material will get the OnSetMaterial() call. */

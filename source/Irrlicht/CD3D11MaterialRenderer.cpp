@@ -123,6 +123,49 @@ namespace irr
 
 			outMaterialTypeNr = driver->addMaterialRenderer(this);
 		}
+		//! Public constructor
+		CD3D11MaterialRenderer::CD3D11MaterialRenderer(ID3D11Device* device, video::IVideoDriver* driver, CD3D11CallBridge* bridgeCalls, s32& outMaterialTypeNr,
+			const c8* computeShaderProgram, const c8* computeShaderEntryPointName, E_COMPUTE_SHADER_TYPE csCompileTarget,
+			scene::E_PRIMITIVE_TYPE inType, scene::E_PRIMITIVE_TYPE outType, u32 verticesOut, CD3D11VertexDescriptor* vertexTypeOut,				// Only for DirectX 11
+			IShaderConstantSetCallBack* callback, IMaterialRenderer* baseRenderer, s32 userData, io::IFileSystem* fileSystem, E_GPU_SHADING_LANGUAGE ShadingLang)
+			: Driver(driver), Device(device), Context(NULL), BridgeCalls(bridgeCalls),
+			BaseRenderer(baseRenderer), CallBack(callback), UserData(userData),
+			includer(NULL), buffer(NULL), StreamOutputFormat(vertexTypeOut), Lang(ShadingLang)
+		{
+#ifdef _DEBUG
+			setDebugName("CD3D11MaterialRenderer");
+#endif
+
+			outMaterialTypeNr = -1;
+
+			for (u32 i = 0; i < EST_COUNT; ++i)
+				shaders[i] = NULL;
+
+			if (Device)
+			{
+				Device->AddRef();
+				Device->GetImmediateContext(&Context);
+			}
+
+			if (BaseRenderer)
+				BaseRenderer->grab();
+
+			if (CallBack)
+				CallBack->grab();
+
+			if (fileSystem)
+				includer = new CShaderInclude(fileSystem);
+
+			if (!init(NULL, NULL, (E_VERTEX_SHADER_TYPE)0,
+				NULL, NULL, (E_PIXEL_SHADER_TYPE)0,
+				NULL, NULL, (E_GEOMETRY_SHADER_TYPE)0,
+				NULL, NULL, (E_HULL_SHADER_TYPE)0,  // hull shader
+				NULL, NULL, (E_DOMAIN_SHADER_TYPE)0,  // domain shader
+				computeShaderProgram, computeShaderEntryPointName, (E_COMPUTE_SHADER_TYPE)csCompileTarget)) // compute shader
+				return;
+
+			outMaterialTypeNr = driver->addMaterialRenderer(this);
+		}
 
 		//! Public constructor
 		CD3D11MaterialRenderer::CD3D11MaterialRenderer(ID3D11Device* device, video::IVideoDriver* driver, CD3D11CallBridge* bridgeCalls, s32& outMaterialTypeNr,
@@ -305,15 +348,11 @@ namespace irr
 			{
 				irr::core::array<u32> strides;
 				irr::u32 stridecount = 0;
-				for (int i = 0; i < 3; ++i)
+				for (; stridecount < 3; ++stridecount)
 				{
-					strides.push_back(StreamOutputFormat->getVertexSize(i));
-					if (strides[i])
-					{
-						stridecount = i + 1;
-					}
+					strides.push_back(StreamOutputFormat->getVertexSize(stridecount));
 				}
-				flags |= D3DCOMPILE_ENABLE_BACKWARDS_COMPATIBILITY;
+				//flags |= D3DCOMPILE_ENABLE_BACKWARDS_COMPATIBILITY;
 				hr = Device->CreateGeometryShaderWithStreamOutput(shaderBuffer->GetBufferPointer(), shaderBuffer->GetBufferSize(), &StreamOutputFormat->getOutputLayoutDescription()[0], StreamOutputFormat->getOutputLayoutDescription().size(), &strides[0], stridecount, D3D11_SO_NO_RASTERIZED_STREAM, 0, (ID3D11GeometryShader**)(&shaders[type]->shader));
 				break;
 			}
@@ -583,6 +622,26 @@ namespace irr
 
 			BridgeCalls->setHullShader(shaders[EST_HULL_SHADER]);
 			BridgeCalls->setDomainShader(shaders[EST_DOMAIN_SHADER]);
+			BridgeCalls->setComputeShader(shaders[EST_COMPUTE_SHADER]);
+
+			return true;
+		}
+
+		bool CD3D11MaterialRenderer::OnCompute(IMaterialRendererServices* service)
+		{
+			if (!Context)
+				return false;
+
+			//	if(BaseRenderer && (vtxtype == EVT_STANDARD || vtxtype == EVT_2TCOORDS || vtxtype == EVT_TANGENTS))
+			//		BaseRenderer->OnRender(service, vtxtype);
+
+			if (CallBack)
+				CallBack->OnSetConstants(service, UserData);
+			if (BaseRenderer)
+			{
+				if (shaders[EST_COMPUTE_SHADER])
+					shaders[EST_COMPUTE_SHADER]->UnMapAll(Context);
+			}
 			BridgeCalls->setComputeShader(shaders[EST_COMPUTE_SHADER]);
 
 			return true;

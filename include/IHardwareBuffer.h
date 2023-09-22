@@ -31,7 +31,7 @@ enum E_HARDWARE_BUFFER_TYPE
 	//! Change the constants mapping
 	EHBT_CONSTANTS,
 	//! Change the system mapping
-	EHBT_SYSTEM
+	EHBT_SYSTEM,
 };
 
 enum E_HARDWARE_BUFFER_ACCESS
@@ -70,6 +70,16 @@ public:
 
 	// Update hardware buffer.
 	virtual bool update(const scene::E_HARDWARE_MAPPING mapping, const u32 size, const void* data) = 0;
+
+	virtual void* lock(bool readOnly = false) =0;
+
+	virtual void unlock() = 0;
+
+	virtual	irr::core::vector2di getMappedDimension()
+	{
+		return mappedDimension;
+
+	}
 
 	// Inform if update is required.
 	inline bool isRequiredUpdate() const
@@ -120,6 +130,10 @@ protected:
 	u32 Stride;
 	E_HARDWARE_BUFFER_TYPE Type;
 	E_DRIVER_TYPE DriverType;
+
+
+
+	irr::core::vector2di mappedDimension;
 
 	bool RequiredUpdate;
 };

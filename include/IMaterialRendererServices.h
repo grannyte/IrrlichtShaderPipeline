@@ -77,16 +77,20 @@ namespace irr
 			\param constantAmount: Amount of registers to be set. One register consists of 4 floats. */
 			virtual void setVertexShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) = 0;
 
+			//! Sets a pixel shader constant.
 			virtual void setPixelShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) = 0;
 
-			//! Sets a vertex shader constant.
+			//! Sets a geometry shader constant.
 			virtual void setGeometryShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) {};
 
-			//! Sets a pixel shader constant.
+			//! Sets a hull shader constant.
 			virtual void setHullShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) {};
 
-			//! Sets a pixel shader constant.
+			//! Sets a domain shader constant.
 			virtual void setDomainShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) {};
+
+			//! Sets a compute shader constant.
+			virtual void setComputeShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) {};
 
 			//! Sets a constant for the geometry shader based on a name.
 			virtual bool setGeometryShaderConstant(s32 index, const f32* floats, int count) { return false; };
@@ -96,6 +100,9 @@ namespace irr
 
 			//! Sets a constant for the domain shader based on a name.
 			virtual bool setDomainShaderConstant(s32 index, const f32* floats, int count) { return false; };
+
+			//! Sets a constant for the compute shader based on a name.
+			virtual bool setComputeShaderConstant(s32 index, const f32* floats, int count) { return false; };
 
 			//! Return an index constant for the pixel shader based on a name.
 			virtual s32 getPixelShaderConstantID(const c8* name) = 0;
@@ -108,6 +115,9 @@ namespace irr
 
 			//! Get a domain shader constant index.
 			virtual s32 getDomainShaderConstantID(const c8* name) { return 0; };
+
+			//! Get a compute shader constant index.
+			virtual s32 getComputeShaderConstantID(const c8* name) { return 0; };
 
 			//! Sets a constant for the pixel shader based on a name.
 			/** This can be used if you used a high level shader language like GLSL
@@ -164,6 +174,10 @@ namespace irr
 			_IRR_DEPRECATED_ bool setDomainShaderConstant(const c8* name, const f32* floats, int count)
 			{
 				return setDomainShaderConstant(getDomainShaderConstantID(name), floats, count);
+			}
+			_IRR_DEPRECATED_ bool setComputeShaderConstant(const c8* name, const f32* floats, int count)
+			{
+				return setComputeShaderConstant(getComputeShaderConstantID(name), floats, count);
 			}
 			//! Get pointer to the IVideoDriver interface
 			/** \return Pointer to the IVideoDriver interface */

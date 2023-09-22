@@ -243,6 +243,10 @@ namespace irr
 				scene::E_PRIMITIVE_TYPE inType, scene::E_PRIMITIVE_TYPE outType, u32 verticesOut, CD3D11VertexDescriptor* vertexTypeOut,				// Only for DirectX 11
 				IShaderConstantSetCallBack* callback, IMaterialRenderer* baseRenderer, s32 userData, io::IFileSystem* fileSystem, E_GPU_SHADING_LANGUAGE ShadingLang);
 
+			CD3D11MaterialRenderer::CD3D11MaterialRenderer(ID3D11Device* device, video::IVideoDriver* driver, CD3D11CallBridge* bridgeCalls, s32& outMaterialTypeNr,
+				const c8* computeShaderProgram, const c8* computeShaderEntryPointName, E_COMPUTE_SHADER_TYPE csCompileTarget,
+				scene::E_PRIMITIVE_TYPE inType, scene::E_PRIMITIVE_TYPE outType, u32 verticesOut, CD3D11VertexDescriptor* vertexTypeOut,				// Only for DirectX 11
+				IShaderConstantSetCallBack* callback, IMaterialRenderer* baseRenderer, s32 userData, io::IFileSystem* fileSystem, E_GPU_SHADING_LANGUAGE ShadingLang);
 			//! Destructor
 			virtual ~CD3D11MaterialRenderer();
 
@@ -267,6 +271,10 @@ namespace irr
 			virtual bool setConstantBuffer(s32 id, const void* data, E_SHADER_TYPE type);
 
 			virtual bool OnRender(IMaterialRendererServices* service, IVertexDescriptor* vtxtype)_IRR_OVERRIDE_;
+
+			virtual bool OnCompute(IMaterialRendererServices* service) _IRR_OVERRIDE_;
+
+
 
 			virtual void OnSetMaterial(const video::SMaterial& material, const video::SMaterial& lastMaterial, bool resetAllRenderstates, video::IMaterialRendererServices* services)_IRR_OVERRIDE_;
 

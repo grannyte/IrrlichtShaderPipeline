@@ -81,9 +81,8 @@ namespace irr
 
 		//! constructor
 		CNullDriver::CNullDriver(io::IFileSystem* io, const core::dimension2d<u32>& screenSize)
-			: FileSystem(io), MeshManipulator(0), ViewPort(0, 0, 0, 0), ScreenSize(screenSize),
-			PrimitivesDrawn(0), MinVertexCountForVBO(500), TextureCreationFlags(0),
-			OverrideMaterial2DEnabled(false), AllowZWriteOnTransparent(false)
+			: FileSystem(io), MeshManipulator(0), ScreenSize(screenSize),
+			PrimitivesDrawn(0), MinVertexCountForVBO(500), TextureCreationFlags(0), AllowZWriteOnTransparent(false)
 		{
 #ifdef _DEBUG
 			setDebugName("CNullDriver");
@@ -258,6 +257,13 @@ namespace irr
 			VertexDescriptor[2]->addAttribute("inTexCoord0", 2, EVAS_TEXCOORD0, EVAT_FLOAT, 0);
 			VertexDescriptor[2]->addAttribute("inTangent", 3, EVAS_TANGENT, EVAT_FLOAT, 0);
 			VertexDescriptor[2]->addAttribute("inBinormal", 3, EVAS_BINORMAL, EVAT_FLOAT, 0);
+
+
+			addVertexDescriptor("standardcolorf");
+			VertexDescriptor[3]->addAttribute("inPosition", 4, EVAS_POSITION, EVAT_FLOAT, 0);
+			VertexDescriptor[3]->addAttribute("inNormal", 3, EVAS_NORMAL, EVAT_FLOAT, 0);
+			VertexDescriptor[3]->addAttribute("inColor", 4, EVAS_COLOR, EVAT_FLOAT, 0);
+			VertexDescriptor[3]->addAttribute("inTexCoord0", 2, EVAS_TEXCOORD0, EVAT_FLOAT, 0);
 
 			return true;
 		}
@@ -1611,6 +1617,11 @@ namespace irr
 			rangeFog = RangeFog;
 		}
 
+
+		void CNullDriver::dispatchComputeShader(const core::vector3d<u32>& groupCount, scene::IComputeBuffer* Src, scene::IComputeBuffer* Dst)
+		{
+		}
+
 		//! Draws a mesh buffer
 		void CNullDriver::drawMeshBuffer(const scene::IMeshBuffer* mb)
 		{
@@ -1778,6 +1789,13 @@ namespace irr
 		{
 			return 0;
 		}
+
+		std::shared_ptr<IHardwareBuffer> CNullDriver::createHardwareBuffer(scene::IComputeBuffer* computeBuffer)
+		{
+			return 0;
+		}
+
+
 
 		bool CNullDriver::isHardwareBufferRecommend(const scene::IMeshBuffer* mb)
 		{
@@ -2483,6 +2501,50 @@ namespace irr
 
 			return result;
 		}
+
+			s32 CNullDriver::addComputeShader(const c8* computeShaderProgram,
+				const c8* computeShaderEntryPointName,
+				E_COMPUTE_SHADER_TYPE csCompileTarget,
+				IShaderConstantSetCallBack* callback,
+				s32 userData) {
+				return -1;
+			};
+			s32 CNullDriver::addComputeShaderFromFile(const io::path& computeShaderProgramFileName,
+				const c8* computeShaderEntryPointName,
+				E_COMPUTE_SHADER_TYPE csCompileTarget,
+				IShaderConstantSetCallBack* callback ,
+				s32 userData)
+			{
+				c8* cs = 0;
+
+				if (computeShaderProgramFileName.size())
+				{
+					io::IReadFile* csfile = FileSystem->createAndOpenFile(computeShaderProgramFileName);
+					if (!csfile)
+					{
+						os::Printer::log("Could not open compute shader program file",
+														computeShaderProgramFileName, ELL_WARNING);
+					}
+					else
+					{
+						const long size = csfile->getSize();
+						if (size)
+						{
+							cs = new c8[size + 2];
+							csfile->read(cs, size);
+							cs[size] = 0;
+							cs[size + 1] = EOF;
+						}
+						csfile->drop();
+					}
+				}
+
+				s32 result = addComputeShader(
+					cs, computeShaderEntryPointName, csCompileTarget,
+					callback, userData);
+
+				return result;
+			}
 
 		//! Like IGPUProgrammingServices::addShaderMaterial() (look there for a detailed description),
 		//! but tries to load the programs from files.

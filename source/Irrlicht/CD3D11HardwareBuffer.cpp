@@ -33,15 +33,14 @@ namespace irr
 		CD3D11HardwareBuffer::CD3D11HardwareBuffer(CD3D11Driver* driver, E_HARDWARE_BUFFER_TYPE type,
 			scene::E_HARDWARE_MAPPING mapping, u32 size, u32 flags, const void* initialData)
 			: IHardwareBuffer(mapping, flags, size, type, driver->getDriverType()),
-			Device(NULL), Context(NULL), Buffer(NULL), UAView(NULL), SRView(NULL), Driver(driver),
-			TempStagingBuffer(NULL), UseTempStagingBuffer(false), LastMapDirection((D3D11_MAP)0),
+			Device(driver->getExposedVideoData().D3D11.D3DDev11), Context(NULL), Buffer(NULL), UAView(NULL), SRView(NULL), Driver(driver),
+			LastMapDirection((D3D11_MAP)0),
 			 LinkedBuffer(0)
 		{
 #ifdef _DEBUG
 			//setDebugName("CD3D11HardwareBuffer");
 #endif
 
-			Device = driver->getExposedVideoData().D3D11.D3DDev11;
 			if (Device)
 			{
 				Device->AddRef();
@@ -58,15 +57,13 @@ namespace irr
 		}
 
 		CD3D11HardwareBuffer::CD3D11HardwareBuffer(scene::IIndexBuffer* indexBuffer, CD3D11Driver* driver) :
-			IHardwareBuffer(scene::EHM_NEVER, 0, 0, EHBT_INDEX, EDT_DIRECT3D11), Device(NULL), Context(NULL),
-			Buffer(NULL), UAView(NULL), SRView(NULL), Driver(driver), TempStagingBuffer(NULL), UseTempStagingBuffer(false),
+			IHardwareBuffer(scene::EHM_NEVER, 0, 0, EHBT_INDEX, EDT_DIRECT3D11), Device(driver->getExposedVideoData().D3D11.D3DDev11), Context(NULL),
+			Buffer(NULL), UAView(NULL), SRView(NULL), Driver(driver),
 			LastMapDirection((D3D11_MAP)0),  LinkedBuffer(0)
 		{
 #ifdef _DEBUG
 			//setDebugName("CD3D11HardwareBuffer");
 #endif
-
-			Device = Driver->getExposedVideoData().D3D11.D3DDev11;
 
 			if (Device)
 			{
@@ -88,15 +85,13 @@ namespace irr
 		}
 
 		CD3D11HardwareBuffer::CD3D11HardwareBuffer(scene::IVertexBuffer* vertexBuffer, CD3D11Driver* driver) :
-			IHardwareBuffer(scene::EHM_NEVER, 0, 0, ConvertBufferType(vertexBuffer->getBufferType()), EDT_DIRECT3D11), Device(NULL), Context(NULL),
-			Buffer(NULL), UAView(NULL), SRView(NULL), Driver(driver), TempStagingBuffer(NULL), UseTempStagingBuffer(false),
+			IHardwareBuffer(scene::EHM_NEVER, 0, 0, ConvertBufferType(vertexBuffer->getBufferType()), EDT_DIRECT3D11), Device(driver->getExposedVideoData().D3D11.D3DDev11), Context(NULL),
+			Buffer(NULL), UAView(NULL), SRView(NULL), Driver(driver), 
 			LastMapDirection((D3D11_MAP)0),  LinkedBuffer(0)
 		{
 #ifdef _DEBUG
 			//setDebugName("CD3D11HardwareBuffer");
 #endif
-
-			Device = Driver->getExposedVideoData().D3D11.D3DDev11;
 
 			if (Device)
 			{
@@ -109,14 +104,45 @@ namespace irr
 				Mapping = vertexBuffer->getHardwareMappingHint();
 				Size = vertexBuffer->getVertexSize() * vertexBuffer->getVertexCount();
 				Stride = vertexBuffer->getVertexSize();
-				LinkedBuffer = vertexBuffer;
 				createInternalBuffer(vertexBuffer->getVertices());
 
 				RequiredUpdate = false;
 
+				LinkedBuffer = vertexBuffer;
+
 			}
 		}
 
+		CD3D11HardwareBuffer::CD3D11HardwareBuffer(scene::IComputeBuffer* computeBuffer, CD3D11Driver* driver) :
+			IHardwareBuffer(scene::EHM_NEVER, 0, 0, EHBT_COMPUTE, EDT_DIRECT3D11), Device(NULL), Context(NULL),
+			Buffer(NULL), UAView(NULL), SRView(NULL), Driver(driver),
+			LastMapDirection((D3D11_MAP)0),  LinkedBuffer(0)
+		{
+			#ifdef _DEBUG
+			//setDebugName("CD3D11HardwareBuffer");
+			#endif
+
+			if (Device)
+			{
+				Device->AddRef();
+				Device->GetImmediateContext(&Context);
+			}
+
+			if (computeBuffer)
+			{
+				Mapping = computeBuffer->getHardwareMappingHint();
+				Size = computeBuffer->getBufferSize();
+				Stride = computeBuffer->getStructureStride();
+				createInternalBuffer(computeBuffer->getBufferPointer());
+
+				RequiredUpdate = false;
+
+				LinkedBuffer = computeBuffer;
+
+			}
+		
+
+		}
 		CD3D11HardwareBuffer::~CD3D11HardwareBuffer()
 		{
 			if (LinkedBuffer)
@@ -241,13 +267,22 @@ namespace irr
 			else
 				LastMapDirection = (D3D11_MAP)(D3D11_MAP_WRITE | D3D11_MAP_READ);
 
-			// Otherwise, map this buffer
-			D3D11_MAPPED_SUBRESOURCE mappedData;
-			HRESULT hr = Context->Map(Buffer, 0, LastMapDirection, 0, &mappedData);
-			if (FAILED(hr))
-				return 0;
-
-			return mappedData.pData;
+			if (Mapping == scene::EHM_STAGING) {
+				// Otherwise, map this buffer
+				D3D11_MAPPED_SUBRESOURCE mappedData;
+				HRESULT hr = Context->Map(Buffer, 0, LastMapDirection, 0, &mappedData);
+				if (FAILED(hr))
+					return 0;
+				mappedDimension.X = mappedData.RowPitch;
+				mappedDimension.Y = mappedData.DepthPitch;
+				return mappedData.pData;
+			}
+			else
+			{
+				TempStagingBuffer = std::make_shared<CD3D11HardwareBuffer>(Driver, EHBT_SYSTEM, scene::EHM_STAGING, Size, 0);
+				TempStagingBuffer->copyFromBuffer(shared_from_this(), 0, 0, Size);
+				return TempStagingBuffer->lock(readOnly);
+			}
 		}
 
 		//! Unlock function. Must be called after a lock() to the buffer.
@@ -257,14 +292,14 @@ namespace irr
 				return;
 
 			// If using staging, return its pointer
-			if (UseTempStagingBuffer)
+			if (TempStagingBuffer)
 			{
 				TempStagingBuffer->unlock();
 
 				// If write, copy staging to this
 				if (LastMapDirection & D3D11_MAP_WRITE)
-					this->copyFromBuffer(TempStagingBuffer, 0, 0, Size);
-
+					copyFromBuffer(TempStagingBuffer, 0, 0, Size);
+				TempStagingBuffer = NULL;
 				return;
 			}
 
@@ -330,7 +365,7 @@ namespace irr
 		}
 
 		//! Copy data from another buffer
-		void CD3D11HardwareBuffer::copyFromBuffer(IHardwareBuffer* buffer, u32 srcOffset, u32 destOffset, u32 length)
+		void CD3D11HardwareBuffer::copyFromBuffer(std::shared_ptr<IHardwareBuffer> buffer, u32 srcOffset, u32 destOffset, u32 length)
 		{
 			if (!Buffer)
 				return;
@@ -341,7 +376,7 @@ namespace irr
 				return;
 			}
 
-			CD3D11HardwareBuffer* srcBuffer = static_cast<CD3D11HardwareBuffer*>(buffer);
+			auto srcBuffer = std::static_pointer_cast<CD3D11HardwareBuffer>(buffer);
 
 			// try fast copy if possible
 			if (srcOffset == 0 && destOffset == 0 && length == Size
@@ -389,9 +424,6 @@ namespace irr
 			switch (Mapping)
 			{
 			case scene::EHM_NEVER:
-				desc.Usage = D3D11_USAGE_DYNAMIC;
-				desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-				break;
 			case scene::EHM_STREAM:
 				desc.Usage = D3D11_USAGE_DYNAMIC;
 				desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
@@ -402,6 +434,10 @@ namespace irr
 				break;
 			case scene::EHM_STATIC:
 				desc.Usage = D3D11_USAGE_IMMUTABLE;
+				break;
+			case scene::EHM_STAGING:
+				desc.Usage = D3D11_USAGE_STAGING;
+				desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE | D3D11_CPU_ACCESS_READ;
 				break;
 			default:
 				desc.Usage = D3D11_USAGE_DEFAULT;
@@ -421,7 +457,7 @@ namespace irr
 				desc.BindFlags = D3D11_BIND_VERTEX_BUFFER | D3D11_BIND_STREAM_OUTPUT;
 				break;
 			case EHBT_COMPUTE:
-				desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+				desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
 				break;
 			case EHBT_SHADER_RESOURCE:
 				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
@@ -452,17 +488,15 @@ namespace irr
 			//std::cout << dump << std::endl;
 			// Create buffer
 			auto plinkedBuffer = LinkedBuffer;
-			auto pGetVertices = LinkedBuffer ? ((scene::IVertexBuffer*)LinkedBuffer)->getVertices() : 0;
-			auto pgetvtx0 = LinkedBuffer ? ((scene::IVertexBuffer*)LinkedBuffer)->getVertex(0) : 0;
+			auto pGetVertices = LinkedBuffer && LinkedBuffer->getBufferType() == irr::scene::EBT_VERTEX ? ((scene::IVertexBuffer*)LinkedBuffer)->getVertices() : LinkedBuffer && LinkedBuffer->getBufferType() == irr::scene::EBT_INDEX ? ((scene::IIndexBuffer*)LinkedBuffer)->getIndices():0;
 			auto pInitialData = initialData;
 			auto pdatapsysmem = data.pSysMem;
 
-			hr = Device->CreateBuffer(&desc, &data, &Buffer);
+			hr = Device->CreateBuffer(&desc, initialData != nullptr? &data:0, &Buffer);
 			if (FAILED(hr))
 			{
 				printf("\nvertexBuffer : %p", plinkedBuffer);
 				printf("vertexBuffer->getVertices() : %p", pGetVertices);
-				printf("vertexBuffer->getVertex(0) : %p", pgetvtx0);
 
 				printf("initialData : %p", pInitialData);
 				printf("data.pSysMem : %p", pdatapsysmem);
@@ -476,23 +510,7 @@ namespace irr
 			switch (Type)
 			{
 				// If buffer is of type shader resource, create view
-			case EHBT_SHADER_RESOURCE:
-			{
-				D3D11_SHADER_RESOURCE_VIEW_DESC SRVDesc;
-				SRVDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-				SRVDesc.Format = DXGI_FORMAT_R32_FLOAT;
-				SRVDesc.Buffer.ElementOffset = 0;
-				SRVDesc.Buffer.ElementWidth = desc.ByteWidth / 4;
 
-				hr = Device->CreateShaderResourceView(Buffer, &SRVDesc, &SRView);
-				if (FAILED(hr))
-				{
-					os::Printer::log("Error creating shader resource view for buffer", ELL_ERROR);
-					return false;
-				}
-
-				return true;
-			}
 			// If buffer if of type compute, create view
 			case EHBT_COMPUTE:
 			{
@@ -516,6 +534,22 @@ namespace irr
 				if (FAILED(hr))
 				{
 					os::Printer::log("Error creating unordered access view for buffer", ELL_ERROR);
+					return false;
+				}
+
+			}
+			case EHBT_SHADER_RESOURCE:
+			{
+				D3D11_SHADER_RESOURCE_VIEW_DESC SRVDesc;
+				SRVDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+				SRVDesc.Format = DXGI_FORMAT_R32_FLOAT;
+				SRVDesc.Buffer.ElementOffset = 0;
+				SRVDesc.Buffer.ElementWidth = desc.ByteWidth / 4;
+
+				hr = Device->CreateShaderResourceView(Buffer, &SRVDesc, &SRView);
+				if (FAILED(hr))
+				{
+					os::Printer::log("Error creating shader resource view for buffer", ELL_ERROR);
 					return false;
 				}
 

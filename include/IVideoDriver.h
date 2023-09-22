@@ -21,6 +21,7 @@
 #include "SExposedVideoData.h"
 
 #include "IHardwareBuffer.h"
+#include "IComputebuffer.h"
 
 namespace irr
 {
@@ -576,6 +577,8 @@ namespace irr
 
 			virtual std::shared_ptr<IHardwareBuffer> createHardwareBuffer(scene::IVertexBuffer* vertexBuffer) = 0;
 
+			virtual std::shared_ptr<IHardwareBuffer> createHardwareBuffer(scene::IComputeBuffer* computeBuffer) = 0;
+
 			//! Create occlusion query.
 			/** Use node for identification and mesh for occlusion test. */
 			virtual void addOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node,
@@ -1039,6 +1042,14 @@ namespace irr
 			//! Draws a mesh buffer
 			/** \param mb Buffer to draw */
 			virtual void drawMeshBuffer(const scene::IMeshBuffer* mb) = 0;
+
+			//! Dispatch compute shader
+			/** \param groupCount Number of groups to dispatch
+			* \param Src Source buffer
+			* \param Dst Destination buffer
+			*/
+			virtual void dispatchComputeShader(const core::vector3d<u32>& groupCount,scene::IComputeBuffer* Src, scene::IComputeBuffer* Dst ) = 0; 
+			
 
 			//! Draws normals of a mesh buffer
 			/** \param mb Buffer to draw the normals of

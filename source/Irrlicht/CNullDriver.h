@@ -21,6 +21,7 @@
 #include "S3DVertex.h"
 #include "SLight.h"
 #include "SExposedVideoData.h"
+#include "CNullDriverCommon.h"
 
 #ifdef _MSC_VER
 #pragma warning( disable: 4996)
@@ -38,7 +39,7 @@ namespace irr
 		class IImageLoader;
 		class IImageWriter;
 
-		class CNullDriver : public IVideoDriver, public IGPUProgrammingServices
+		class CNullDriver : public CNullDriverCommon
 		{
 		public:
 
@@ -382,6 +383,9 @@ namespace irr
 			//! Draws a mesh buffer with multiple instances
 			virtual void drawInstancedMeshBuffer(const scene::IMeshBuffer* mb) {};
 
+			//! Dispatches a compute shader
+			virtual void dispatchComputeShader(const core::vector3d<u32>& groupCount, scene::IComputeBuffer* Src, scene::IComputeBuffer* Dst) override;
+
 			//! Draws the normals of a mesh buffer
 			virtual void drawMeshBufferNormals(const scene::IMeshBuffer* mb, f32 length = 10.f,
 				SColor color = 0xffffffff) _IRR_OVERRIDE_;
@@ -397,6 +401,8 @@ namespace irr
 			virtual std::shared_ptr<IHardwareBuffer> createHardwareBuffer(scene::IIndexBuffer* indexBuffer) _IRR_OVERRIDE_;
 
 			virtual std::shared_ptr<IHardwareBuffer> createHardwareBuffer(scene::IVertexBuffer* vertexBuffer) _IRR_OVERRIDE_;
+
+			virtual std::shared_ptr<IHardwareBuffer> createHardwareBuffer(scene::IComputeBuffer* computeBuffer) _IRR_OVERRIDE_;
 
 
 			//! Draw hardware buffer with instancing (only some drivers can
@@ -631,8 +637,16 @@ namespace irr
 				s32 userData = 0, E_GPU_SHADING_LANGUAGE shadingLang = EGSL_DEFAULT) _IRR_OVERRIDE_;
 
 
-
-
+			virtual s32 addComputeShader(const c8* computeShaderProgram,
+				const c8* computeShaderEntryPointName = "main",
+				E_COMPUTE_SHADER_TYPE csCompileTarget = ECST_CS_5_0,
+				IShaderConstantSetCallBack* callback = 0,
+				s32 userData = 0);
+			virtual s32 addComputeShaderFromFile(const io::path& computeShaderProgramFileName,
+				const c8* computeShaderEntryPointName = "main",
+				E_COMPUTE_SHADER_TYPE csCompileTarget = ECST_CS_5_0,
+				IShaderConstantSetCallBack* callback = 0,
+				s32 userData = 0);
 			//! Returns a pointer to the mesh manipulator.
 			virtual scene::IMeshManipulator* getMeshManipulator() _IRR_OVERRIDE_;
 
@@ -860,7 +874,6 @@ namespace irr
 			//! mesh manipulator
 			scene::IMeshManipulator* MeshManipulator;
 
-			core::rect<s32> ViewPort;
 			core::dimension2d<u32> ScreenSize;
 			core::matrix4 TransformationMatrix;
 
@@ -871,22 +884,10 @@ namespace irr
 
 			u32 TextureCreationFlags;
 
-			f32 FogStart;
-			f32 FogEnd;
-			f32 FogDensity;
-			SColor FogColor;
 			SExposedVideoData ExposedData;
 
 			io::IAttributes* DriverAttributes;
 
-			SOverrideMaterial OverrideMaterial;
-			SMaterial OverrideMaterial2D;
-			SMaterial InitMaterial2D;
-			bool OverrideMaterial2DEnabled;
-
-			E_FOG_TYPE FogType;
-			bool PixelFog;
-			bool RangeFog;
 			bool AllowZWriteOnTransparent;
 
 			irr::core::array<CVertexDescriptor*> VertexDescriptor;

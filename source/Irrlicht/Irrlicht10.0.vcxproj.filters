@@ -1370,8 +1370,20 @@
     <ClInclude Include="DDSTextureLoader.h">
       <Filter>Irrlicht\video\Direct3D11</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\include\IBuffer.h">
+      <Filter>include\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\include\IComputebuffer.h">
+      <Filter>include\scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\include\ComputeBuffer.h">
+      <Filter>include\scene</Filter>
+    </ClInclude>
     <ClInclude Include="CCommandBufferDriver.h">
-      <Filter>Irrlicht\video</Filter>
+      <Filter>Irrlicht\video\Null</Filter>
+    </ClInclude>
+    <ClInclude Include="CNullDriverCommon.h">
+      <Filter>Irrlicht\video\Null</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -2363,7 +2375,7 @@
       <Filter>Irrlicht\video\Direct3D11</Filter>
     </ClCompile>
     <ClCompile Include="CCommandBufferDriver.cpp">
-      <Filter>Irrlicht\video</Filter>
+      <Filter>Irrlicht\video\Null</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

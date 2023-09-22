@@ -16,14 +16,14 @@ namespace scene
 	class CVertexBuffer : public IVertexBuffer
 	{
 	public:
-		CVertexBuffer() : HardwareMappingHint(EHM_NEVER), ChangedID(1)
+		CVertexBuffer() : IVertexBuffer()
 		{
 #ifdef _DEBUG
 			setDebugName("CVertexBuffer");
 #endif
 		}
 
-		CVertexBuffer(const CVertexBuffer& vertexBuffer) : HardwareMappingHint(EHM_NEVER), ChangedID(1)
+		CVertexBuffer(const CVertexBuffer& vertexBuffer) : IVertexBuffer()
 		{
 			HardwareMappingHint = vertexBuffer.HardwareMappingHint;
 
@@ -87,19 +87,6 @@ namespace scene
 			}
 		}
 
-		virtual E_HARDWARE_MAPPING getHardwareMappingHint() const
-		{
-			return HardwareMappingHint;
-		}
-
-		virtual void setHardwareMappingHint(E_HARDWARE_MAPPING hardwareMappingHint)
-		{
-			if (HardwareMappingHint != hardwareMappingHint)
-				setDirty();
-
-			HardwareMappingHint = hardwareMappingHint;
-		}
-
 		virtual void addVertex(const T& vertex)
 		{
 			Vertices.push_back(vertex);
@@ -143,26 +130,23 @@ namespace scene
 			}
 		}
 
-		virtual void setDirty()
+
+		virtual void downloadFromGPU() override
 		{
 			if (HardwareBuffer)
-				HardwareBuffer->requestUpdate();
+			{
+				void* lcked = HardwareBuffer->lock(true);
+				// resize the data if needed
+				if (Vertices.size() != HardwareBuffer->size() / sizeof(T))
+					Vertices.set_used(HardwareBuffer->size() / sizeof(T));
+				// copy the data
+				memcpy(Vertices.pointer(), lcked, HardwareBuffer->size());
 
-			++ChangedID;
-			if (this->HardwareBuffer)
-				HardwareBuffer->requestUpdate();
-		}
 
-		virtual u32 getChangedID() const
-		{
-			return ChangedID;
+			}
 		}
 
 	protected:
-		E_HARDWARE_MAPPING HardwareMappingHint;
-
-		u32 ChangedID;
-
 		core::array<T> Vertices;
 	};
 

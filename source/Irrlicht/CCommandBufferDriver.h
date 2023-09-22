@@ -5,7 +5,7 @@
 // This file is part of the "Irrlicht Engine".
 // For conditions of distribution and use, see copyright notice in irrlicht.h
 // 
-#ifdef __C_COMMAND_BUFFER_DRIVER__
+#ifndef __C_COMMAND_BUFFER_DRIVER__
 #define __C_COMMAND_BUFFER_DRIVER__
 
 #include "IrrCompileConfig.h"
@@ -24,15 +24,18 @@
 #include "CNullDriver.h"
 #include "SIrrCreationParameters.h"
 #include "IMaterialRendererServices.h"
+#include "CNullDriverCommon.h"
+
 namespace irr
 {
 	namespace video
 	{
 
 		class CCommandBufferDriver :
-			public IVideoDriver
+			public CNullDriverCommon
 		{
 		public:
+			CCommandBufferDriver() :CurrentRenderTarget(0), Driver(0) {}
 			// Inherited via IVideoDriver
 			virtual bool beginScene(bool backBuffer = true, bool zBuffer = true, SColor color = SColor(255, 0, 0, 0), const SExposedVideoData& videoData = SExposedVideoData(), core::rect<s32>* sourceRect = 0) override;
 			virtual bool endScene() override;
@@ -72,11 +75,10 @@ namespace irr
 			virtual void makeColorKeyTexture(video::ITexture* texture, core::position2d<s32> colorKeyPixelPos, bool zeroTexels = false) const override;
 			virtual void makeNormalMapTexture(video::ITexture* texture, f32 amplitude = 1.0f) const override;
 			virtual bool setRenderTarget(video::ITexture* texture, bool clearBackBuffer = true, bool clearZBuffer = true, SColor color = video::SColor(0, 0, 0, 0), video::ITexture* depthStencil = 0) override;
-			virtual bool setRenderTarget(const core::array<video::IRenderTarget>& texture, bool clearBackBuffer = true, bool clearZBuffer = true, SColor color = video::SColor(0, 0, 0, 0), video::ITexture* depthStencil = 0) override;
+			virtual bool setRenderTarget(const core::array<video::IRenderTarget>& texture, const core::array<bool>& clearBackBuffer, bool clearZBuffer = true, SColor color = video::SColor(0, 0, 0, 0), video::ITexture* depthStencil = 0) override;
 			virtual bool setRenderTarget(E_RENDER_TARGET target, bool clearTarget = true, bool clearZBuffer = true, SColor color = video::SColor(0, 0, 0, 0)) override;
 			virtual bool setStreamOutputBuffer(scene::IVertexBuffer* buffer) override;
 			virtual void setViewPort(const core::rect<s32>& area) override;
-			virtual const core::rect<s32>& getViewPort() const override;
 			virtual void draw2DVertexPrimitiveList(const void* vertices, u32 vertexCount, const void* indexList, u32 primCount, E_VERTEX_TYPE vType = EVT_STANDARD, scene::E_PRIMITIVE_TYPE pType = scene::EPT_TRIANGLES, E_INDEX_TYPE iType = EIT_16BIT) override;
 			virtual void draw3DLine(const core::vector3df& start, const core::vector3df& end, SColor color = SColor(255, 255, 255, 255)) override;
 			virtual void draw3DTriangle(const core::triangle3df& triangle, SColor color = SColor(255, 255, 255, 255)) override;
@@ -156,9 +158,16 @@ namespace irr
 			virtual u32 getVertexDescriptorCount() const override;
 
 			virtual void execute(IVideoDriver* driver);
-			private:
-				mutable std::queue < std::function<void(IVideoDriver*)>> deferedcalls;
-				IVideoDriver* Driver;
+		private:
+			mutable std::queue < std::function<void(IVideoDriver*)>> deferedcalls;
+			IVideoDriver* Driver;
+
+			// Inherited via IVideoDriver
+			std::shared_ptr<IHardwareBuffer> createHardwareBuffer(scene::IComputeBuffer* computeBuffer) override;
+			void dispatchComputeShader(const core::vector3d<u32>& groupCount, scene::IComputeBuffer* Src, scene::IComputeBuffer* Dst) override;
+			protected:
+				irr::video::ITexture* CurrentRenderTarget;
+				core::matrix4 Matrices[ETS_COUNT];
 		};
 	}
 }

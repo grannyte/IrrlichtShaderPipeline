@@ -2030,7 +2030,7 @@ namespace irr
 			std::shared_ptr<ISceneNode> node = 0;
 
 			const ISceneNodeList& list = start->getChildren();
-			ISceneNodeList::ConstIterator it = list.begin();
+			auto it = list.begin();
 			for (; it != list.end(); ++it)
 			{
 				node = getSceneNodeFromName(name, *it);
@@ -2053,7 +2053,7 @@ namespace irr
 			std::shared_ptr<ISceneNode> node = 0;
 
 			const ISceneNodeList& list = start->getChildren();
-			ISceneNodeList::ConstIterator it = list.begin();
+			auto it = list.begin();
 			for (; it != list.end(); ++it)
 			{
 				node = getSceneNodeFromId(id, *it);
@@ -2076,7 +2076,7 @@ namespace irr
 			std::shared_ptr<ISceneNode> node = 0;
 
 			const ISceneNodeList& list = start->getChildren();
-			ISceneNodeList::ConstIterator it = list.begin();
+			auto it = list.begin();
 			for (; it != list.end(); ++it)
 			{
 				node = getSceneNodeFromType(type, *it);
@@ -2097,7 +2097,7 @@ namespace irr
 				outNodes.push_back(start);
 
 			const ISceneNodeList& list = start->getChildren();
-			ISceneNodeList::ConstIterator it = list.begin();
+			auto it = list.begin();
 
 			for (; it != list.end(); ++it)
 			{
@@ -2440,7 +2440,7 @@ namespace irr
 			}
 			else
 			{
-				ISceneNodeList::ConstIterator it = node->getChildren().begin();
+				auto it = node->getChildren().begin();
 				for (; it != node->getChildren().end(); ++it)
 					writeSceneNode(writer, (*it), userDataSerializer, currentPath);
 			}
