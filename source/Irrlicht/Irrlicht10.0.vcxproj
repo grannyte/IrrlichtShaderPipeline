@@ -562,7 +562,7 @@
       <PreprocessorDefinitions>WIN32;WIN64;_DEBUG;_WINDOWS;_USRDLL;IRRLICHT_EXPORTS;ZLIB_DLL;_CRT_SECURE_NO_DEPRECATE;%(PreprocessorDefinitions);</PreprocessorDefinitions>
       <ExceptionHandling>Sync</ExceptionHandling>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
-      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <DisableLanguageExtensions>false</DisableLanguageExtensions>
       <RuntimeTypeInfo>true</RuntimeTypeInfo>
       <WarningLevel>Level1</WarningLevel>
@@ -737,7 +737,7 @@
       <OpenMPSupport>false</OpenMPSupport>
       <AdditionalOptions> /Qvec-report:2</AdditionalOptions>
       <AssemblerOutput>NoListing</AssemblerOutput>
-      <OmitFramePointers>true</OmitFramePointers>
+      <OmitFramePointers>false</OmitFramePointers>
       <LoopUnrolling>5</LoopUnrolling>
       <DisableIntelLangExtensions>true</DisableIntelLangExtensions>
       <OpenMP>GenerateParallelCode</OpenMP>
