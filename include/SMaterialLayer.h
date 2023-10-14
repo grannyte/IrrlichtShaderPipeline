@@ -62,10 +62,9 @@ namespace video
 
 		//! Copy constructor
 		/** \param other Material layer to copy from. */
-		SMaterialLayer(const SMaterialLayer& other)
+		SMaterialLayer(const SMaterialLayer& other):TextureMatrix(0)
 		{
 			// This pointer is checked during assignment
-			TextureMatrix = 0;
 			*this = other;
 		}
 
@@ -86,6 +85,7 @@ namespace video
 				return *this;
 
 			Texture = other.Texture;
+
 			if (TextureMatrix)
 			{
 				if (other.TextureMatrix)
@@ -148,6 +148,11 @@ namespace video
 			}
 			else
 				*TextureMatrix = mat;
+		}
+
+		bool hasTextureMatrix() const
+		{
+			return TextureMatrix != 0;
 		}
 
 		//! Inequality operator

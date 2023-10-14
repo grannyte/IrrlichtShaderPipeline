@@ -854,7 +854,11 @@ namespace irr
 			for (u16 i = 0; i < MATERIAL_MAX_TEXTURES; ++i)
 			{
 				setActiveTexture(i, Material.getTexture(i));
-				setTransform((E_TRANSFORMATION_STATE)(ETS_TEXTURE_0 + i), Material.getTextureMatrix(i));
+				if (Material.TextureLayer[i].hasTextureMatrix())
+				{
+
+					setTransform((E_TRANSFORMATION_STATE)(ETS_TEXTURE_0 + i), Material.getTextureMatrix(i));
+				}
 			}
 		}
 
@@ -3571,6 +3575,7 @@ namespace irr
 				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)MaterialRenderers[Material.MaterialType].Renderer;
 				return r->setVariable(index, floats, count, EST_COMPUTE_SHADER);
 			}
+			return false;
 		}
 
 		bool CD3D11Driver::setVertexShaderConstant(s32 index, const s32* ints, int count)
