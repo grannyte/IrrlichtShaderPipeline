@@ -682,10 +682,10 @@ namespace irr
 				hierarchy you might want to update the parents first.*/
 			virtual void updateAbsolutePosition()
 			{
-				if (Parent.lock())
+				if (auto lockedparent= Parent.lock())
 				{
 					AbsoluteTransformation =
-						Parent.lock()->getAbsoluteTransformation() * getRelativeTransformation();
+						lockedparent->getAbsoluteTransformation() * getRelativeTransformation();
 				}
 				else
 					AbsoluteTransformation = getRelativeTransformation();

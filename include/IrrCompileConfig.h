@@ -727,7 +727,7 @@ precision will be lower but speed higher. currently X86 only
 #endif
 
 //! Enable SSE optimisation for f32 matrices and f32 vectors.
-//#define _IRR_SSE
+#define _IRR_SSE
 #ifdef NO_IRR_SSE
 #undef _IRR_SSE
 #endif
