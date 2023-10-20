@@ -194,12 +194,12 @@ namespace irr
 		inline void CD3D11Driver::revertTempHWBuffers()
 		{
 			//std::cout << "Buffers  count : " << MeshBuffer2dBack.size() << std::endl;
-			for(int type = 0; type < (irr::video::E_HARDWARE_BUFFER_TYPE::EHBT_SYSTEM+1); type++)
-			while (!MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type].empty())
-			{
-				MeshBuffer2dQueues[(irr::video::E_HARDWARE_BUFFER_TYPE)type].push(MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type].front());
-				MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type].pop();
-			}
+			for (int type = 0; type < (irr::video::E_HARDWARE_BUFFER_TYPE::EHBT_SYSTEM + 1); type++)
+				while (!MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type].empty())
+				{
+					MeshBuffer2dQueues[(irr::video::E_HARDWARE_BUFFER_TYPE)type].push(MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type].front());
+					MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type].pop();
+				}
 		}
 
 		void CD3D11Driver::createMaterialRenderers()
@@ -371,7 +371,7 @@ namespace irr
 					(FeatureLevel == D3D_FEATURE_LEVEL_10_1) ? "10.1" : "10.0";
 			}
 			return BuildDriverInternal(hr, hwnd);
-		
+
 		}
 
 		bool CD3D11Driver::BuildDriverInternal(HRESULT& hr, const HWND& hwnd)
@@ -2177,7 +2177,7 @@ namespace irr
 			if (!Device)
 				return;
 
-			//if (CurrentRenderMode != ERM_2D || Transformation3DChanged)
+			if (CurrentRenderMode != ERM_2D || Transformation3DChanged)
 			{
 				// unset last 3d material
 				if (CurrentRenderMode == ERM_3D)
@@ -2239,10 +2239,15 @@ namespace irr
 				BlendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
 				BlendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
 			}
+			else
+			{
+				BlendDesc.RenderTarget[0].BlendEnable = false;
+			}
 
 			if (texture)
 			{
-				setTransform(ETS_TEXTURE_0, core::IdentityMatrix);
+				if(!Matrices[ETS_TEXTURE_0].isIdentity())
+					setTransform(ETS_TEXTURE_0, core::IdentityMatrix);
 
 				Transformation3DChanged = false;
 			}
@@ -3403,15 +3408,15 @@ namespace irr
 		s32 CD3D11Driver::addComputeShader(const c8* computeShaderProgram,
 			const c8* computeShaderEntryPointName,
 			E_COMPUTE_SHADER_TYPE csCompileTarget,
-			IShaderConstantSetCallBack* callback ,
+			IShaderConstantSetCallBack* callback,
 			s32 userData)
 		{
 			s32 id = -1;
 			CD3D11MaterialRenderer* rend =
 				new CD3D11MaterialRenderer(Device, this, BridgeCalls, id,
-										computeShaderProgram, computeShaderEntryPointName, csCompileTarget,
-										(scene::E_PRIMITIVE_TYPE)0,(scene::E_PRIMITIVE_TYPE)0,0,0,
-										callback,0, userData, FileSystem, E_GPU_SHADING_LANGUAGE::EGSL_DEFAULT);
+					computeShaderProgram, computeShaderEntryPointName, csCompileTarget,
+					(scene::E_PRIMITIVE_TYPE)0, (scene::E_PRIMITIVE_TYPE)0, 0, 0,
+					callback, 0, userData, FileSystem, E_GPU_SHADING_LANGUAGE::EGSL_DEFAULT);
 			return id;
 		}
 		//! Adds a new material renderer to the VideoDriver, using pixel and/or
