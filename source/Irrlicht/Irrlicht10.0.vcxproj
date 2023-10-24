@@ -732,13 +732,13 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
-      <FloatingPointModel>Fast</FloatingPointModel>
+      <FloatingPointModel>Precise</FloatingPointModel>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <WholeProgramOptimization>true</WholeProgramOptimization>
       <EnableFiberSafeOptimizations>true</EnableFiberSafeOptimizations>
       <BrowseInformation>false</BrowseInformation>
       <OpenMPSupport>true</OpenMPSupport>
-      <AdditionalOptions> /Qvec-report:2</AdditionalOptions>
+      <AdditionalOptions>/fp:contract  /Qvec-report:2 </AdditionalOptions>
       <AssemblerOutput>NoListing</AssemblerOutput>
       <OmitFramePointers>false</OmitFramePointers>
       <LoopUnrolling>5</LoopUnrolling>
@@ -747,7 +747,7 @@
       <C99Support>true</C99Support>
       <Cpp0xSupport>true</Cpp0xSupport>
       <Optimization>MaxSpeed</Optimization>
-      <FloatingPointExceptions>false</FloatingPointExceptions>
+      <FloatingPointExceptions>true</FloatingPointExceptions>
       <SDLCheck>false</SDLCheck>
       <MinimalRebuild>false</MinimalRebuild>
       <RuntimeTypeInfo>true</RuntimeTypeInfo>
