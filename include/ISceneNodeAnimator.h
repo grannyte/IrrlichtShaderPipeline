@@ -38,7 +38,7 @@ namespace irr
 			//! Animates a scene node.
 			/** \param node Node to animate.
 			\param timeMs Current time in milli seconds. */
-			virtual void animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs) = 0;
+			virtual void animateNode(const std::shared_ptr<ISceneNode>& node, u32 timeMs) = 0;
 
 			//! Creates a clone of this animator.
 			/** Please note that you will have to drop

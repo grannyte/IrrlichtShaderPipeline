@@ -32,7 +32,7 @@ inline s32 CSceneNodeAnimatorFollowSpline::clamp(s32 idx, s32 size)
 
 
 //! animates a scene node
-void CSceneNodeAnimatorFollowSpline::animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs)
+void CSceneNodeAnimatorFollowSpline::animateNode(const std::shared_ptr<ISceneNode>& node, u32 timeMs)
 {
 	if(!node)
 		return;

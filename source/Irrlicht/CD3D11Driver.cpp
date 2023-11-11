@@ -869,11 +869,24 @@ namespace irr
 
 			CNullDriver::drawMeshBuffer(mb);
 			//we lie to the user we are always using hardware buffers in dx11 it's much faster and avoid stalling the pipeline when writting to a buffer that needs to be used for rendering
+		
+
+			
+
+
+			bool perInstanceBufferPresent = false;
+			u32 instanceVertexCount = 0;
+			u32 drawVertexCount = 0;
+
+			std::array<ID3D11Buffer*, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT > vbuffers;
+			std::array<u32, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT > strides;
+			std::array<UINT, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT > offsets;
+			
 			for (u32 i = 0; i < mb->getVertexBufferCount(); ++i)
 			{
-				auto hwBuff = mb->getVertexBuffer(i)->getHardwareBuffer();
 				if (mb->getVertexBuffer(i)->getVertexCount() < 1)
 					return;
+				auto& hwBuff = mb->getVertexBuffer(i)->getHardwareBuffer();
 
 				if (!hwBuff && mb->getVertexBuffer(i)->getVertexCount() > 0)
 				{
@@ -884,47 +897,17 @@ namespace irr
 					if (hwBuff->isRequiredUpdate())
 						hwBuff->update(mb->getVertexBuffer(i)->getHardwareMappingHint(), mb->getVertexBuffer(i)->getVertexCount() * mb->getVertexBuffer(i)->getVertexSize(), mb->getVertexBuffer(i)->getVertices());
 				}
-			}
 
-			auto indBuff = mb->getIndexBuffer()->getHardwareBuffer();
-
-			if (!indBuff && (mb->getIndexBuffer()->getIndexCount() > 0))
-			{
-				createHardwareBuffer(mb->getIndexBuffer());
-			}
-			else if (indBuff)
-			{
-				if (indBuff->isRequiredUpdate())
-					indBuff->update(mb->getIndexBuffer()->getHardwareMappingHint(), mb->getIndexBuffer()->getIndexCount() * mb->getIndexBuffer()->getIndexSize(), mb->getIndexBuffer()->getIndices());
-			}
-
-			const scene::IVertexBuffer* vb = mb->getVertexBuffer();
-			const scene::IIndexBuffer* ib = mb->getIndexBuffer();
-
-			bool perInstanceBufferPresent = false;
-			u32 instanceVertexCount = 0;
-			u32 drawVertexCount = 0;
-
-			irr::core::array<ID3D11Buffer*> vbuffers;
-			irr::core::array<u32> strides;
-			irr::core::array<UINT> offsets;
-
-			for (u32 i = 0; i < mb->getVertexBufferCount(); ++i)
-			{
-				offsets.push_back(0);
-				strides.push_back(mb->getVertexBuffer(i)->getVertexSize());
+				offsets[i]=(0);
+				strides[i] =(mb->getVertexBuffer(i)->getVertexSize());
 				if (mb->getVertexBuffer(i)->getHardwareBuffer())
-					vbuffers.push_back(((CD3D11HardwareBuffer*)mb->getVertexBuffer(i)->getHardwareBuffer().get())->getBuffer());
+					vbuffers[i] =(((CD3D11HardwareBuffer*)hwBuff.get())->getBuffer());
 				else
-					vbuffers.push_back(0);
+					vbuffers[i] = (0);
 
 				if (mb->getVertexDescriptor()->getInstanceDataStepRate(i) == EIDSR_PER_INSTANCE)
 				{
 					instanceVertexCount = mb->getVertexBuffer(i)->getVertexCount();
-
-					if (!instanceVertexCount)
-						return;
-
 					perInstanceBufferPresent = true;
 				}
 				else if (mb->getVertexDescriptor()->getInstanceDataStepRate(i) == EIDSR_PER_VERTEX)
@@ -937,11 +920,24 @@ namespace irr
 				}
 			}
 
-			Context->IASetVertexBuffers(0, mb->getVertexBufferCount(), vbuffers.const_pointer(), strides.const_pointer(), offsets.const_pointer());
+			Context->IASetVertexBuffers(0, mb->getVertexBufferCount(), vbuffers.data(), strides.data(), offsets.data());
 
+
+			auto& hwindBuff = mb->getIndexBuffer()->getHardwareBuffer();
+			auto indexBuff = mb->getIndexBuffer();
+
+			if (!hwindBuff && (mb->getIndexBuffer()->getIndexCount() > 0))
+			{
+				createHardwareBuffer(mb->getIndexBuffer());
+			}
+			else if (hwindBuff)
+			{
+				if (hwindBuff->isRequiredUpdate())
+					hwindBuff->update(indexBuff->getHardwareMappingHint(), indexBuff->getIndexCount() * indexBuff->getIndexSize(), indexBuff->getIndices());
+			}
 			// set index buffer
-			if (ib->getHardwareBuffer())
-				Context->IASetIndexBuffer(((CD3D11HardwareBuffer*)ib->getHardwareBuffer().get())->getBuffer(), mb->getIndexBuffer()->getType() == video::EIT_16BIT ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT, 0);
+			if (hwindBuff)
+				Context->IASetIndexBuffer(((CD3D11HardwareBuffer*)hwindBuff.get())->getBuffer(), indexBuff->getType() == video::EIT_16BIT ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT, 0);
 			else
 				Context->IASetIndexBuffer(NULL, DXGI_FORMAT_R32_UINT, 0);
 
@@ -953,7 +949,7 @@ namespace irr
 
 			BridgeCalls->setInputLayout(mb->getVertexDescriptor(), MaterialRenderers[Material.MaterialType].Renderer);
 			// draw
-			renderArray(drawVertexCount, mb->getIndexBuffer()->getIndexCount(), mb->getPrimitiveType(), instanceVertexCount);
+			renderArray(drawVertexCount, indexBuff->getIndexCount(), mb->getPrimitiveType(), instanceVertexCount);
 
 			for (u32 i = 0; i < mb->getVertexBufferCount(); ++i)
 			{
@@ -962,7 +958,7 @@ namespace irr
 				vbuffers[i] = NULL;
 			}
 
-			Context->IASetVertexBuffers(0, mb->getVertexBufferCount(), vbuffers.const_pointer(), strides.const_pointer(), offsets.const_pointer());
+			Context->IASetVertexBuffers(0, mb->getVertexBufferCount(), vbuffers.data(), strides.data(), offsets.data());
 		}
 
 		void CD3D11Driver::draw2DVertexPrimitiveList(const void* vertices, u32 vertexCount,
@@ -1779,6 +1775,60 @@ namespace irr
 			// Draw
 			draw2DVertexPrimitiveList(vtx, 4, indices, 2, video::EVT_STANDARD, scene::EPT_TRIANGLES, video::EIT_16BIT);
 		}
+		void CD3D11Driver::batchDraw2DRectangles(const irr::core::array<core::rect<s32>>& pos,
+			irr::core::array < SColor>& colorLeftUp, irr::core::array < SColor>& colorRightUp,
+			irr::core::array < SColor>& colorLeftDown, irr::core::array < SColor>& colorRightDown,
+			const irr::core::array <core::rect<s32>>* clip)
+		{
+			if (pos.size() != colorLeftUp.size() || pos.size() != colorRightUp.size() || pos.size() != colorLeftDown.size() || pos.size() != colorRightDown.size())
+				return;
+
+			core::array<S3DVertex> vtx(pos.size() * 4);
+			core::array<u16> indices(pos.size() * 6);
+
+			for (u32 i = 0; i < pos.size(); ++i)
+			{
+				core::rect<s32> position(pos[i]);
+
+				if (clip)
+					position.clipAgainst((*clip)[i]);
+
+				if (!position.isValid())
+					continue;
+
+				vtx.push_back(S3DVertex((f32)position.UpperLeftCorner.X, (f32)position.UpperLeftCorner.Y, 0.0f,
+										0.0f, 0.0f, 0.0f, colorLeftUp[i], 0.0f, 0.0f));
+				vtx.push_back(S3DVertex((f32)position.LowerRightCorner.X, (f32)position.UpperLeftCorner.Y, 0.0f,
+										0.0f, 0.0f, 0.0f, colorRightUp[i], 0.0f, 1.0f));
+				vtx.push_back(S3DVertex((f32)position.LowerRightCorner.X, (f32)position.LowerRightCorner.Y, 0.0f,
+										0.0f, 0.0f, 0.0f, colorRightDown[i], 1.0f, 0.0f));
+				vtx.push_back(S3DVertex((f32)position.UpperLeftCorner.X, (f32)position.LowerRightCorner.Y, 0.0f,
+					0.0f, 0.0f, 0.0f, colorLeftDown[i], 1.0f, 1.0f));
+			}
+			for (int j = 0; j < pos.size(); j++)
+			{
+				const u32 curPos = j*4;
+				indices.push_back(0 + curPos);
+				indices.push_back(1 + curPos);
+				indices.push_back(2 + curPos);
+
+				indices.push_back(0 + curPos);
+				indices.push_back(2 + curPos);
+				indices.push_back(3 + curPos);
+			}
+			disableTextures();
+
+			setRenderStates2DMode(
+				colorLeftUp[0].getAlpha() < 255 ||
+				colorRightUp[0].getAlpha() < 255 ||
+				colorLeftDown[0].getAlpha() < 255 ||
+				colorRightDown[0].getAlpha() < 255, false, false);
+
+			// Draw
+			draw2DVertexPrimitiveList(vtx.pointer(), vtx.size(), indices.pointer(), indices.size() / 3, video::EVT_STANDARD, scene::EPT_TRIANGLES, video::EIT_16BIT);
+			
+		}
+
 
 		void CD3D11Driver::draw2DLine(const core::position2d<s32>& start,
 			const core::position2d<s32>& end, SColor color)
@@ -2144,7 +2194,7 @@ namespace irr
 				ResetRenderStates = true;
 			}
 
-			//if (ResetRenderStates || LastMaterial != Material)
+			if (ResetRenderStates || LastMaterial != Material)
 			{
 				// unset old material
 				if (CurrentRenderMode == ERM_3D &&
@@ -3238,17 +3288,20 @@ namespace irr
 		void CD3D11Driver::reset()
 		{
 			u32 i;
+			u32 size;
 			os::Printer::log("Resetting D3D11 device.", ELL_INFORMATION);
-
-			u32 size = Textures.size();
-			for (i = 0; i < size; ++i)
 			{
-				if (Textures[i].Surface->isRenderTarget())
+				std::lock_guard<std::shared_mutex> texturelock(textureArrayLock);
+				size = Textures.size();
+				for (i = 0; i < size; ++i)
 				{
-					ID3D11Resource* tex = ((CD3D11Texture*)(Textures[i].Surface))->getTextureResource();
-					if (tex)
+					if (Textures[i].Surface->isRenderTarget())
 					{
-						tex->Release();
+						ID3D11Resource* tex = ((CD3D11Texture*)(Textures[i].Surface))->getTextureResource();
+						if (tex)
+						{
+							tex->Release();
+						}
 					}
 				}
 			}

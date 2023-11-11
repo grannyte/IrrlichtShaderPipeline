@@ -996,7 +996,7 @@ IImage* CImageLoaderDDS::loadImage(io::IReadFile* file) const
 					}
 
 					file->getSize();
-					u8* data = new u8[file->getSize()+1];
+					u8* data = new u8[file->getSize()*2+1];
 					u32 readsize = file->read(data, file->getSize());
 
 					bool hasMipMap = (mipMapCount > 0) ? true : false;

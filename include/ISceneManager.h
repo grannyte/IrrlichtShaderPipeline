@@ -1168,12 +1168,12 @@ namespace irr
 			/** \return The active camera is returned. Note that this can
 			be NULL, if there was no camera created yet.
 			This pointer should not be dropped. See IReferenceCounted::drop() for more information. */
-			virtual std::shared_ptr<ICameraSceneNode> getActiveCamera() const = 0;
+			virtual const std::shared_ptr<ICameraSceneNode>& getActiveCamera() const = 0;
 
 			//! Sets the currently active camera.
 			/** The previous active camera will be deactivated.
 			\param camera: The new camera which should be active. */
-			virtual void setActiveCamera(std::shared_ptr<ICameraSceneNode> camera) = 0;
+			virtual void setActiveCamera(const std::shared_ptr<ICameraSceneNode>& camera) = 0;
 
 			//! Sets the color of stencil buffers shadows drawn by the scene manager.
 			virtual void setShadowColor(video::SColor color = video::SColor(150, 0, 0, 0)) = 0;

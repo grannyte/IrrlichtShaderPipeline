@@ -68,13 +68,13 @@ namespace irr
 
 
 
-			std::shared_ptr<video::IHardwareBuffer> getHardwareBuffer() const
+			const std::shared_ptr<video::IHardwareBuffer> &getHardwareBuffer() const
 			{
 				return HardwareBuffer;
 			}
 
 			// externalMemoryHandler parameter is used only by hardware buffers.
-			void setHardwareBuffer(std::shared_ptr<video::IHardwareBuffer> hardwareBuffer)
+			void setHardwareBuffer(const std::shared_ptr<video::IHardwareBuffer>& hardwareBuffer)
 			{
 				HardwareBuffer = hardwareBuffer;
 			}

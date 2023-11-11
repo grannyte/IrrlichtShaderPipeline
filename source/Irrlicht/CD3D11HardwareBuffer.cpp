@@ -365,7 +365,7 @@ namespace irr
 		}
 
 		//! Copy data from another buffer
-		void CD3D11HardwareBuffer::copyFromBuffer(std::shared_ptr<IHardwareBuffer> buffer, u32 srcOffset, u32 destOffset, u32 length)
+		void CD3D11HardwareBuffer::copyFromBuffer(const std::shared_ptr<IHardwareBuffer>& buffer, u32 srcOffset, u32 destOffset, u32 length)
 		{
 			if (!Buffer)
 				return;

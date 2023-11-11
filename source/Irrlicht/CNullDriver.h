@@ -22,6 +22,7 @@
 #include "SLight.h"
 #include "SExposedVideoData.h"
 #include "CNullDriverCommon.h"
+#include <shared_mutex>
 
 #ifdef _MSC_VER
 #pragma warning( disable: 4996)
@@ -211,10 +212,19 @@ namespace irr
 			//! Draws a 2d rectangle
 			virtual void draw2DRectangle(SColor color, const core::rect<s32>& pos, const core::rect<s32>* clip = 0) _IRR_OVERRIDE_;
 
+			virtual void batchDraw2DRectangles(const irr::core::array<core::rect<s32>>& pos,
+				const irr::core::array < SColor>& color,
+				const irr::core::array <core::rect<s32>>* clip = 0)  _IRR_OVERRIDE_;
+
 			//! Draws a 2d rectangle with a gradient.
 			virtual void draw2DRectangle(const core::rect<s32>& pos,
 				SColor colorLeftUp, SColor colorRightUp, SColor colorLeftDown, SColor colorRightDown,
 				const core::rect<s32>* clip = 0) _IRR_OVERRIDE_;
+
+			virtual void batchDraw2DRectangles(const irr::core::array<core::rect<s32>>& pos,
+				irr::core::array < SColor>& colorLeftUp, irr::core::array < SColor>& colorRightUp,
+				irr::core::array < SColor>& colorLeftDown, irr::core::array < SColor>& colorRightDown,
+				const irr::core::array <core::rect<s32>>* clip = 0) _IRR_OVERRIDE_;
 
 			//! Draws the outline of a 2d rectangle
 			virtual void draw2DRectangleOutline(const core::recti& pos, SColor color = SColor(255, 255, 255, 255)) _IRR_OVERRIDE_;
@@ -788,6 +798,7 @@ namespace irr
 				return (f32)getAverage(p[(y * pitch) + x]);
 			}
 
+
 			struct SSurface
 			{
 				video::ITexture* Surface;
@@ -812,6 +823,7 @@ namespace irr
 				virtual void unlock()_IRR_OVERRIDE_ {}
 				virtual void regenerateMipMapLevels(void* mipmapData = 0) _IRR_OVERRIDE_ {}
 			};
+			mutable std::shared_mutex textureArrayLock;
 			core::array<SSurface> Textures;
 
 			struct SOccQuery
@@ -861,7 +873,7 @@ namespace irr
 				u32 Result;
 				u32 Run;
 			};
-
+			mutable std::shared_mutex shaderArrayLock;
 			core::array<SOccQuery> OcclusionQueries;
 
 			core::array<video::IImageLoader*> SurfaceLoader;

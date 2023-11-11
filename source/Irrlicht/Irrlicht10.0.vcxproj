@@ -577,7 +577,7 @@
       <InlineFunctionExpansion>Disabled</InlineFunctionExpansion>
       <OmitFramePointers>false</OmitFramePointers>
       <FloatingPointModel>Fast</FloatingPointModel>
-      <ControlFlowGuard>false</ControlFlowGuard>
+      <ControlFlowGuard>Guard</ControlFlowGuard>
       <BrowseInformation>false</BrowseInformation>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <CompileAsManaged>false</CompileAsManaged>
@@ -747,7 +747,7 @@
       <C99Support>true</C99Support>
       <Cpp0xSupport>true</Cpp0xSupport>
       <Optimization>MaxSpeed</Optimization>
-      <FloatingPointExceptions>true</FloatingPointExceptions>
+      <FloatingPointExceptions>false</FloatingPointExceptions>
       <SDLCheck>false</SDLCheck>
       <MinimalRebuild>false</MinimalRebuild>
       <RuntimeTypeInfo>true</RuntimeTypeInfo>
@@ -1522,6 +1522,7 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </ClInclude>
     <ClInclude Include="CD3D11CallBridge.h" />
+    <ClInclude Include="CD3D11DeferedDriver.h" />
     <ClInclude Include="CD3D11Driver.h" />
     <ClInclude Include="CD3D11FixedPipelineRenderer.h" />
     <ClInclude Include="CD3D11HardwareBuffer.h" />

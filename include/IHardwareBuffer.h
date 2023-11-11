@@ -32,6 +32,8 @@ enum E_HARDWARE_BUFFER_TYPE
 	EHBT_CONSTANTS,
 	//! Change the system mapping
 	EHBT_SYSTEM,
+
+	EHBT_COUNT
 };
 
 enum E_HARDWARE_BUFFER_ACCESS

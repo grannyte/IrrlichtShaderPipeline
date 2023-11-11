@@ -17,7 +17,8 @@ namespace scene
 	public:
 
 		//! constructor
-		CCubeSceneNode(f32 size,  std::shared_ptr<ISceneManager> mgr, s32 id,
+		CCubeSceneNode(f32 size,  
+			const std::shared_ptr<ISceneManager>& mgr, s32 id,
 			const core::vector3df& position = core::vector3df(0,0,0),
 			const core::vector3df& rotation = core::vector3df(0,0,0),
 			const core::vector3df& scale = core::vector3df(1.0f, 1.0f, 1.0f));
@@ -77,7 +78,7 @@ namespace scene
 		//! Removes a child from this scene node.
 		//! Implemented here, to be able to remove the shadow properly, if there is one,
 		//! or to remove attached childs.
-		virtual bool removeChild(std::shared_ptr<ISceneNode> child) _IRR_OVERRIDE_;
+		virtual bool removeChild(const std::shared_ptr<ISceneNode>& child) _IRR_OVERRIDE_;
 
 	private:
 		void setSize();

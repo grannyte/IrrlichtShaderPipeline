@@ -17,6 +17,7 @@
 #include "IAttributeExchangingObject.h"
 #include "CVertexDescriptor.h"
 #include <iostream>
+#include <shared_mutex>
 
 namespace irr
 {
@@ -260,7 +261,7 @@ namespace irr
 
 
 			addVertexDescriptor("standardcolorf");
-			VertexDescriptor[3]->addAttribute("inPosition", 4, EVAS_POSITION, EVAT_FLOAT, 0);
+			VertexDescriptor[3]->addAttribute("inPosition", 3, EVAS_POSITION, EVAT_FLOAT, 0);
 			VertexDescriptor[3]->addAttribute("inNormal", 3, EVAS_NORMAL, EVAT_FLOAT, 0);
 			VertexDescriptor[3]->addAttribute("inColor", 4, EVAS_COLOR, EVAT_FLOAT, 0);
 			VertexDescriptor[3]->addAttribute("inTexCoord0", 2, EVAS_TEXCOORD0, EVAT_FLOAT, 0);
@@ -323,6 +324,7 @@ namespace irr
 			// last set material member. Could be optimized to reduce state changes.
 			setMaterial(SMaterial());
 
+			std::lock_guard<std::shared_mutex> texturelock(textureArrayLock);
 			for (u32 i = 0; i < Textures.size(); ++i)
 				Textures[i].Surface->drop();
 
@@ -387,6 +389,7 @@ namespace irr
 			if (!texture)
 				return;
 
+			std::lock_guard<std::shared_mutex> texturelock(textureArrayLock);
 			for (u32 i = 0; i < Textures.size(); ++i)
 			{
 				if (Textures[i].Surface == texture)
@@ -408,6 +411,7 @@ namespace irr
 		//! Returns a texture by index
 		ITexture* CNullDriver::getTextureByIndex(u32 i)
 		{
+			std::shared_lock<std::shared_mutex> textLock(textureArrayLock);
 			if (i < Textures.size())
 				return Textures[i].Surface;
 
@@ -417,6 +421,7 @@ namespace irr
 		//! Returns amount of textures currently loaded
 		u32 CNullDriver::getTextureCount() const
 		{
+			std::shared_lock<std::shared_mutex> textLock(textureArrayLock);
 			return Textures.size();
 		}
 
@@ -430,6 +435,7 @@ namespace irr
 			io::SNamedPath& name = const_cast<io::SNamedPath&>(texture->getName());
 			name.setPath(newName);
 
+			std::lock_guard<std::shared_mutex> texturelock(textureArrayLock);
 			Textures.sort();
 		}
 
@@ -529,7 +535,6 @@ namespace irr
 		ITexture* CNullDriver::getTexture(const core::array<io::path>& files, E_TEXTURE_TYPE Type)
 		{
 			const u32 nfiles = files.size();
-			u32 i;
 
 			if (nfiles < 2)
 				return 0;
@@ -538,18 +543,34 @@ namespace irr
 			slices.set_used(nfiles);
 
 			core::stringc name = "array_";
-
+			bool failed = false;
 			// Load the individual slices
-			for (i = 0; i < nfiles; i++)
+			//for (int i = 0; i < nfiles; i++)
+			concurrency::parallel_for(0u, nfiles, [&](u32 i)
 			{
 				slices[i] = getTexture(files[i]);
 
 				if (!slices[i])
-					return 0;
+					failed = true;
 
-				name += files[i];
 			}
-
+			);
+			u32 i;
+			if (failed)
+			{
+				os::Printer::log("Failed to load texture array", ELL_ERROR);
+				return 0;
+			}
+			int sum = 0;
+			for(i = 0; i < nfiles; i++)
+			{
+				sum += files[i].size();
+			}	
+			name.reserve(name.size() + sum);
+			for (i = 0; i < nfiles; i++)
+			{
+				name.append(files[i]);
+			}
 			// Check that they match
 			const core::dimension2du base = slices[0]->getSize();
 			for (i = 1; i < nfiles; i++)
@@ -598,6 +619,7 @@ namespace irr
 				s.Surface = texture;
 				texture->grab();
 
+				std::lock_guard<std::shared_mutex> texturelock(textureArrayLock);
 				Textures.push_back(s);
 
 				// the new texture is now at the end of the texture list. when searching for
@@ -616,6 +638,7 @@ namespace irr
 			SDummyTexture dummy(filename);
 			s.Surface = &dummy;
 
+			std::shared_lock<std::shared_mutex> texturelock(textureArrayLock);
 			s32 index = Textures.binary_search(s);
 			if (index != -1)
 				return Textures[index].Surface;
@@ -928,17 +951,41 @@ namespace irr
 			draw2DRectangle(pos, color, color, color, color, clip);
 		}
 
+		void CNullDriver::batchDraw2DRectangles(const irr::core::array<core::rect<s32>>& pos,
+			const irr::core::array < SColor>& color,
+			const irr::core::array <core::rect<s32>>* clip)
+		{
+			irr::core::array < SColor> colorLeftUp(color);
+			irr::core::array < SColor> colorRightUp(color);
+			irr::core::array < SColor> colorLeftDown(color);
+			irr::core::array < SColor> colorRightDown(color);
+			
+			batchDraw2DRectangles(pos, colorLeftUp, colorRightUp, colorLeftDown, colorRightDown, clip);
+		}
+
 		//! Draws a 2d rectangle with a gradient.
 		void CNullDriver::draw2DRectangle(const core::rect<s32>& pos,
 			SColor colorLeftUp, SColor colorRightUp, SColor colorLeftDown, SColor colorRightDown,
 			const core::rect<s32>* clip)
 		{
 		}
+		void CNullDriver::batchDraw2DRectangles(const irr::core::array<core::rect<s32>>& pos,
+			irr::core::array < SColor>& colorLeftUp, irr::core::array < SColor>& colorRightUp,
+			irr::core::array < SColor>& colorLeftDown, irr::core::array < SColor>& colorRightDown,
+			const irr::core::array <core::rect<s32>>* clip)
+		{
+
+			for(u32 i = 0; i < pos.size(); i++)
+			{
+				draw2DRectangle(pos[i], colorLeftUp[i], colorRightUp[i], colorLeftDown[i], colorRightDown[i], clip ? &(*clip)[i] : 0);
+			}
+		}
 
 		//! Draws a 2d line.
 		void CNullDriver::draw2DLine(const core::position2d<s32>& start,
 			const core::position2d<s32>& end, SColor color)
 		{
+
 		}
 
 		//! Draws a pixel
@@ -1983,13 +2030,13 @@ namespace irr
 			r.Renderer = renderer;
 			r.Name = name;
 
+			std::lock_guard<std::shared_mutex> lck(shaderArrayLock);
 			if (name == 0 && (MaterialRenderers.size() < (sizeof(sBuiltInMaterialTypeNames) / sizeof(char*)) - 1))
 			{
 				// set name of built in renderer so that we don't have to implement name
 				// setting in all available renderers.
 				r.Name = sBuiltInMaterialTypeNames[MaterialRenderers.size()];
 			}
-
 			MaterialRenderers.push_back(r);
 			renderer->grab();
 
@@ -1999,6 +2046,7 @@ namespace irr
 		//! Sets the name of a material renderer.
 		void CNullDriver::setMaterialRendererName(s32 idx, const char* name)
 		{
+			std::lock_guard<std::shared_mutex> lck(shaderArrayLock);
 			if (idx < s32(sizeof(sBuiltInMaterialTypeNames) / sizeof(char*)) - 1 ||
 				idx >= (s32)MaterialRenderers.size())
 				return;
@@ -2083,13 +2131,15 @@ namespace irr
 			core::stringc name = attr->getAttributeAsString("Type");
 
 			u32 i;
-
-			for (i = 0; i < MaterialRenderers.size(); ++i)
-				if (name == MaterialRenderers[i].Name)
-				{
-					outMaterial.MaterialType = (video::E_MATERIAL_TYPE)i;
-					break;
-				}
+			{
+				std::shared_lock<std::shared_mutex> lck(shaderArrayLock);
+				for (i = 0; i < MaterialRenderers.size(); ++i)
+					if (name == MaterialRenderers[i].Name)
+					{
+						outMaterial.MaterialType = (video::E_MATERIAL_TYPE)i;
+						break;
+					}
+			}
 
 			outMaterial.AmbientColor = attr->getAttributeAsColor("Ambient");
 			outMaterial.DiffuseColor = attr->getAttributeAsColor("Diffuse");
@@ -2188,6 +2238,7 @@ namespace irr
 		//! deletes all material renderers
 		void CNullDriver::deleteMaterialRenders()
 		{
+			std::lock_guard<std::shared_mutex> lck(shaderArrayLock);
 			// delete material renderers
 			for (u32 i = 0; i < MaterialRenderers.size(); ++i)
 				if (MaterialRenderers[i].Renderer)
@@ -2199,6 +2250,7 @@ namespace irr
 		//! Returns pointer to material renderer or null
 		IMaterialRenderer* CNullDriver::getMaterialRenderer(u32 idx)
 		{
+			std::shared_lock<std::shared_mutex> lck(shaderArrayLock);
 			if (idx < MaterialRenderers.size())
 				return MaterialRenderers[idx].Renderer;
 			else
@@ -2208,12 +2260,14 @@ namespace irr
 		//! Returns amount of currently available material renderers.
 		u32 CNullDriver::getMaterialRendererCount() const
 		{
+			std::shared_lock<std::shared_mutex> lck(shaderArrayLock);
 			return MaterialRenderers.size();
 		}
 
 		//! Returns name of the material renderer
 		const char* CNullDriver::getMaterialRendererName(u32 idx) const
 		{
+			std::shared_lock<std::shared_mutex> lck(shaderArrayLock);
 			if (idx < MaterialRenderers.size())
 				return MaterialRenderers[idx].Name.c_str();
 

@@ -37,7 +37,7 @@ void CSceneNodeAnimatorFlyStraight::recalculateIntermediateValues()
 
 
 //! animates a scene node
-void CSceneNodeAnimatorFlyStraight::animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs)
+void CSceneNodeAnimatorFlyStraight::animateNode(const std::shared_ptr<ISceneNode>& node, u32 timeMs)
 {
 	if (!node)
 		return;

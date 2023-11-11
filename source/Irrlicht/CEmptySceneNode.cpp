@@ -12,7 +12,7 @@ namespace scene
 {
 
 //! constructor
-CEmptySceneNode::CEmptySceneNode(std::shared_ptr<ISceneManager> mgr, irr::s32 id)
+CEmptySceneNode::CEmptySceneNode(const std::shared_ptr<ISceneManager>& mgr, irr::s32 id)
 : ISceneNode( mgr, id)
 {
 	#ifdef _DEBUG

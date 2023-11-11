@@ -43,7 +43,7 @@ namespace irr
 		public:
 
 			//! Constructor
-			ISceneNode(std::shared_ptr<ISceneManager> mgr, s32 id = -1,
+			ISceneNode(const std::shared_ptr<ISceneManager>& mgr, s32 id = -1,
 				const core::vector3df& position = core::vector3df(0, 0, 0),
 				const core::vector3df& rotation = core::vector3df(0, 0, 0),
 				const core::vector3df& scale = core::vector3df(1.0f, 1.0f, 1.0f))
@@ -92,7 +92,7 @@ namespace irr
 				if (IsVisible)
 				{
 					ChildLock.lock_read();
-					for (auto child : Children)
+					for (auto& child : Children)
 					{
 						child->OnRegisterSceneNode();
 					}
@@ -133,14 +133,14 @@ namespace irr
 					// perform the post render process on all children
 					if (Children.size() < 1000)
 					{
-						for (auto child : Children)
+						for (auto& child : Children)
 						{
 							child->OnAnimate(timeMs);
 						}
 					}
 					else
 					{
-						concurrency::parallel_for_each(Children.begin(), Children.end(), [timeMs](std::shared_ptr<ISceneNode> it) {
+						concurrency::parallel_for_each(Children.begin(), Children.end(), [timeMs](std::shared_ptr<ISceneNode>& it) {
 							it->OnAnimate(timeMs);
 							});
 					}
@@ -301,7 +301,7 @@ namespace irr
 				ID = id;
 			}
 
-			virtual void immediateSetParent(std::shared_ptr<ISceneNode> parent)
+			virtual void immediateSetParent(const std::shared_ptr<ISceneNode>& parent)
 			{
 				Parent = parent;
 			}
@@ -310,7 +310,7 @@ namespace irr
 			/** If the scene node already has a parent it is first removed
 			from the other parent.
 			\param child A pointer to the new child. */
-			virtual void addChild(std::shared_ptr<ISceneNode> child)
+			virtual void addChild(const std::shared_ptr<ISceneNode>& child)
 			{
 				if (child && (child != shared_from_this()))
 				{
@@ -333,7 +333,7 @@ namespace irr
 			\param child A pointer to the child which shall be removed.
 			\return True if the child was removed, and false if not,
 			e.g. because it couldn't be found in the children list. */
-			virtual bool removeChild(std::shared_ptr<ISceneNode> child)
+			virtual bool removeChild(const std::shared_ptr<ISceneNode>& child)
 			{
 				//find child in children vector and erase it if found
 				ChildLock.lock();
@@ -626,7 +626,7 @@ namespace irr
 
 			//! Changes the parent of the scene node.
 			/** \param newParent The new parent to be used. */
-			virtual void setParent(std::shared_ptr<ISceneNode> newParent)
+			virtual void setParent(const std::shared_ptr<ISceneNode>& newParent)
 			{
 				;
 				remove();
@@ -830,7 +830,7 @@ namespace irr
 
 			//! Sets the new scene manager for this node and all children.
 			//! Called by addChild when moving nodes between scene managers
-			void setSceneManager(std::shared_ptr<ISceneManager> newManager)
+			void setSceneManager(const std::shared_ptr<ISceneManager>& newManager)
 			{
 				SceneManager = newManager;
 

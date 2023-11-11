@@ -235,52 +235,52 @@ namespace scene
 			{
 			}
 
-			virtual void clear()
+			virtual void clear() override
 			{
 				Data.clear();
 			}
 
-			virtual void* pointer()
+			virtual void* pointer() override
 			{
 				return Data.pointer();
 			}
 
-			virtual u32 size() const
+			virtual u32 size() const override
 			{
 				return Data.size();
 			}
 
-			virtual u32 getLast()
+			virtual u32 getLast() override
 			{
 				return (u32)Data.getLast();
 			}
 
-			virtual void set_used(u32 used)
+			virtual void set_used(u32 used) override
 			{
 				Data.set_used(used);
 			}
 
-			virtual void reallocate(u32 size)
+			virtual void reallocate(u32 size) override
 			{
 				Data.reallocate(size);
 			}
 
-			virtual u32 allocated_size() const
+			virtual u32 allocated_size() const override
 			{
 				return Data.allocated_size();
 			}
 
-			virtual s32 linear_reverse_search(const u32& element) const
+			virtual s32 linear_reverse_search(const u32& element) const override
 			{
 				return Data.linear_reverse_search(element);
 			}
 
-			virtual void addIndex(const u32& index)
+			virtual void addIndex(const u32& index) override
 			{
 				Data.push_back(index);
 			}
 
-			virtual u32 getIndex(u32 id) const
+			virtual u32 getIndex(u32 id) const override
 			{
 				if (id < Data.size())
 					return Data[id];
@@ -288,7 +288,7 @@ namespace scene
 				return 0;
 			}
 
-			virtual void setIndex(u32 id, u32 index)
+			virtual void setIndex(u32 id, u32 index) override
 			{
 				if (id < Data.size())
 					Data[id] = (T)index;

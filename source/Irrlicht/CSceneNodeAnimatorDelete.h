@@ -19,7 +19,7 @@ namespace irr
 			CSceneNodeAnimatorDelete(std::shared_ptr<ISceneManager> manager, u32 when);
 
 			//! animates a scene node
-			virtual void animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs) _IRR_OVERRIDE_;
+			virtual void animateNode(const std::shared_ptr<ISceneNode>& node, u32 timeMs) _IRR_OVERRIDE_;
 
 			//! Returns type of the scene node animator
 			virtual ESCENE_NODE_ANIMATOR_TYPE getType() const _IRR_OVERRIDE_

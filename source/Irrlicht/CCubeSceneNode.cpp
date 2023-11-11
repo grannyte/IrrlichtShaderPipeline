@@ -29,7 +29,8 @@ namespace scene
 	*/
 
 //! constructor
-CCubeSceneNode::CCubeSceneNode(f32 size, std::shared_ptr<ISceneManager> mgr,
+CCubeSceneNode::CCubeSceneNode(f32 size, 
+		const std::shared_ptr<ISceneManager>& mgr,
 		s32 id, const core::vector3df& position,
 		const core::vector3df& rotation, const core::vector3df& scale)
 	: IMeshSceneNode( mgr, id, position, rotation, scale),
@@ -129,7 +130,7 @@ const core::aabbox3d<f32>& CCubeSceneNode::getBoundingBox() const
 //! Removes a child from this scene node.
 //! Implemented here, to be able to remove the shadow properly, if there is one,
 //! or to remove attached childs.
-bool CCubeSceneNode::removeChild(std::shared_ptr<ISceneNode> child)
+bool CCubeSceneNode::removeChild(const std::shared_ptr<ISceneNode>& child)
 {
 	if (child && Shadow == child)
 	{

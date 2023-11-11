@@ -76,7 +76,7 @@ namespace scene
 		virtual ITriangleSelector* getWorld() const _IRR_OVERRIDE_;
 
 		//! animates a scene node
-		virtual void animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs) _IRR_OVERRIDE_;
+		virtual void animateNode(const std::shared_ptr<ISceneNode>& node, u32 timeMs) _IRR_OVERRIDE_;
 
 		//! Writes attributes of the scene node animator.
 		virtual void serializeAttributes(io::IAttributes* out, io::SAttributeReadWriteOptions* options=0) const _IRR_OVERRIDE_;

@@ -95,8 +95,8 @@ bool CSceneNodeAnimatorCameraFPS::OnEvent(const SEvent& evt)
 	return false;
 }
 
-
-void CSceneNodeAnimatorCameraFPS::animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs)
+#pragma float_control( precise,on , push )
+void CSceneNodeAnimatorCameraFPS::animateNode(const std::shared_ptr<ISceneNode>& node, u32 timeMs)
 {
 	if (!node || node->getType() != ESNT_CAMERA)
 		return;
@@ -291,6 +291,7 @@ void CSceneNodeAnimatorCameraFPS::animateNode(std::shared_ptr<ISceneNode> node, 
 	target += pos;
 	camera->setTarget(target);
 }
+#pragma float_control( pop )
 
 
 void CSceneNodeAnimatorCameraFPS::allKeysUp()

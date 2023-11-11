@@ -824,19 +824,19 @@ namespace irr
 		template <class T>
 		inline CMatrix4<T>& CMatrix4<T>::setRotationRadians(const vector3d<T>& rotation)
 		{
-			const f64 cr = cos(rotation.X);
-			const f64 sr = sin(rotation.X);
-			const f64 cp = cos(rotation.Y);
-			const f64 sp = sin(rotation.Y);
-			const f64 cy = cos(rotation.Z);
-			const f64 sy = sin(rotation.Z);
+			const T cr = cos(rotation.X);
+			const T sr = sin(rotation.X);
+			const T cp = cos(rotation.Y);
+			const T sp = sin(rotation.Y);
+			const T cy = cos(rotation.Z);
+			const T sy = sin(rotation.Z);
 
 			M[0] = (T)(cp * cy);
 			M[1] = (T)(cp * sy);
 			M[2] = (T)(-sp);
 
-			const f64 srsp = sr * sp;
-			const f64 crsp = cr * sp;
+			const T srsp = sr * sp;
+			const T crsp = cr * sp;
 
 			M[4] = (T)(srsp * cy - cr * sy);
 			M[5] = (T)(srsp * sy + cr * cy);
@@ -2494,6 +2494,173 @@ namespace irr
 			_mm_store_ps(&M[12], _mm_mul_ps(_mm_load_ps(&M[12]), _mm_load1_ps(&scalar)));
 			return *this;
 		}
+
+		template <>
+		inline CMatrix4<f32>& CMatrix4<f32>::setbyproduct_nocheck(const CMatrix4<f32>& other_a, const CMatrix4<f32>& other_b)
+		{
+			const float* m1 = other_a.M;
+			const float* m2 = other_b.M;
+
+			__m128 row1 = _mm_loadu_ps(m1);
+			__m128 row2 = _mm_loadu_ps(m1 + 4);
+			__m128 row3 = _mm_loadu_ps(m1 + 8);
+			__m128 row4 = _mm_loadu_ps(m1 + 12);
+
+			for (int i = 0; i < 4; i++) {
+				__m128 brod1 = _mm_set1_ps(m2[4 * i + 0]);
+				__m128 brod2 = _mm_set1_ps(m2[4 * i + 1]);
+				__m128 brod3 = _mm_set1_ps(m2[4 * i + 2]);
+				__m128 brod4 = _mm_set1_ps(m2[4 * i + 3]);
+				__m128 row = _mm_add_ps(
+					_mm_add_ps(
+						_mm_mul_ps(brod1, row1),
+						_mm_mul_ps(brod2, row2)),
+					_mm_add_ps(
+						_mm_mul_ps(brod3, row3),
+						_mm_mul_ps(brod4, row4)));
+				_mm_store_ps(&M[4 * i], row);
+			}
+
+#if defined (USE_MATRIX_TEST)
+			definitelyIdentityMatrix = false;
+#endif
+			return *this;
+		}
+
+		static inline void invert4x4(const float* src, float* dst)
+		{
+			__m128 minor0, minor1, minor2, minor3;
+			__m128 row0, row1, row2, row3;
+			__m128 det, tmp1;
+
+			tmp1 = _mm_loadh_pi(_mm_loadl_pi(tmp1, (__m64*)(src)), (__m64*)(src + 4));
+			row1 = _mm_loadh_pi(_mm_loadl_pi(row1, (__m64*)(src + 8)), (__m64*)(src + 12));
+
+			row0 = _mm_shuffle_ps(tmp1, row1, 0x88);
+			row1 = _mm_shuffle_ps(row1, tmp1, 0xDD);
+
+			tmp1 = _mm_loadh_pi(_mm_loadl_pi(tmp1, (__m64*)(src + 2)), (__m64*)(src + 6));
+			row3 = _mm_loadh_pi(_mm_loadl_pi(row3, (__m64*)(src + 10)), (__m64*)(src + 14));
+
+			row2 = _mm_shuffle_ps(tmp1, row3, 0x88);
+			row3 = _mm_shuffle_ps(row3, tmp1, 0xDD);
+
+			tmp1 = _mm_mul_ps(row2, row3);
+			tmp1 = _mm_shuffle_ps(tmp1, tmp1, 0xB1);
+
+			minor0 = _mm_mul_ps(row1, tmp1);
+			minor1 = _mm_mul_ps(row0, tmp1);
+
+			tmp1 = _mm_shuffle_ps(tmp1, tmp1, 0x4E);
+
+			minor0 = _mm_sub_ps(_mm_mul_ps(row1, tmp1), minor0);
+			minor1 = _mm_sub_ps(_mm_mul_ps(row0, tmp1), minor1);
+			minor1 = _mm_shuffle_ps(minor1, minor1, 0x4E);
+
+			tmp1 = _mm_mul_ps(row1, row2);
+			tmp1 = _mm_shuffle_ps(tmp1, tmp1, 0xB1);
+
+			minor0 = _mm_add_ps(_mm_mul_ps(row3, tmp1), minor0);
+			minor3 = _mm_mul_ps(row0, tmp1);
+
+			tmp1 = _mm_shuffle_ps(tmp1, tmp1, 0x4E);
+
+			minor0 = _mm_sub_ps(minor0, _mm_mul_ps(row3, tmp1));
+			minor3 = _mm_sub_ps(_mm_mul_ps(row0, tmp1), minor3);
+			minor3 = _mm_shuffle_ps(minor3, minor3, 0x4E);
+
+			tmp1 = _mm_mul_ps(_mm_shuffle_ps(row1, row1, 0x4E), row3);
+			tmp1 = _mm_shuffle_ps(tmp1, tmp1, 0xB1);
+			row2 = _mm_shuffle_ps(row2, row2, 0x4E);
+
+			minor0 = _mm_add_ps(_mm_mul_ps(row2, tmp1), minor0);
+			minor2 = _mm_mul_ps(row0, tmp1);
+
+			tmp1 = _mm_shuffle_ps(tmp1, tmp1, 0x4E);
+
+			minor0 = _mm_sub_ps(minor0, _mm_mul_ps(row2, tmp1));
+			minor2 = _mm_sub_ps(_mm_mul_ps(row0, tmp1), minor2);
+			minor2 = _mm_shuffle_ps(minor2, minor2, 0x4E);
+
+			tmp1 = _mm_mul_ps(row0, row1);
+			tmp1 = _mm_shuffle_ps(tmp1, tmp1, 0xB1);
+
+			minor2 = _mm_add_ps(_mm_mul_ps(row3, tmp1), minor2);
+			minor3 = _mm_sub_ps(_mm_mul_ps(row2, tmp1), minor3);
+
+			tmp1 = _mm_shuffle_ps(tmp1, tmp1, 0x4E);
+
+			minor2 = _mm_sub_ps(_mm_mul_ps(row3, tmp1), minor2);
+			minor3 = _mm_sub_ps(minor3, _mm_mul_ps(row2, tmp1));
+
+			tmp1 = _mm_mul_ps(row0, row3);
+			tmp1 = _mm_shuffle_ps(tmp1, tmp1, 0xB1);
+
+			minor1 = _mm_sub_ps(minor1, _mm_mul_ps(row2, tmp1));
+			minor2 = _mm_add_ps(_mm_mul_ps(row1, tmp1), minor2);
+
+			tmp1 = _mm_shuffle_ps(tmp1, tmp1, 0x4E);
+
+			minor1 = _mm_add_ps(_mm_mul_ps(row2, tmp1), minor1);
+			minor2 = _mm_sub_ps(minor2, _mm_mul_ps(row1, tmp1));
+
+			tmp1 = _mm_mul_ps(row0, row2);
+			tmp1 = _mm_shuffle_ps(tmp1, tmp1, 0xB1);
+
+			minor1 = _mm_add_ps(_mm_mul_ps(row3, tmp1), minor1);
+			minor3 = _mm_sub_ps(minor3, _mm_mul_ps(row1, tmp1));
+
+			tmp1 = _mm_shuffle_ps(tmp1, tmp1, 0x4E);
+
+			minor1 = _mm_sub_ps(minor1, _mm_mul_ps(row3, tmp1));
+			minor3 = _mm_add_ps(_mm_mul_ps(row1, tmp1), minor3);
+
+			det = _mm_mul_ps(row0, minor0);
+			det = _mm_add_ps(_mm_shuffle_ps(det, det, 0x4E), det);
+			det = _mm_add_ss(_mm_shuffle_ps(det, det, 0xB1), det);
+
+			tmp1 = _mm_rcp_ss(det);
+
+			det = _mm_sub_ss(_mm_add_ss(tmp1, tmp1), _mm_mul_ss(det, _mm_mul_ss(tmp1, tmp1)));
+			det = _mm_shuffle_ps(det, det, 0x00);
+
+			minor0 = _mm_mul_ps(det, minor0);
+			_mm_storel_pi((__m64*)(dst), minor0);
+			_mm_storeh_pi((__m64*)(dst + 2), minor0);
+
+			minor1 = _mm_mul_ps(det, minor1);
+			_mm_storel_pi((__m64*)(dst + 4), minor1);
+			_mm_storeh_pi((__m64*)(dst + 6), minor1);
+
+			minor2 = _mm_mul_ps(det, minor2);
+			_mm_storel_pi((__m64*)(dst + 8), minor2);
+			_mm_storeh_pi((__m64*)(dst + 10), minor2);
+
+			minor3 = _mm_mul_ps(det, minor3);
+			_mm_storel_pi((__m64*)(dst + 12), minor3);
+			_mm_storeh_pi((__m64*)(dst + 14), minor3);
+		}
+		/*
+		template <>
+		inline bool CMatrix4<f32>::getInverse(CMatrix4<f32>& out) const
+		{
+			/// Calculates the inverse of this Matrix
+			/// The inverse is calculated using Cramers rule.
+			/// If no inverse exists then 'false' is returned.
+
+#if defined ( USE_MATRIX_TEST )
+			if (this->isIdentity())
+			{
+				out = *this;
+				return true;
+			}
+#endif
+			invert4x4(M, out.M);
+#if defined ( USE_MATRIX_TEST )
+			out.definitelyIdentityMatrix = definitelyIdentityMatrix;
+#endif
+			return true;
+		}*/
 
 #else
 		typedef CMatrix4<f32> matrix4;

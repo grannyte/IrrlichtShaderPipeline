@@ -96,7 +96,7 @@ namespace irr
 
 
 		//! OnAnimate() is called just before rendering the whole scene.
-		void CSceneNodeAnimatorCameraMaya::animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs)
+		void CSceneNodeAnimatorCameraMaya::animateNode(const std::shared_ptr<ISceneNode>& node, u32 timeMs)
 		{
 			//Alt + LM = Rotate around camera pivot
 			//Alt + LM + MM = Dolly forth/back in view direction (speed % distance camera pivot - max distance to pivot)

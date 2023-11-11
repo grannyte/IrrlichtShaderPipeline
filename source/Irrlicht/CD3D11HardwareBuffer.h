@@ -45,7 +45,7 @@ public:
 	void copyFromMemory(const void* sysData, u32 offset, u32 length);
 
 	//! Copy data from another buffer
-	void copyFromBuffer(std::shared_ptr<IHardwareBuffer> buffer, u32 srcOffset, u32 descOffset, u32 length);
+	void copyFromBuffer(const std::shared_ptr<IHardwareBuffer>& buffer, u32 srcOffset, u32 descOffset, u32 length);
 
 	//! return unordered access view
 	ID3D11UnorderedAccessView* getUnorderedAccessView() const;

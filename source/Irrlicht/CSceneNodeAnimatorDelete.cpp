@@ -22,7 +22,7 @@ CSceneNodeAnimatorDelete::CSceneNodeAnimatorDelete(std::shared_ptr<ISceneManager
 
 
 //! animates a scene node
-void CSceneNodeAnimatorDelete::animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs)
+void CSceneNodeAnimatorDelete::animateNode(const std::shared_ptr<ISceneNode>& node, u32 timeMs)
 {
 	if (timeMs > FinishTime+PauseTimeSum)
 	{

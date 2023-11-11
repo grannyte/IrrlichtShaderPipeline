@@ -22,7 +22,7 @@ namespace irr
 		{
 		public:
 
-			CQuake3ShaderSceneNode(std::shared_ptr < scene::ISceneManager> mgr, s32 id,
+			CQuake3ShaderSceneNode(const std::shared_ptr < scene::ISceneManager>& mgr, s32 id,
 				io::IFileSystem* fileSystem,
 				const IMeshBuffer* original,
 				const quake3::IShader* shader
@@ -54,7 +54,7 @@ namespace irr
 			//! Removes a child from this scene node.
 			//! Implemented here, to be able to remove the shadow properly, if there is one,
 			//! or to remove attached childs.
-			virtual bool removeChild(std::shared_ptr<ISceneNode> child) _IRR_OVERRIDE_;
+			virtual bool removeChild(const std::shared_ptr<ISceneNode>& child) _IRR_OVERRIDE_;
 
 		private:
 			const quake3::IShader* Shader;

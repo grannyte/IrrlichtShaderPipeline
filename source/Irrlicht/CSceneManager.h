@@ -358,11 +358,11 @@ namespace irr
 			//! Returns the current active camera.
 			//! \return The active camera is returned. Note that this can be NULL, if there
 			//! was no camera created yet.
-			virtual std::shared_ptr<ICameraSceneNode> getActiveCamera() const _IRR_OVERRIDE_;
+			virtual const std::shared_ptr<ICameraSceneNode>& getActiveCamera() const _IRR_OVERRIDE_;
 
 			//! Sets the active camera. The previous active camera will be deactivated.
 			//! \param camera: The new camera which should be active.
-			virtual void setActiveCamera(std::shared_ptr<ICameraSceneNode> camera) _IRR_OVERRIDE_;
+			virtual void setActiveCamera(const std::shared_ptr<ICameraSceneNode>& camera) _IRR_OVERRIDE_;
 
 			//! creates a rotation animator, which rotates the attached scene node around itself.
 			//! \param rotationPerSecond: Specifies the speed of the animation

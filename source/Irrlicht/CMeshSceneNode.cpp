@@ -18,7 +18,8 @@ namespace irr
 	namespace scene
 	{
 		//! constructor
-		CMeshSceneNode::CMeshSceneNode(IMesh* mesh, std::shared_ptr<ISceneManager> mgr, s32 id,
+		CMeshSceneNode::CMeshSceneNode(IMesh* mesh, 
+			const std::shared_ptr<ISceneManager>& mgr, s32 id,
 			const core::vector3df& position, const core::vector3df& rotation,
 			const core::vector3df& scale)
 			: IMeshSceneNode( mgr, id, position, rotation, scale), Mesh(0), Shadow(0),
@@ -104,21 +105,28 @@ namespace irr
 			}
 		}
 
+		//! animate node
+		void CMeshSceneNode::OnAnimate(u32 timeMs)
+		{
+
+				ISceneNode::OnAnimate(timeMs);
+		}
+
 		//! renders the node.
 		void CMeshSceneNode::render()
 		{
-			video::IVideoDriver* driver = SceneManager.lock()->getVideoDriver();
+			const auto smgr = SceneManager.lock();
+			video::IVideoDriver* driver = smgr->getVideoDriver();
 
 			if (!Mesh || !driver)
 				return;
 
 			bool isTransparentPass =
-				SceneManager.lock()->getSceneNodeRenderPass() == scene::ESNRP_TRANSPARENT;
+				smgr->getSceneNodeRenderPass() == scene::ESNRP_TRANSPARENT;
 
 			++PassCount;
 
 			driver->setTransform(video::ETS_WORLD, AbsoluteTransformation);
-			Box = Mesh->getBoundingBox();
 
 			if (Shadow && PassCount == 1)
 				Shadow->updateShadowVolumes();
@@ -126,12 +134,12 @@ namespace irr
 			// for debug purposes only:
 
 			bool renderMeshes = true;
-			video::SMaterial mat;
 			if (DebugDataVisible && PassCount == 1)
 			{
 				// overwrite half transparency
 				if (DebugDataVisible & scene::EDS_HALF_TRANSPARENCY)
 				{
+					video::SMaterial mat;
 					for (u32 g = 0; g < Mesh->getMeshBufferCount(); ++g)
 					{
 						mat = Materials[g];
@@ -167,11 +175,11 @@ namespace irr
 				}
 			}
 
-			driver->setTransform(video::ETS_WORLD, AbsoluteTransformation);
 
 			// for debug purposes only:
 			if (DebugDataVisible && PassCount == 1)
 			{
+			driver->setTransform(video::ETS_WORLD, AbsoluteTransformation);
 				video::SMaterial m;
 				m.Lighting = false;
 				m.AntiAliasing = 0;
@@ -179,7 +187,7 @@ namespace irr
 
 				if (DebugDataVisible & scene::EDS_BBOX)
 				{
-					driver->draw3DBox(Box, video::SColor(255, 255, 255, 255));
+					driver->draw3DBox(Mesh? Mesh->getBoundingBox():Box , video::SColor(255, 255, 255, 255));
 				}
 				if (DebugDataVisible & scene::EDS_BBOX_BUFFERS)
 				{
@@ -221,7 +229,7 @@ namespace irr
 		//! Removes a child from this scene node.
 		//! Implemented here, to be able to remove the shadow properly, if there is one,
 		//! or to remove attached childs.
-		bool CMeshSceneNode::removeChild(std::shared_ptr<ISceneNode> child)
+		bool CMeshSceneNode::removeChild(const std::shared_ptr<ISceneNode>& child)
 		{
 			if (child && Shadow == child)
 			{

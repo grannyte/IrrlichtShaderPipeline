@@ -15,7 +15,7 @@ namespace scene
 {
 
 //! constructor
-CSphereSceneNode::CSphereSceneNode(f32 radius, u32 polyCountX, u32 polyCountY, std::shared_ptr<ISceneManager> mgr, s32 id,
+CSphereSceneNode::CSphereSceneNode(f32 radius, u32 polyCountX, u32 polyCountY,const  std::shared_ptr<ISceneManager>& mgr, s32 id,
 			const core::vector3df& position, const core::vector3df& rotation, const core::vector3df& scale)
 : IMeshSceneNode( mgr, id, position, rotation, scale), Mesh(0), Shadow(0),
 	Radius(radius), PolyCountX(polyCountX), PolyCountY(polyCountY)
@@ -64,7 +64,7 @@ void CSphereSceneNode::render()
 //! Removes a child from this scene node.
 //! Implemented here, to be able to remove the shadow properly, if there is one,
 //! or to remove attached childs.
-bool CSphereSceneNode::removeChild(std::shared_ptr<ISceneNode> child)
+bool CSphereSceneNode::removeChild(const std::shared_ptr<ISceneNode>& child)
 {
 	if (child && Shadow == child)
 	{

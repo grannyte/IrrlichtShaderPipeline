@@ -36,7 +36,7 @@ namespace scene
 		virtual ~CSceneNodeAnimatorCameraFPS();
 
 		//! Animates the scene node, currently only works on cameras
-		virtual void animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs) _IRR_OVERRIDE_;
+		virtual void animateNode(const std::shared_ptr<ISceneNode>& node, u32 timeMs) _IRR_OVERRIDE_;
 
 		//! Event receiver
 		virtual bool OnEvent(const SEvent& event) _IRR_OVERRIDE_;

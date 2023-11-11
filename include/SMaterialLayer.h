@@ -67,6 +67,21 @@ namespace video
 			// This pointer is checked during assignment
 			*this = other;
 		}
+		//! move constructor
+		/** \param other Material layer to move from. */
+		SMaterialLayer(SMaterialLayer&& other) noexcept
+			: Texture(other.Texture),
+			TextureWrapU(other.TextureWrapU),
+			TextureWrapV(other.TextureWrapV),
+			BilinearFilter(other.BilinearFilter),
+			TrilinearFilter(other.TrilinearFilter),
+			AnisotropicFilter(other.AnisotropicFilter),
+			LODBias(other.LODBias),
+			TextureMatrix(other.TextureMatrix)
+		{
+				other.Texture = nullptr;
+				other.TextureMatrix = nullptr;
+		}
 
 		//! Destructor
 		~SMaterialLayer()
@@ -114,6 +129,29 @@ namespace video
 
 			return *this;
 		}
+
+		//! move assignment operator
+		/** \param other Material layer to move from.*/
+		SMaterialLayer& operator=(SMaterialLayer&& other) noexcept
+		{
+			// Check for self-assignment!
+			if (this == &other)
+				return *this;
+
+			std::swap(Texture , other.Texture);
+			std::swap(TextureMatrix , other.TextureMatrix);
+
+
+			TextureWrapU = other.TextureWrapU;
+			TextureWrapV = other.TextureWrapV;
+			BilinearFilter = other.BilinearFilter;
+			TrilinearFilter = other.TrilinearFilter;
+			AnisotropicFilter = other.AnisotropicFilter;
+			LODBias = other.LODBias;
+
+			return *this;
+		}
+
 
 		//! Gets the texture transformation matrix
 		/** \return Texture matrix of this layer. */

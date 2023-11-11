@@ -40,7 +40,7 @@ void CSceneNodeAnimatorFlyCircle::init()
 
 
 //! animates a scene node
-void CSceneNodeAnimatorFlyCircle::animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs)
+void CSceneNodeAnimatorFlyCircle::animateNode(const std::shared_ptr<ISceneNode>& node, u32 timeMs)
 {
 	if ( 0 == node )
 		return;

@@ -50,7 +50,7 @@ void CSceneNodeAnimatorTexture::clearTextures()
 
 
 //! animates a scene node
-void CSceneNodeAnimatorTexture::animateNode(std::shared_ptr<ISceneNode> node, u32 timeMs)
+void CSceneNodeAnimatorTexture::animateNode(const std::shared_ptr<ISceneNode>& node, u32 timeMs)
 {
 	if(!node)
 		return;

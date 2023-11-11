@@ -934,6 +934,10 @@ namespace irr
 			virtual void draw2DRectangle(SColor color, const core::rect<s32>& pos,
 				const core::rect<s32>* clip = 0) = 0;
 
+			virtual void batchDraw2DRectangles(const irr::core::array<core::rect<s32>>& pos,
+								const irr::core::array < SColor>& color,
+								const irr::core::array <core::rect<s32>>* clip = 0) = 0;
+
 			//! Draws a 2d rectangle with a gradient.
 			/** \param colorLeftUp Color of the upper left corner to draw.
 			The alpha component will not be ignored and specifies how
@@ -955,6 +959,12 @@ namespace irr
 				SColor colorLeftUp, SColor colorRightUp,
 				SColor colorLeftDown, SColor colorRightDown,
 				const core::rect<s32>* clip = 0) = 0;
+
+
+			virtual void batchDraw2DRectangles(const irr::core::array<core::rect<s32>>& pos,
+				irr::core::array < SColor>& colorLeftUp, irr::core::array < SColor>& colorRightUp,
+				irr::core::array < SColor>& colorLeftDown, irr::core::array < SColor>& colorRightDown,
+				const irr::core::array <core::rect<s32>>* clip = 0) = 0;
 
 			//! Draws the outline of a 2D rectangle.
 			/** \param pos Position of the rectangle.

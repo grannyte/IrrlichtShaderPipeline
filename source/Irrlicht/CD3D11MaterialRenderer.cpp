@@ -21,7 +21,7 @@
 
 concurrency::critical_section mylock;
 //this is a nasty hack not thread safe
-irr::core::stringc value = "";
+const irr::core::stringc value = irr::core::stringc(irr::video::MATERIAL_MAX_TEXTURES);
 
 class CShaderInclude : public ID3DInclude
 {
@@ -270,10 +270,8 @@ namespace irr
 		void CD3D11MaterialRenderer::addMacros(core::array<D3D_SHADER_MACRO>& macroArray)
 		{
 			D3D_SHADER_MACRO macro;
-			value.removeChars("16");
 			// indicates how match textures are supported by the engine
 			macro.Name = "MAX_TEXTURES";
-			value += MATERIAL_MAX_TEXTURES;
 			macro.Definition = value.c_str();
 			macroArray.push_back(macro);
 

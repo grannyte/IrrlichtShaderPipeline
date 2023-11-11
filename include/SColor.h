@@ -117,7 +117,9 @@ namespace video
 		ECF_BC7_S,
 
 		//! Unknown color format:
-		ECF_UNKNOWN
+		ECF_UNKNOWN,
+
+		ECF_FORCE_32BIT = 0x7fffffff
 	};
 
 

@@ -17,7 +17,7 @@ namespace scene
 	public:
 
 		//! constructor
-		CEmptySceneNode(std::shared_ptr<ISceneManager> mgr, irr::s32 id);
+		CEmptySceneNode(const std::shared_ptr<ISceneManager>& mgr, irr::s32 id);
 
 		//! returns the axis aligned bounding box of this node
 		const irr::core::aabbox3d<f32>& getBoundingBox() const _IRR_OVERRIDE_;

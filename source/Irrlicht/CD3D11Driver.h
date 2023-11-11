@@ -264,7 +264,10 @@ namespace irr
 			virtual void draw2DRectangle(const core::rect<s32>& pos,
 				SColor colorLeftUp, SColor colorRightUp, SColor colorLeftDown, SColor colorRightDown,
 				const core::rect<s32>* clip);
-
+			virtual void batchDraw2DRectangles(const irr::core::array<core::rect<s32>>& pos,
+				irr::core::array < SColor>& colorLeftUp, irr::core::array < SColor>& colorRightUp,
+				irr::core::array < SColor>& colorLeftDown, irr::core::array < SColor>& colorRightDown,
+				const irr::core::array <core::rect<s32>>* clip = 0) _IRR_OVERRIDE_;
 			//! Draws a 2d line.
 			virtual void draw2DLine(const core::position2d<s32>& start,
 				const core::position2d<s32>& end,
@@ -596,8 +599,7 @@ namespace irr
 			DXGI_FORMAT DepthStencilFormat;		// Best format for depth stencil
 			SIrrlichtCreationParameters Params;
 
-			std::map < E_HARDWARE_BUFFER_TYPE, 
-			std::queue< std::shared_ptr<CD3D11HardwareBuffer>>> MeshBuffer2dQueues;
+			std::array <std::queue< std::shared_ptr<CD3D11HardwareBuffer>>, E_HARDWARE_BUFFER_TYPE::EHBT_COUNT> MeshBuffer2dQueues;
 
 			std::shared_ptr<CD3D11HardwareBuffer> GetTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, const void* initialData);
 
@@ -605,8 +607,7 @@ namespace irr
 
 
 			std::shared_ptr<CD3D11HardwareBuffer> CreateTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, const void* initialData);
-			std::map < E_HARDWARE_BUFFER_TYPE,
-			std::queue< std::shared_ptr<CD3D11HardwareBuffer>>> MeshBuffer2dBacks;
+			std::array <std::queue< std::shared_ptr<CD3D11HardwareBuffer>>,E_HARDWARE_BUFFER_TYPE::EHBT_COUNT> MeshBuffer2dBacks;
 
 			void revertTempHWBuffers();
 

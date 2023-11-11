@@ -18,7 +18,8 @@ namespace scene
 	public:
 
 		//! constructor
-		CMeshSceneNode(IMesh* mesh,std::shared_ptr<ISceneManager> mgr,	s32 id,
+		CMeshSceneNode(IMesh* mesh,
+			const std::shared_ptr<ISceneManager>& mgr,	s32 id,
 			const core::vector3df& position = core::vector3df(0,0,0),
 			const core::vector3df& rotation = core::vector3df(0,0,0),
 			const core::vector3df& scale = core::vector3df(1.0f, 1.0f, 1.0f));
@@ -28,6 +29,9 @@ namespace scene
 
 		//! frame
 		virtual void OnRegisterSceneNode() _IRR_OVERRIDE_;
+
+		//! animate
+		virtual void OnAnimate(u32 timeMs) _IRR_OVERRIDE_;
 
 		//! renders the node.
 		virtual void render() _IRR_OVERRIDE_;
@@ -80,7 +84,7 @@ namespace scene
 		//! Removes a child from this scene node.
 		//! Implemented here, to be able to remove the shadow properly, if there is one,
 		//! or to remove attached childs.
-		virtual bool removeChild(std::shared_ptr<ISceneNode> child) _IRR_OVERRIDE_;
+		virtual bool removeChild(const std::shared_ptr<ISceneNode>& child) _IRR_OVERRIDE_;
 
 	protected:
 

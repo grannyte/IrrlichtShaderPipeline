@@ -24,7 +24,7 @@ namespace scene
 
 //! constructor
 COctreeSceneNode::COctreeSceneNode(const core::array<scene::IMeshBuffer*>& meshes, 
-					std::shared_ptr<ISceneManager> mgr, s32 id, s32 minimalPolysPerNode)
+					const std::shared_ptr<ISceneManager> & mgr, s32 id, s32 minimalPolysPerNode)
 	: IMeshSceneNode( mgr, id), StdOctree(0), MinimalPolysPerNode(minimalPolysPerNode), Mesh(0), Shadow(0),
 	UseVBOs(OCTREE_USE_HARDWARE), UseVisibilityAndVBOs(OCTREE_USE_VISIBILITY),
 	BoxBased(OCTREE_BOX_BASED)
@@ -206,7 +206,7 @@ void COctreeSceneNode::render()
 //! Removes a child from this scene node.
 //! Implemented here, to be able to remove the shadow properly, if there is one,
 //! or to remove attached childs.
-bool COctreeSceneNode::removeChild(std::shared_ptr<ISceneNode> child)
+bool COctreeSceneNode::removeChild(const std::shared_ptr<ISceneNode>& child)
 {
 	if (child && Shadow == child)
 	{

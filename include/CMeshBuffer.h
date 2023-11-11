@@ -418,12 +418,12 @@ namespace scene
 
 		//! Get the currently used ID for identification of changes.
 		/** This shouldn't be used for anything outside the VideoDriver. */
-		virtual u32 getChangedID_Index() const
+		virtual u32 getChangedID_Index() const override
 		{
 			return IndexBuffer->getChangedID();
 		}
 
-		virtual core::matrix4& getTransformation()
+		virtual core::matrix4& getTransformation() override
 		{
 			return Transformation;
 		}

@@ -27,7 +27,7 @@ namespace scene
 
 //! constructor
 CAnimatedMeshSceneNode::CAnimatedMeshSceneNode(IAnimatedMesh* mesh,
-		 std::shared_ptr<ISceneManager> mgr, s32 id,
+		 const std::shared_ptr<ISceneManager>& mgr, s32 id,
 		const core::vector3df& position,
 		const core::vector3df& rotation,
 		const core::vector3df& scale)
@@ -645,7 +645,7 @@ u32 CAnimatedMeshSceneNode::getJointCount() const
 //! Removes a child from this scene node.
 //! Implemented here, to be able to remove the shadow properly, if there is one,
 //! or to remove attached childs.
-bool CAnimatedMeshSceneNode::removeChild(std::shared_ptr<ISceneNode> child)
+bool CAnimatedMeshSceneNode::removeChild(const std::shared_ptr<ISceneNode>& child)
 {
 	if (child && Shadow == child)
 	{
