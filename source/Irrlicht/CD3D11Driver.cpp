@@ -746,7 +746,7 @@ namespace irr
 				logFormatError(Device->GetDeviceRemovedReason(), "device removed because");
 				return false;
 			}
-
+			HardwareBuffer.erase(std::remove_if(HardwareBuffer.begin(), HardwareBuffer.end(), [](std::weak_ptr<video::IHardwareBuffer> i) { return i.expired(); }), HardwareBuffer.end());
 			return true;
 		}
 
@@ -1038,7 +1038,6 @@ namespace irr
 			auto hardwareBuffer = std::make_shared<CD3D11HardwareBuffer>(vertexBuffer, this);
 			vertexBuffer->setHardwareBuffer(hardwareBuffer);
 			bool extendArray = true;
-
 			for (u32 i = 0; i < HardwareBuffer.size(); ++i)
 			{
 				if (!HardwareBuffer[i].lock())
