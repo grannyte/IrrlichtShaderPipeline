@@ -313,7 +313,8 @@ u32 CSkyBoxSceneNode::getMaterialCount() const
 std::shared_ptr<ISceneNode> CSkyBoxSceneNode::clone(std::shared_ptr<ISceneNode> newParent,
                                                     std::shared_ptr<ISceneManager> newManager)
 {
-	if (!newParent) newParent = Parent.lock();
+	if (!newParent)
+		newParent = std::dynamic_pointer_cast<ISceneNode>(rawParent->shared_from_this());;
 	if (!newManager) newManager = SceneManager.lock();
 
 	auto nb = std::make_shared< CSkyBoxSceneNode>(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,	newManager, ID);

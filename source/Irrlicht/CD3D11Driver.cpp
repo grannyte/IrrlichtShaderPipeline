@@ -289,7 +289,7 @@ namespace irr
 #ifdef _DEBUG
 				deviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
 #endif
-				//deviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
+				deviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
 
 				if (!Params.DriverMultithreaded)
 					deviceFlags |= D3D11_CREATE_DEVICE_SINGLETHREADED;

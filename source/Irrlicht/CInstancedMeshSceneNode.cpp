@@ -331,7 +331,7 @@ namespace irr
 		                                                           std::shared_ptr<ISceneManager> newManager)
 		{
 			if (!newParent)
-				newParent = Parent.lock();
+				newParent = std::dynamic_pointer_cast<ISceneNode>(rawParent->shared_from_this());
 			if (!newManager)
 				newManager = SceneManager.lock();
 

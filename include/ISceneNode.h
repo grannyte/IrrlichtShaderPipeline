@@ -50,7 +50,7 @@ namespace irr
 				: RelativeTranslation(position), RelativeRotation(rotation), RelativeScale(scale),
 				SceneManager(mgr), TriangleSelector(0), ID(id),
 				AutomaticCullingState(EAC_FRUSTUM_BOX), DebugDataVisible(EDS_OFF),
-				IsVisible(true), IsDebugObject(false)
+				IsVisible(true), IsDebugObject(false), rawParent(nullptr)
 			{
 
 				updateAbsolutePosition();
@@ -129,22 +129,25 @@ namespace irr
 
 					// update absolute position
 					updateAbsolutePosition();
-					ChildLock.lock_read();
-					// perform the post render process on all children
-					if (Children.size() < 1000)
+					if (Children.size() > 0)
 					{
-						for (auto& child : Children)
+						ChildLock.lock_read();
+						// perform the post render process on all children
+						if (Children.size() < 1000)
 						{
-							child->OnAnimate(timeMs);
+							for (auto& child : Children)
+							{
+								child->OnAnimate(timeMs);
+							}
 						}
+						else
+						{
+							concurrency::parallel_for_each(Children.begin(), Children.end(), [timeMs](std::shared_ptr<ISceneNode>& it) {
+								it->OnAnimate(timeMs);
+								});
+						}
+						ChildLock.unlock();
 					}
-					else
-					{
-						concurrency::parallel_for_each(Children.begin(), Children.end(), [timeMs](std::shared_ptr<ISceneNode>& it) {
-							it->OnAnimate(timeMs);
-							});
-					}
-					ChildLock.unlock();
 				}
 			}
 
@@ -267,10 +270,10 @@ namespace irr
 				if (!IsVisible)
 					return false;
 
-				if (!Parent.lock())
+				if (!rawParent)
 					return true;
 
-				return Parent.lock()->isTrulyVisible();
+				return rawParent->isTrulyVisible();
 			}
 
 			//! Sets if the node should be visible or not.
@@ -303,7 +306,7 @@ namespace irr
 
 			virtual void immediateSetParent(const std::shared_ptr<ISceneNode>& parent)
 			{
-				Parent = parent;
+				rawParent = parent.get();
 			}
 
 			//! Adds a child to this scene node.
@@ -371,8 +374,8 @@ namespace irr
 			*/
 			virtual void remove()
 			{
-				if (Parent.lock())
-					Parent.lock()->removeChild(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()));
+				if (rawParent)
+					rawParent->removeChild(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()));
 			}
 
 
@@ -633,8 +636,8 @@ namespace irr
 
 				immediateSetParent(newParent);
 
-				if (Parent.lock())
-					Parent.lock()->addChild(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()));
+				if (rawParent)
+					rawParent->addChild(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()));
 			}
 
 
@@ -682,10 +685,10 @@ namespace irr
 				hierarchy you might want to update the parents first.*/
 			virtual void updateAbsolutePosition()
 			{
-				if (auto lockedparent= Parent.lock())
+				if (rawParent)
 				{
 					AbsoluteTransformation =
-						lockedparent->getAbsoluteTransformation() * getRelativeTransformation();
+						rawParent->getAbsoluteTransformation() * getRelativeTransformation();
 				}
 				else
 					AbsoluteTransformation = getRelativeTransformation();
@@ -696,7 +699,9 @@ namespace irr
 			/** \return A pointer to the parent. */
 			std::shared_ptr<scene::ISceneNode > getParent() const
 			{
-				return Parent.lock();
+				if(rawParent)
+					return std::dynamic_pointer_cast<ISceneNode>(rawParent->shared_from_this());
+				return nullptr;
 			}
 
 
@@ -855,7 +860,7 @@ namespace irr
 			core::vector3df RelativeScale;
 
 			//! Pointer to the parent
-			std::weak_ptr<ISceneNode> Parent;
+			ISceneNode* rawParent;
 
 			//! List of all children of this node
 			ISceneNodeList Children;

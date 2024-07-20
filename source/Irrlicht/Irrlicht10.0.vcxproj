@@ -196,6 +196,7 @@
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <PlatformToolset>v143</PlatformToolset>
     <EnableASAN>false</EnableASAN>
+    <PreferredToolArchitecture>x64</PreferredToolArchitecture>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
@@ -753,7 +754,7 @@
       <RuntimeTypeInfo>true</RuntimeTypeInfo>
       <CreateHotpatchableImage>false</CreateHotpatchableImage>
       <LanguageStandard>stdcpplatest</LanguageStandard>
-      <ControlFlowGuard>Guard</ControlFlowGuard>
+      <ControlFlowGuard>false</ControlFlowGuard>
       <CompileAsManaged>false</CompileAsManaged>
       <ConformanceMode>false</ConformanceMode>
       <EnableModules>

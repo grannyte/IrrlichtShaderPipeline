@@ -875,9 +875,9 @@ void CAnimatedMeshSceneNode::updateAbsolutePosition()
 		}
 
 		SMD3QuaternionTag parent ( MD3Special->Tagname );
-		if (Parent.lock() && Parent.lock()->getType() == ESNT_ANIMATED_MESH)
+		if (rawParent && rawParent->getType() == ESNT_ANIMATED_MESH)
 		{
-			const SMD3QuaternionTag * p = std::dynamic_pointer_cast<IAnimatedMeshSceneNode> (Parent.lock())->getMD3TagTransformation
+			const SMD3QuaternionTag * p = ((IAnimatedMeshSceneNode*) rawParent)->getMD3TagTransformation
 									( MD3Special->Tagname );
 
 			if (p)
@@ -1063,7 +1063,7 @@ std::shared_ptr<ISceneNode> CAnimatedMeshSceneNode::clone(std::shared_ptr<IScene
                                                           std::shared_ptr<ISceneManager> newManager)
 {
 	if (!newParent)
-		newParent = Parent.lock();
+		newParent = std::dynamic_pointer_cast<ISceneNode>(rawParent->shared_from_this());
 	if (!newManager)
 		newManager = SceneManager.lock();
 

@@ -76,11 +76,11 @@ namespace irr
 				Mapping = indexBuffer->getHardwareMappingHint();
 				Size = indexBuffer->getIndexSize() * indexBuffer->getIndexCount();
 				Stride = indexBuffer->getIndexSize();
+				LinkedBuffer = indexBuffer;
 				createInternalBuffer(indexBuffer->getIndices());
 
 				RequiredUpdate = false;
 
-				LinkedBuffer = indexBuffer;
 			}
 		}
 
@@ -104,11 +104,11 @@ namespace irr
 				Mapping = vertexBuffer->getHardwareMappingHint();
 				Size = vertexBuffer->getVertexSize() * vertexBuffer->getVertexCount();
 				Stride = vertexBuffer->getVertexSize();
+				LinkedBuffer = vertexBuffer;
 				createInternalBuffer(vertexBuffer->getVertices());
 
 				RequiredUpdate = false;
 
-				LinkedBuffer = vertexBuffer;
 
 			}
 		}
@@ -133,11 +133,11 @@ namespace irr
 				Mapping = computeBuffer->getHardwareMappingHint();
 				Size = computeBuffer->getBufferSize();
 				Stride = computeBuffer->getStructureStride();
+				LinkedBuffer = computeBuffer;
 				createInternalBuffer(computeBuffer->getBufferPointer());
 
 				RequiredUpdate = false;
 
-				LinkedBuffer = computeBuffer;
 
 			}
 		
@@ -491,6 +491,10 @@ namespace irr
 			auto pGetVertices = LinkedBuffer && LinkedBuffer->getBufferType() == irr::scene::EBT_VERTEX ? ((scene::IVertexBuffer*)LinkedBuffer)->getVertices() : LinkedBuffer && LinkedBuffer->getBufferType() == irr::scene::EBT_INDEX ? ((scene::IIndexBuffer*)LinkedBuffer)->getIndices():0;
 			auto pInitialData = initialData;
 			auto pdatapsysmem = data.pSysMem;
+
+			//Print the content of desc and data
+			printf("desc.ByteWidth : %d desc.Usage : %d desc.BindFlags : %d desc.CPUAccessFlags : %d desc.MiscFlags : %d desc.StructureByteStride : %d\n", desc.ByteWidth, desc.Usage, desc.BindFlags, desc.CPUAccessFlags, desc.MiscFlags, desc.StructureByteStride);
+			printf("data.pSysMem : %p data.SysMemPitch : %d data.SysMemSlicePitch : %d\n", data.pSysMem, data.SysMemPitch, data.SysMemSlicePitch);
 
 			hr = Device->CreateBuffer(&desc, initialData != nullptr? &data:0, &Buffer);
 			if (FAILED(hr))

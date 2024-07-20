@@ -298,9 +298,9 @@ namespace irr
 			if (oldVertexCount != VertexCount || oldIndexCount != IndexCount)
 				calculateAdjacency();
 
-			core::matrix4 mat = Parent.lock()->getAbsoluteTransformation();
+			core::matrix4 mat = rawParent->getAbsoluteTransformation();
 			mat.makeInverse();
-			const core::vector3df parentpos = Parent.lock()->getAbsolutePosition();
+			const core::vector3df parentpos = rawParent->getAbsolutePosition();
 
 			// TODO: Only correct for point lights.
 			for (i = 0; i < lightCount; ++i)
@@ -335,7 +335,7 @@ namespace irr
 			if (!ShadowVolumesUsed || !driver)
 				return;
 
-			driver->setTransform(video::ETS_WORLD, Parent.lock()->getAbsoluteTransformation());
+			driver->setTransform(video::ETS_WORLD, rawParent->getAbsoluteTransformation());
 
 			for (u32 i = 0; i < ShadowVolumesUsed; ++i)
 			{
@@ -347,7 +347,7 @@ namespace irr
 
 					SViewFrustum frust = *SceneManager.lock()->getActiveCamera()->getViewFrustum();
 
-					core::matrix4 invTrans(Parent.lock()->getAbsoluteTransformation(), core::matrix4::EM4CONST_INVERSE);
+					core::matrix4 invTrans(rawParent->getAbsoluteTransformation(), core::matrix4::EM4CONST_INVERSE);
 					frust.transform(invTrans);
 
 					core::vector3df edges[8];

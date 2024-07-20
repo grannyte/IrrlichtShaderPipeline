@@ -363,7 +363,7 @@ std::shared_ptr<ISceneNode> CCameraSceneNode::clone(std::shared_ptr<ISceneNode> 
 	ICameraSceneNode::clone(newParent, newManager);
 
 	if (!newParent)
-		newParent = Parent.lock();
+		newParent = std::dynamic_pointer_cast<ISceneNode>(rawParent->shared_from_this());
 	if (!newManager)
 		newManager = SceneManager.lock();
 
