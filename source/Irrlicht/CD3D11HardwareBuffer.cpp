@@ -31,12 +31,13 @@ namespace irr
 		}
 
 		CD3D11HardwareBuffer::CD3D11HardwareBuffer(CD3D11Driver* driver, E_HARDWARE_BUFFER_TYPE type,
-			scene::E_HARDWARE_MAPPING mapping, u32 size, u32 flags, const void* initialData)
+			scene::E_HARDWARE_MAPPING mapping, u32 size, u32 flags,u32 stride, const void* initialData)
 			: IHardwareBuffer(mapping, flags, size, type, driver->getDriverType()),
 			Device(driver->getExposedVideoData().D3D11.D3DDev11), Context(NULL), Buffer(NULL), UAView(NULL), SRView(NULL), Driver(driver),
 			LastMapDirection((D3D11_MAP)0),
 			 LinkedBuffer(0)
 		{
+			Stride = stride;
 #ifdef _DEBUG
 			//setDebugName("CD3D11HardwareBuffer");
 #endif
@@ -279,7 +280,7 @@ namespace irr
 			}
 			else
 			{
-				TempStagingBuffer = std::make_shared<CD3D11HardwareBuffer>(Driver, EHBT_SYSTEM, scene::EHM_STAGING, Size, 0);
+				TempStagingBuffer = std::make_shared<CD3D11HardwareBuffer>(Driver, EHBT_SYSTEM, scene::EHM_STAGING, Size, 0,Stride);
 				TempStagingBuffer->copyFromBuffer(shared_from_this(), 0, 0, Size);
 				return TempStagingBuffer->lock(readOnly);
 			}
@@ -493,9 +494,6 @@ namespace irr
 			auto pdatapsysmem = data.pSysMem;
 
 			//Print the content of desc and data
-			printf("desc.ByteWidth : %d desc.Usage : %d desc.BindFlags : %d desc.CPUAccessFlags : %d desc.MiscFlags : %d desc.StructureByteStride : %d\n", desc.ByteWidth, desc.Usage, desc.BindFlags, desc.CPUAccessFlags, desc.MiscFlags, desc.StructureByteStride);
-			printf("data.pSysMem : %p data.SysMemPitch : %d data.SysMemSlicePitch : %d\n", data.pSysMem, data.SysMemPitch, data.SysMemSlicePitch);
-
 			hr = Device->CreateBuffer(&desc, initialData != nullptr? &data:0, &Buffer);
 			if (FAILED(hr))
 			{

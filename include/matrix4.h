@@ -2203,7 +2203,7 @@ namespace irr
 		}
 
 		//! Typedef for f32 matrix
-#ifdef _IRR_SSE
+#ifdef _IRR_SSEg
 		typedef __declspec(align(16)) CMatrix4<f32> matrix4;
 		template<>
 		inline void  CMatrix4<f32>::rotateVect(vector3df& vect) const

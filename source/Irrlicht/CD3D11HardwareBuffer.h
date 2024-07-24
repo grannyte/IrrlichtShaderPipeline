@@ -25,7 +25,7 @@ class CD3D11HardwareBuffer : public IHardwareBuffer
 	// Implementation of public methods
 public:
 	CD3D11HardwareBuffer(CD3D11Driver* driver, E_HARDWARE_BUFFER_TYPE type, scene::E_HARDWARE_MAPPING mapping,
-		u32 size, u32 flags, const void* initialData = 0);
+		u32 size, u32 flags, u32 stride, const void* initialData = 0);
 	CD3D11HardwareBuffer(irr::scene::IIndexBuffer* indexBuffer, CD3D11Driver* driver);
 	CD3D11HardwareBuffer(scene::IVertexBuffer* vertexBuffer, CD3D11Driver* driver);
 	CD3D11HardwareBuffer(scene::IComputeBuffer* computeBuffer, CD3D11Driver* driver);

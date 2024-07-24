@@ -4,7 +4,7 @@
 
 #ifndef __IRR_HEAPSORT_H_INCLUDED__
 #define __IRR_HEAPSORT_H_INCLUDED__
-
+#include <algorithm>
 #include "irrTypes.h"
 
 namespace irr

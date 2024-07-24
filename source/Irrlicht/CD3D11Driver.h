@@ -599,15 +599,15 @@ namespace irr
 			DXGI_FORMAT DepthStencilFormat;		// Best format for depth stencil
 			SIrrlichtCreationParameters Params;
 
-			std::array <std::queue< std::shared_ptr<CD3D11HardwareBuffer>>, E_HARDWARE_BUFFER_TYPE::EHBT_COUNT> MeshBuffer2dQueues;
+			std::array <std::unordered_map<u32,std::queue< std::shared_ptr<CD3D11HardwareBuffer>>>, E_HARDWARE_BUFFER_TYPE::EHBT_COUNT> MeshBuffer2dQueues;
 
-			std::shared_ptr<CD3D11HardwareBuffer> GetTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, const void* initialData);
-
-
+			std::shared_ptr<CD3D11HardwareBuffer> GetTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, irr::u32 Stride, const void* initialData);
 
 
-			std::shared_ptr<CD3D11HardwareBuffer> CreateTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, const void* initialData);
-			std::array <std::queue< std::shared_ptr<CD3D11HardwareBuffer>>,E_HARDWARE_BUFFER_TYPE::EHBT_COUNT> MeshBuffer2dBacks;
+
+
+			std::shared_ptr<CD3D11HardwareBuffer> CreateTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, irr::u32 Stride, const void* initialData);
+			std::array <std::unordered_map<u32, std::queue< std::shared_ptr<CD3D11HardwareBuffer>>>,E_HARDWARE_BUFFER_TYPE::EHBT_COUNT> MeshBuffer2dBacks;
 
 			void revertTempHWBuffers();
 

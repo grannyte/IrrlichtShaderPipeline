@@ -166,13 +166,13 @@ namespace irr
 			FreeLibrary(D3DLibrary);
 		}
 
-		inline std::shared_ptr<CD3D11HardwareBuffer> CD3D11Driver::GetTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, const void* initialData)
+		inline std::shared_ptr<CD3D11HardwareBuffer> CD3D11Driver::GetTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, irr::u32 Stride, const void* initialData)
 		{
-			if (!MeshBuffer2dQueues[type].empty())
+			if (!MeshBuffer2dQueues[type][Stride].empty())
 			{
-				auto  mb2d = MeshBuffer2dQueues[type].front();
-				MeshBuffer2dQueues[type].pop();
-				MeshBuffer2dBacks[type].push(mb2d);
+				auto  mb2d = MeshBuffer2dQueues[type][Stride].front();
+				MeshBuffer2dQueues[type][Stride].pop();
+				MeshBuffer2dBacks[type][Stride].push(mb2d);
 
 				//std::cout << "Grabbed buffer type : " << type << " size : " <<size << std::endl;
 
@@ -180,13 +180,13 @@ namespace irr
 
 				return mb2d;
 			}
-			return CreateTempBuffer(type, size, flags, initialData);
+			return CreateTempBuffer(type, size, flags, Stride, initialData);
 		}
 
-		inline std::shared_ptr<CD3D11HardwareBuffer> CD3D11Driver::CreateTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, const void* initialData)
+		inline std::shared_ptr<CD3D11HardwareBuffer> CD3D11Driver::CreateTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, irr::u32 Stride, const void* initialData)
 		{
-			auto hwbuf = std::make_shared<CD3D11HardwareBuffer>(this, type, irr::scene::E_HARDWARE_MAPPING::EHM_DYNAMIC, size, flags, initialData);
-			MeshBuffer2dBacks[type].push(hwbuf);
+			auto hwbuf = std::make_shared<CD3D11HardwareBuffer>(this, type, irr::scene::E_HARDWARE_MAPPING::EHM_DYNAMIC, size, flags, Stride, initialData);
+			MeshBuffer2dBacks[type][Stride].push(hwbuf);
 			//std::cout << "created buffer type : " << type << " size : " << size << std::endl;
 			return hwbuf;
 		}
@@ -195,10 +195,11 @@ namespace irr
 		{
 			//std::cout << "Buffers  count : " << MeshBuffer2dBack.size() << std::endl;
 			for (int type = 0; type < (irr::video::E_HARDWARE_BUFFER_TYPE::EHBT_SYSTEM + 1); type++)
-				while (!MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type].empty())
+				for(auto &it : MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type])
+				while (!MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type][it.first].empty())
 				{
-					MeshBuffer2dQueues[(irr::video::E_HARDWARE_BUFFER_TYPE)type].push(MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type].front());
-					MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type].pop();
+					MeshBuffer2dQueues[(irr::video::E_HARDWARE_BUFFER_TYPE)type][it.first].push(MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type][it.first].front());
+					MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type][it.first].pop();
 				}
 		}
 
@@ -289,7 +290,6 @@ namespace irr
 #ifdef _DEBUG
 				deviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
 #endif
-				deviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
 
 				if (!Params.DriverMultithreaded)
 					deviceFlags |= D3D11_CREATE_DEVICE_SINGLETHREADED;
@@ -1884,8 +1884,14 @@ namespace irr
 			s16 indices[2] = { 0, 1 };
 
 			// Bind input layout
+			irr::core::matrix4 view = getTransform(ETS_VIEW);
 
-			uploadVertexData(v, 2, 0, 0, EVT_STANDARD, EIT_16BIT);
+
+
+			setRenderStates2DMode(color.getAlpha() < 255, false, false);
+			setTransform(video::ETS_VIEW, view);
+			//draw2DVertexPrimitiveList(vtx, 2, 0, 1, EVT_STANDARD, scene::EPT_LINES, EIT_16BIT);
+			uploadVertexData(v, 2, 0, 1, EVT_STANDARD, EIT_16BIT);
 			BridgeCalls->setInputLayout(VertexDescriptor[EVT_STANDARD], MaterialRenderers[Material.MaterialType].Renderer);
 
 			renderArray(2, 0, irr::scene::E_PRIMITIVE_TYPE::EPT_LINES);
@@ -3210,14 +3216,14 @@ namespace irr
 			if (vertices)
 			{
 				// set vertex buffer
-				auto vtxb = (GetTempBuffer(EHBT_VERTEX, vertexCount * vertexStride, 0, vertices)->getBuffer());
+				auto vtxb = (GetTempBuffer(EHBT_VERTEX, vertexCount * vertexStride, 0, vertexStride, vertices)->getBuffer());
 				Context->IASetVertexBuffers(0, 1, &vtxb, &vertexStride, &offset);
 			}
 
 			if (indices)
 			{
 				// set index buffer
-				Context->IASetIndexBuffer(GetTempBuffer(EHBT_INDEX, indexCount * indexStride, 0, indices)->getBuffer(), indexFormat, 0);
+				Context->IASetIndexBuffer(GetTempBuffer(EHBT_INDEX, indexCount * indexStride, 0,iType == E_INDEX_TYPE::EIT_16BIT? 2:4, indices)->getBuffer(), indexFormat, 0);
 			}
 
 			return true;
