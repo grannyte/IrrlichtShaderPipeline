@@ -194,7 +194,7 @@ namespace irr
 							{
 								MapArraySlice(hr, k, i, mappedData, D3D11_MAP_WRITE, TextureBuffer);
 								if (mappedData.pData)
-									memcpy(mappedData.pData, surfaces->operator[](i)->lock(ETLM_READ_WRITE, k), mappedData.DepthPitch);// image->copyToScaling(ptr, Size.Width, Size.Height, ColorFormat, Pitch);
+									memcpy(mappedData.pData, surfaces->operator[](i)->lock(ETLM_READ_WRITE, k), min(mappedData.DepthPitch, pitch));// image->copyToScaling(ptr, Size.Width, Size.Height, ColorFormat, Pitch);
 								surfaces->operator[](i)->unlock();
 								lwidth /= 2;
 								lheight /= 2;

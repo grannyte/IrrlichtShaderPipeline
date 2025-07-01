@@ -154,6 +154,9 @@ public:
 			return 64;
 		case ECF_A32B32G32R32F:
 			return 128;
+		case ECF_BC6_U:
+		case ECF_BC6_S:
+			return 8;
 		case ECF_BC7_S:
 		case ECF_BC7_U:
 			return 8;
@@ -172,6 +175,8 @@ public:
 			case ECF_DXT3:
 			case ECF_DXT4:
 			case ECF_DXT5:
+			case ECF_BC6_U:
+			case ECF_BC6_S:
 			case ECF_BC7_S:
 			case ECF_BC7_U:
 				return true;
@@ -212,6 +217,8 @@ public:
 			case ECF_DXT3:
 			case ECF_DXT4:
 			case ECF_DXT5:
+			case ECF_BC6_U:
+			case ECF_BC6_S:
 			case ECF_BC7_S:
 			case ECF_BC7_U:
 				return false;
