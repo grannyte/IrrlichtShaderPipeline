@@ -96,7 +96,6 @@ namespace irr
 				NumberOfMipLevels = desc.MipLevels;
 				Size.Width = desc.Width;
 				Size.Height = desc.Height;
-				NumberOfMipLevels = desc.MipLevels;
 				MipMaps = NumberOfMipLevels > 1;
 				HardwareMipMaps = false;
 
@@ -184,21 +183,18 @@ namespace irr
 						const u32 bpp = irr::video::IImage::getBitsPerPixelFromFormat(ColorFormat) / 8;
 
 						u32 pitch = Size.Width * Size.Height * bpp;
-
-						u32 lwidth = Size.Width;
-						u32 lheight = Size.Height;
-
-						if ((*surfaces)[i]->hasMipMaps() && !((CD3D11Texture*)(*surfaces)[i])->HardwareMipMaps)
+						CD3D11Texture* stex = (CD3D11Texture*)surfaces->operator[](i);
+						if ((*surfaces)[i]->hasMipMaps() && !stex->HardwareMipMaps)
 						{
-							for (int k = 0; k < ((CD3D11Texture*)(*surfaces)[i])->NumberOfMipLevels; ++k)
+							for (int k = 0; k < stex->NumberOfMipLevels; ++k)
 							{
 								MapArraySlice(hr, k, i, mappedData, D3D11_MAP_WRITE, TextureBuffer);
 								if (mappedData.pData)
-									memcpy(mappedData.pData, surfaces->operator[](i)->lock(ETLM_READ_WRITE, k), min(mappedData.DepthPitch, pitch));// image->copyToScaling(ptr, Size.Width, Size.Height, ColorFormat, Pitch);
-								surfaces->operator[](i)->unlock();
-								lwidth /= 2;
-								lheight /= 2;
-								pitch = lwidth * lwidth * bpp;
+								{
+									auto lockedData = stex->lock(ETLM_READ_WRITE, k);
+									memcpy(mappedData.pData, lockedData, min(mappedData.DepthPitch, stex->DPitch));
+									stex->unlock();
+								}
 
 								if (!mappedData.pData)
 								{
