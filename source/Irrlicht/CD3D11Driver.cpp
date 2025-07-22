@@ -2211,6 +2211,7 @@ namespace irr
 				if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
 					MaterialRenderers[Material.MaterialType].Renderer->OnSetMaterial(
 						Material, LastMaterial, ResetRenderStates, this);
+				LastMaterial = Material;
 			}
 
 			BridgeCalls->setShaderResources(SamplerDesc, CurrentTexture);
@@ -2222,7 +2223,6 @@ namespace irr
 			ResetRenderStates = false;
 
 			CurrentRenderMode = ERM_3D;
-			LastMaterial = Material;
 
 			return shaderOK;
 		}

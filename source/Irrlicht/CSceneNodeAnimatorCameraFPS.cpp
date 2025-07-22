@@ -96,201 +96,146 @@ bool CSceneNodeAnimatorCameraFPS::OnEvent(const SEvent& evt)
 }
 
 #pragma float_control( precise,on , push )
-void CSceneNodeAnimatorCameraFPS::animateNode(const std::shared_ptr<ISceneNode>& node, u32 timeMs)
+void CSceneNodeAnimatorCameraFPS::animateNode(
+    const std::shared_ptr<ISceneNode>& node,
+    u32 timeMs)
 {
-	if (!node || node->getType() != ESNT_CAMERA)
-		return;
+    if (!node || node->getType() != ESNT_CAMERA)
+        return;
 
-	auto camera = std::static_pointer_cast<ICameraSceneNode>(node);
+    auto camera = std::static_pointer_cast<ICameraSceneNode>(node);
 
-	if (firstUpdate)
-	{
-		camera->updateAbsolutePosition();
-		if (CursorControl )
-		{
-			CursorControl->setPosition(0.5f, 0.5f);
-			CursorPos = CenterCursor = CursorControl->getRelativePosition();
-		}
+    if (firstUpdate)
+    {
+        // Initialize yaw/pitch from current orientation
+        core::vector3df dir = camera->getTarget() - camera->getPosition();
+        dir.normalize();
+        auto ha = dir.getHorizontalAngle();
+        YawAngle   = ha.Y;
+        PitchAngle = ha.X;
 
-		LastAnimationTime = timeMs;
+        // Center cursor
+        if (CursorControl)
+        {
+            CursorControl->setPosition(0.5f, 0.5f);
+            CenterCursor = CursorControl->getRelativePosition();
+        }
 
-		firstUpdate = false;
-	}
+        LastAnimationTime = timeMs;
+        firstUpdate      = false;
+    }
 
-	// If the camera isn't the active camera, and receiving input, then don't process it.
-	if(!camera->isInputReceiverEnabled())
-	{
-		firstInput = true;
-		return;
-	}
+    // Only animate if this camera is active & receiving input
+    if (!camera->isInputReceiverEnabled() ||
+        (camera->getSceneManager() &&
+         camera->getSceneManager()->getActiveCamera() != camera))
+    {
+        firstInput = true;
+        return;
+    }
 
-	if ( firstInput )
-	{
-		allKeysUp();
-		firstInput = false;
-	}
+    if (firstInput)
+    {
+        allKeysUp();
+        firstInput = false;
+    }
 
-	auto smgr = camera->getSceneManager();
-	if(smgr && smgr->getActiveCamera() != camera)
-		return;
+    // Delta time
+    f32 dt = (f32)(timeMs - LastAnimationTime);
+    LastAnimationTime = timeMs;
 
-	// get time
-	f32 timeDiff = (f32) ( timeMs - LastAnimationTime );
-	LastAnimationTime = timeMs;
+    //
+    // --- MOUSE LOOK (inverted X/Y) ---
+    //
+    if (CursorControl)
+    {
+        core::vector2df cur = CursorControl->getRelativePosition();
+        core::vector2df delta = cur - CenterCursor;
 
-	// update position
-	core::vector3df pos = camera->getPosition();
+        if (delta.X != 0.f || delta.Y != 0.f)
+        {
+            // arbitrary up
+            core::vector3df up = camera->getUpVector();
+            up.normalize();
 
-	// Update rotation
-	core::vector3df target = (camera->getTarget() - camera->getAbsolutePosition());
-	core::vector3df relativeRotation = target.getHorizontalAngle();
+            // invert X/Y mapping:
+            // moving mouse right (delta.X > 0) should increase YawAngle (turn right)
+            YawAngle   += delta.X * RotateSpeed;
+            // moving mouse up (delta.Y > 0) should decrease Pitch (look up),
+            // so we subtract delta.Y * speed
+            PitchAngle -= delta.Y * RotateSpeed * MouseYDirection;
 
-	if (CursorControl)
-	{
-		if (CursorPos != CenterCursor)
-		{
-			relativeRotation.Y -= (0.5f - CursorPos.X) * RotateSpeed;
-			relativeRotation.X -= (0.5f - CursorPos.Y) * RotateSpeed * MouseYDirection;
+            // clamp pitch
+            PitchAngle = core::clamp(PitchAngle, -MaxVerticalAngle, +MaxVerticalAngle);
 
-			// X < MaxVerticalAngle or X > 360-MaxVerticalAngle
+            // recenter cursor
+            CursorControl->setPosition(0.5f, 0.5f);
+            CenterCursor = CursorControl->getRelativePosition();
+        }
+    }
 
-			if (relativeRotation.X > MaxVerticalAngle*2 &&
-				relativeRotation.X < 360.0f-MaxVerticalAngle)
-			{
-				relativeRotation.X = 360.0f-MaxVerticalAngle;
-			}
-			else
-			if (relativeRotation.X > MaxVerticalAngle &&
-				relativeRotation.X < 360.0f-MaxVerticalAngle)
-			{
-				relativeRotation.X = MaxVerticalAngle;
-			}
+    //
+    // --- REBUILD FORWARD FROM YAW/PITCH ---
+    //
+    core::vector3df up = camera->getUpVector();
+    up.normalize();
+    core::quaternion qYaw, qPitch;
 
-			// Do the fix as normal, special case below
-			// reset cursor position to the centre of the window.
-			CursorControl->setPosition(0.5f, 0.5f);
-			CenterCursor = CursorControl->getRelativePosition();
+    qYaw.fromAngleAxis(core::DEGTORAD * YawAngle, up);
 
-			// needed to avoid problems when the event receiver is disabled
-			CursorPos = CenterCursor;
-		}
+    // base forward = (0,0,1) in local
+    core::vector3df fwd = qYaw * core::vector3df(0,0,1);
+    core::vector3df right = fwd.crossProduct(up).normalize();
 
-		// Special case, mouse is whipped outside of window before it can update.
-		video::IVideoDriver* driver = smgr->getVideoDriver();
-		core::vector2d<u32> mousepos(u32(CursorControl->getPosition().X), u32(CursorControl->getPosition().Y));
-		core::rect<u32> screenRect(0, 0, driver->getScreenSize().Width, driver->getScreenSize().Height);
+    qPitch.fromAngleAxis(core::DEGTORAD * PitchAngle, right);
+    core::vector3df finalForward = qPitch * fwd;
 
-		// Only if we are moving outside quickly.
-		bool reset = !screenRect.isPointInside(mousepos);
+    //
+    // --- MOVEMENT (strafe signs inverted) ---
+    //
+    core::vector3df pos = camera->getPosition();
+    core::vector3df movF = finalForward;
+    core::vector3df movR = movF.crossProduct(up).normalize();
 
-		if(reset)
-		{
-			// Force a reset.
-			CursorControl->setPosition(0.5f, 0.5f);
-			CenterCursor = CursorControl->getRelativePosition();
-			CursorPos = CenterCursor;
- 		}
-	}
+    if (NoVerticalMovement)
+    {
+        movF -= up * movF.dotProduct(up);
+        movF.normalize();
+        movR -= up * movR.dotProduct(up);
+        movR.normalize();
+    }
 
-	// set target
+    if (CursorKeys[EKA_MOVE_FORWARD])
+        pos += movF * dt * MoveSpeed;
+    if (CursorKeys[EKA_MOVE_BACKWARD])
+        pos -= movF * dt * MoveSpeed;
 
-	target.set(0,0, core::max_(1.f, pos.getLength()));
-	core::vector3df movedir = target;
+    // now inverted: pressing LEFT adds +R, pressing RIGHT subtracts R
+    if (CursorKeys[EKA_STRAFE_LEFT])
+        pos += movR * dt * MoveSpeed;
+    if (CursorKeys[EKA_STRAFE_RIGHT])
+        pos -= movR * dt * MoveSpeed;
 
-	core::matrix4 mat;
-	mat.setRotationDegrees(core::vector3df(relativeRotation.X, relativeRotation.Y, 0));
-	mat.transformVect(target);
+    if (CursorKeys[EKA_JUMP_UP])
+    {
+        for (auto* anim : camera->getAnimators())
+            if (anim->getType() == ESNAT_COLLISION_RESPONSE)
+            {
+                auto* cr = static_cast<ISceneNodeAnimatorCollisionResponse*>(anim);
+                if (!cr->isFalling())
+                    cr->jump(JumpSpeed);
+            }
+    }
 
-	if (NoVerticalMovement)
-	{
-		mat.setRotationDegrees(core::vector3df(0, relativeRotation.Y, 0));
-		mat.transformVect(movedir);
-	}
-	else
-	{
-		movedir = target;
-	}
-
-	movedir.normalize();
-
-	if (CursorKeys[EKA_MOVE_FORWARD])
-		pos += movedir * timeDiff * MoveSpeed;
-
-	if (CursorKeys[EKA_MOVE_BACKWARD])
-	{
-#if _DEBUG
-		irr::core::stringc posout ="Camera pre move pos X: ";
-		posout += pos.X; 
-		posout += " Y: ";
-		posout += pos.Y;
-		posout += " Z: ";
-		posout += pos.Z;
-		posout += " timeMs: ";
-		posout += timeMs;
-		os::Printer::log(posout.c_str(), irr::ELL_DEBUG);
-#endif
-		pos -= movedir * timeDiff * MoveSpeed;
-#if _DEBUG
-		posout = "Camera post move pos X: ";
-		posout += pos.X;
-		posout += " Y: ";
-		posout += pos.Y;
-		posout += " Z: ";
-		posout += pos.Z;
-		posout += " timeDiff: ";
-		posout += timeDiff;
-		posout += " MoveSpeed: ";
-		posout += MoveSpeed;
-
-		os::Printer::log(posout.c_str(), irr::ELL_DEBUG);
-#endif
-
-	}
-
-	// strafing
-
-	core::vector3df strafevect = target;
-	strafevect = strafevect.crossProduct(camera->getUpVector());
-
-	if (NoVerticalMovement)
-		strafevect.Y = 0.0f;
-
-	strafevect.normalize();
-
-	if (CursorKeys[EKA_STRAFE_LEFT])
-		pos += strafevect * timeDiff * MoveSpeed;
-
-	if (CursorKeys[EKA_STRAFE_RIGHT])
-		pos -= strafevect * timeDiff * MoveSpeed;
-
-	// For jumping, we find the collision response animator attached to our camera
-	// and if it's not falling, we tell it to jump.
-	if (CursorKeys[EKA_JUMP_UP])
-	{
-		const ISceneNodeAnimatorList& animators = camera->getAnimators();
-		ISceneNodeAnimatorList::ConstIterator it = animators.begin();
-		while(it != animators.end())
-		{
-			if(ESNAT_COLLISION_RESPONSE == (*it)->getType())
-			{
-				ISceneNodeAnimatorCollisionResponse * collisionResponse =
-					static_cast<ISceneNodeAnimatorCollisionResponse *>(*it);
-
-				if(!collisionResponse->isFalling())
-					collisionResponse->jump(JumpSpeed);
-			}
-
-			it++;
-		}
-	}
-
-	// write translation
-	camera->setPosition(pos);
-
-	// write right target
-	target += pos;
-	camera->setTarget(target);
+    // Write position and target
+    camera->setPosition(pos);
+    camera->setPosition(pos);
+    irr::core::vector3df displacementCorrection(0);
+    if (camera->getParent() == camera->getSceneManager()->getRootSceneNode())
+        displacementCorrection = pos;
+    camera->setTarget(displacementCorrection + finalForward.normalize() * std::max(pos.getLength(), 1.0f));
 }
+
 #pragma float_control( pop )
 
 

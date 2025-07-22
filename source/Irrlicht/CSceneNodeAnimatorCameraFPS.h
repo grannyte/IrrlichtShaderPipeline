@@ -105,6 +105,7 @@ namespace scene
 		f32 MouseYDirection;
 
 		s32 LastAnimationTime;
+		f32 YawAngle, PitchAngle;
 
 		core::array<SKeyMap> KeyMap;
 		core::position2d<f32> CenterCursor, CursorPos;
