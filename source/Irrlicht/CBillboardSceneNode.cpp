@@ -72,7 +72,7 @@ CBillboardSceneNode::~CBillboardSceneNode()
 void CBillboardSceneNode::OnRegisterSceneNode()
 {
 	if (IsVisible)
-		SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()));
+		SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), ESNRP_AUTOMATIC);
 
 	ISceneNode::OnRegisterSceneNode();
 }

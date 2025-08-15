@@ -22,7 +22,7 @@ CSceneNodeAnimatorDelete::CSceneNodeAnimatorDelete(std::shared_ptr<ISceneManager
 
 
 //! animates a scene node
-void CSceneNodeAnimatorDelete::animateNode(const std::shared_ptr<ISceneNode>& node, u32 timeMs)
+void irr::scene::CSceneNodeAnimatorDelete::animateNode(ISceneNode* node, u32 timeMs)
 {
 	if (timeMs > FinishTime+PauseTimeSum)
 	{
@@ -31,7 +31,7 @@ void CSceneNodeAnimatorDelete::animateNode(const std::shared_ptr<ISceneNode>& no
 		{
 			// don't delete if scene manager is attached to an editor
 			if (!SceneManager->getParameters()->getAttributeAsBool(IRR_SCENE_MANAGER_IS_EDITOR))
-				SceneManager->addToDeletionQueue(node);
+				SceneManager->addToDeletionQueue(std::dynamic_pointer_cast<ISceneNode>(node->shared_from_this()));
 		}
 	}
 }

@@ -1305,7 +1305,7 @@ namespace irr
 		}
 
 		//! registers a node for rendering it at a specific time.
-		u32 CSceneManager::registerNodeForRendering(std::shared_ptr<ISceneNode> node, E_SCENE_NODE_RENDER_PASS pass)
+		u32 irr::scene::CSceneManager::registerNodeForRendering(std::shared_ptr<ISceneNode>& node, E_SCENE_NODE_RENDER_PASS pass)
 		{
 			IRR_PROFILE(CProfileScope p1(EPID_SM_REGISTER);)
 				u32 taken = 0;
@@ -1331,8 +1331,8 @@ namespace irr
 			break;
 
 			case ESNRP_LIGHT:
-				// TODO: Point Light culling..
-				// Lighting model in irrlicht has to be redone..
+				// TODO: Point Light culling.
+				// Lighting model in irrlicht has to be redone.
 				//if (!isCulled(node))
 			{
 				LightList.push_back(node);
@@ -1472,7 +1472,7 @@ namespace irr
 				CameraList[i]->render();
 			}
 
-			CameraList.set_used(0);
+			CameraList.clear();
 
 			if (LightManager)
 				LightManager->OnRenderPassPostRender(CurrentRenderPass);
@@ -1550,7 +1550,7 @@ namespace irr
 				}
 			}
 
-			SkyBoxList.set_used(0);
+			SkyBoxList.clear();
 
 			if (LightManager)
 				LightManager->OnRenderPassPostRender(CurrentRenderPass);
@@ -1586,7 +1586,7 @@ namespace irr
 #ifdef _IRR_SCENEMANAGER_DEBUG
 			Parameters->setAttribute("drawn_solid", (s32)SolidNodeList.size());
 #endif
-			SolidNodeList.set_used(0);
+			SolidNodeList.clear();
 
 			if (LightManager)
 				LightManager->OnRenderPassPostRender(CurrentRenderPass);
@@ -1621,7 +1621,7 @@ namespace irr
 				Driver->drawStencilShadow(true, ShadowColor, ShadowColor,
 					ShadowColor, ShadowColor);
 
-			ShadowNodeList.set_used(0);
+			ShadowNodeList.clear();
 
 			if (LightManager)
 				LightManager->OnRenderPassPostRender(CurrentRenderPass);
@@ -1655,7 +1655,7 @@ namespace irr
 #ifdef _IRR_SCENEMANAGER_DEBUG
 			Parameters->setAttribute("drawn_transparent", (s32)TransparentNodeList.size());
 #endif
-			TransparentNodeList.set_used(0);
+			TransparentNodeList.clear();
 
 			if (LightManager)
 				LightManager->OnRenderPassPostRender(CurrentRenderPass);
@@ -1690,7 +1690,7 @@ namespace irr
 #ifdef _IRR_SCENEMANAGER_DEBUG
 			Parameters->setAttribute("drawn_transparent_effect", (s32)TransparentEffectNodeList.size());
 #endif
-			TransparentEffectNodeList.set_used(0);
+			TransparentEffectNodeList.clear();
 		}
 		void CSceneManager::PostRenderLightManager()
 		{
@@ -1725,7 +1725,7 @@ namespace irr
 
 		void CSceneManager::CleanupDraw()
 		{
-			LightList.set_used(0);
+			LightList.clear();
 			clearDeletionList();
 
 			CurrentRenderPass = ESNRP_NONE;

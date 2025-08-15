@@ -96,7 +96,7 @@ namespace irr
 
 
 		//! OnAnimate() is called just before rendering the whole scene.
-		void CSceneNodeAnimatorCameraMaya::animateNode(const std::shared_ptr<ISceneNode>& node, u32 timeMs)
+		void irr::scene::CSceneNodeAnimatorCameraMaya::animateNode(ISceneNode* node, u32 timeMs)
 		{
 			//Alt + LM = Rotate around camera pivot
 			//Alt + LM + MM = Dolly forth/back in view direction (speed % distance camera pivot - max distance to pivot)
@@ -105,20 +105,20 @@ namespace irr
 			if (!node || node->getType() != ESNT_CAMERA)
 				return;
 
-			auto camera = std::static_pointer_cast<ICameraSceneNode>(node);
+			auto camera = static_cast<ICameraSceneNode*>(node);
 
 			// If the camera isn't the active camera, and receiving input, then don't process it.
 			if (!camera->isInputReceiverEnabled())
 				return;
 
 			auto smgr = camera->getSceneManager();
-			if (smgr && smgr->getActiveCamera() != camera)
+			if (smgr && smgr->getActiveCamera().get() != camera)
 				return;
 
-			if (OldCamera != camera)
+			if (OldCamera.get() != camera)
 			{
 				LastCameraTarget = OldTarget = camera->getTarget();
-				OldCamera = camera;
+				OldCamera = std::dynamic_pointer_cast<ICameraSceneNode>(camera->shared_from_this());
 			}
 			else
 			{

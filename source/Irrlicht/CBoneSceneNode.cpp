@@ -71,7 +71,7 @@ void CBoneSceneNode::OnAnimate(u32 timeMs)
 
 		ISceneNodeAnimatorList::Iterator ait = Animators.begin();
 		for (; ait != Animators.end(); ++ait)
-			(*ait)->animateNode(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), timeMs);
+			(*ait)->animateNode(this, timeMs);
 
 		// update absolute position
 		//updateAbsolutePosition();

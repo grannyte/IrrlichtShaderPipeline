@@ -1190,7 +1190,7 @@ namespace irr
 			For example, if the node is a shadow, it usually wants to be drawn after all other nodes
 			and will use ESNRP_SHADOW for this. See scene::E_SCENE_NODE_RENDER_PASS for details.
 			\return scene will be rendered ( passed culling ) */
-			virtual u32 registerNodeForRendering(std::shared_ptr<ISceneNode> node,
+			virtual u32 registerNodeForRendering(std::shared_ptr<ISceneNode>& node,
 				E_SCENE_NODE_RENDER_PASS pass = ESNRP_AUTOMATIC) = 0;
 
 			//! Draws all the scene nodes.

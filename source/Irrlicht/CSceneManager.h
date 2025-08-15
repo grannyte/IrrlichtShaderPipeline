@@ -120,7 +120,7 @@ namespace irr
 			virtual const core::aabbox3d<f32>& getBoundingBox() const _IRR_OVERRIDE_;
 
 			//! registers a node for rendering it at a specific time.
-			virtual u32 registerNodeForRendering(std::shared_ptr<ISceneNode> node, E_SCENE_NODE_RENDER_PASS pass = ESNRP_AUTOMATIC) _IRR_OVERRIDE_;
+			virtual u32 registerNodeForRendering(std::shared_ptr<ISceneNode>& node, E_SCENE_NODE_RENDER_PASS pass = ESNRP_AUTOMATIC) _IRR_OVERRIDE_;
 
 			//! draws all scene nodes
 			virtual void drawAll() _IRR_OVERRIDE_;
@@ -624,6 +624,9 @@ namespace irr
 				{
 					if (n->getMaterialCount())
 						TextureValue = (n->getMaterial(0).getTexture(0));
+				}
+				~DefaultNodeEntry()
+				{
 				}
 
 				bool operator < (const DefaultNodeEntry& other) const

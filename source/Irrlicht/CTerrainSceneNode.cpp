@@ -616,7 +616,7 @@ namespace scene
 		if (!IsVisible || !SceneManager.lock()->getActiveCamera())
 			return;
 
-		SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()));
+		SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), ESNRP_AUTOMATIC);
 
 		preRenderCalculationsIfNeeded();
 

@@ -105,7 +105,7 @@ const core::aabbox3d<f32>& CSphereSceneNode::getBoundingBox() const
 void CSphereSceneNode::OnRegisterSceneNode()
 {
 	if (IsVisible)
-		SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()));
+		SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), ESNRP_AUTOMATIC);
 
 	ISceneNode::OnRegisterSceneNode();
 }

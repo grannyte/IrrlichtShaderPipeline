@@ -138,12 +138,12 @@ ITriangleSelector* CSceneNodeAnimatorCollisionResponse::getWorld() const
 }
 
 
-void CSceneNodeAnimatorCollisionResponse::animateNode(const std::shared_ptr<ISceneNode>& node, u32 timeMs)
+void irr::scene::CSceneNodeAnimatorCollisionResponse::animateNode(ISceneNode* node, u32 timeMs)
 {
 	CollisionOccurred = false;
 
-	if (node != Object)
-		setNode(node);
+	if (node != Object.get())
+		setNode(std::dynamic_pointer_cast<ISceneNode>(node->shared_from_this()));
 
 	if(!Object || !World)
 		return;

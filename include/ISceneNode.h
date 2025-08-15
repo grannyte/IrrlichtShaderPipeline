@@ -123,7 +123,7 @@ namespace irr
 						++ait;
 						if (anim->isEnabled())
 						{
-							anim->animateNode(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), timeMs);
+							anim->animateNode(this, timeMs);
 						}
 					}
 
@@ -308,6 +308,10 @@ namespace irr
 			{
 				rawParent = parent.get();
 			}
+			virtual void immediateSetParent(ISceneNode* parent)
+			{
+				rawParent = parent;
+			}
 
 			//! Adds a child to this scene node.
 			/** If the scene node already has a parent it is first removed
@@ -319,13 +323,13 @@ namespace irr
 				{
 					// Change scene manager?
 					if (SceneManager.lock() != child->SceneManager.lock())
-						child->setSceneManager(SceneManager.lock());
+						child->setSceneManager(SceneManager);
 
 					child->remove(); // remove from old parent
 					ChildLock.lock();
 					Children.push_back(child);
 					ChildLock.unlock();
-					child->immediateSetParent(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()));
+					child->immediateSetParent(this);
 				}
 			}
 
@@ -835,7 +839,7 @@ namespace irr
 
 			//! Sets the new scene manager for this node and all children.
 			//! Called by addChild when moving nodes between scene managers
-			void setSceneManager(const std::shared_ptr<ISceneManager>& newManager)
+			void setSceneManager(const std::weak_ptr<ISceneManager>& newManager)
 			{
 				SceneManager = newManager;
 

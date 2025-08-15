@@ -23,7 +23,7 @@ CSceneNodeAnimatorRotation::CSceneNodeAnimatorRotation(u32 time, const core::vec
 
 
 //! animates a scene node
-void CSceneNodeAnimatorRotation::animateNode(const std::shared_ptr<ISceneNode>& node, u32 timeMs)
+void irr::scene::CSceneNodeAnimatorRotation::animateNode(ISceneNode* node, u32 timeMs)
 {
 	if (node) // thanks to warui for this fix
 	{

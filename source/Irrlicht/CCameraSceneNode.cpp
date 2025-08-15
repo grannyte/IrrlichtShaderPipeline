@@ -239,7 +239,7 @@ void CCameraSceneNode::recalculateProjectionMatrix()
 void CCameraSceneNode::OnRegisterSceneNode()
 {
 	if ( SceneManager.lock()->getActiveCamera() == std::dynamic_pointer_cast<CCameraSceneNode>(shared_from_this()))
-		SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<CCameraSceneNode>(shared_from_this()), ESNRP_CAMERA);
+		SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), ESNRP_CAMERA);
 
 	ISceneNode::OnRegisterSceneNode();
 }

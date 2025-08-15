@@ -96,14 +96,13 @@ bool CSceneNodeAnimatorCameraFPS::OnEvent(const SEvent& evt)
 }
 
 #pragma float_control( precise,on , push )
-void CSceneNodeAnimatorCameraFPS::animateNode(
-    const std::shared_ptr<ISceneNode>& node,
+void irr::scene::CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node,
     u32 timeMs)
 {
     if (!node || node->getType() != ESNT_CAMERA)
         return;
 
-    auto camera = std::static_pointer_cast<ICameraSceneNode>(node);
+    auto camera = static_cast<ICameraSceneNode*>(node);
 
     if (firstUpdate)
     {
@@ -128,7 +127,7 @@ void CSceneNodeAnimatorCameraFPS::animateNode(
     // Only animate if this camera is active & receiving input
     if (!camera->isInputReceiverEnabled() ||
         (camera->getSceneManager() &&
-         camera->getSceneManager()->getActiveCamera() != camera))
+         camera->getSceneManager()->getActiveCamera().get() != camera))
     {
         firstInput = true;
         return;

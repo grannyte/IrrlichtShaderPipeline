@@ -96,10 +96,10 @@ namespace irr
 				// register according to material types counted
 
 				if (solidCount)
-					SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<CMeshSceneNode>(shared_from_this()), scene::ESNRP_SOLID);
+					SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), scene::ESNRP_SOLID);
 
 				if (transparentCount)
-					SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<CMeshSceneNode>(shared_from_this()), scene::ESNRP_TRANSPARENT);
+					SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), scene::ESNRP_TRANSPARENT);
 
 				ISceneNode::OnRegisterSceneNode();
 			}
