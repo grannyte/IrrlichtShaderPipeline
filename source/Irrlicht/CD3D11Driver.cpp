@@ -681,7 +681,7 @@ namespace irr
 				bool available = block;
 				GUID tmp;
 				ZeroMemory(&tmp, sizeof(GUID));
-				u32 size = sizeof(DWORD);
+				u64 size = sizeof(u64);
 				;
 				if (!block)
 					available = (Context->GetData(reinterpret_cast<ID3D11Query*>(OcclusionQueries[index].PID), &OcclusionQueries[index].Result, size, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK);

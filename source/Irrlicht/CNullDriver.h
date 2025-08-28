@@ -870,7 +870,7 @@ namespace irr
 					void* PID;
 					unsigned int UID;
 				};
-				u32 Result;
+				u64 Result;
 				u32 Run;
 			};
 			mutable std::shared_mutex shaderArrayLock;
