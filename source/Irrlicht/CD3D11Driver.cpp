@@ -684,12 +684,12 @@ namespace irr
 				u64 size = sizeof(u64);
 				;
 				if (!block)
-					available = (Context->GetData(reinterpret_cast<ID3D11Query*>(OcclusionQueries[index].PID), &OcclusionQueries[index].Result, size, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK);
+					available = (Context->GetData(reinterpret_cast<ID3D11Query*>(OcclusionQueries[index].PID), &OcclusionQueries[index].Result, size, 0) == S_OK);
 				else
 				{
 					do
 					{
-						HRESULT hr = Context->GetData(reinterpret_cast<ID3D11Query*>(OcclusionQueries[index].PID), &OcclusionQueries[index].Result, size, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+						HRESULT hr = Context->GetData(reinterpret_cast<ID3D11Query*>(OcclusionQueries[index].PID), &OcclusionQueries[index].Result, size,0);
 						available = (hr == S_OK);
 						if (hr != S_FALSE)
 							break;
