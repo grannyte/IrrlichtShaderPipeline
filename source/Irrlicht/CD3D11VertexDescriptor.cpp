@@ -102,6 +102,14 @@ namespace irr
 				case EVAS_TEXCOORD5:
 				case EVAS_TEXCOORD6:
 				case EVAS_TEXCOORD7:
+				case EVAS_TEXCOORD8:
+				case EVAS_TEXCOORD9:
+				case EVAS_TEXCOORD10:
+				case EVAS_TEXCOORD11:
+				case EVAS_TEXCOORD12:
+				case EVAS_TEXCOORD13:
+				case EVAS_TEXCOORD14:
+				case EVAS_TEXCOORD15:
 					index = SemanticIndex[EVAS_TEXCOORD0];
 					break;
 				default:
@@ -136,6 +144,14 @@ namespace irr
 				case EVAS_TEXCOORD5:
 				case EVAS_TEXCOORD6:
 				case EVAS_TEXCOORD7:
+				case EVAS_TEXCOORD8:
+				case EVAS_TEXCOORD9:
+				case EVAS_TEXCOORD10:
+				case EVAS_TEXCOORD11:
+				case EVAS_TEXCOORD12:
+				case EVAS_TEXCOORD13:
+				case EVAS_TEXCOORD14:
+				case EVAS_TEXCOORD15:
 					++SemanticIndex[EVAS_TEXCOORD0];
 					break;
 				default:
@@ -166,6 +182,14 @@ namespace irr
 				case EVAS_TEXCOORD5:
 				case EVAS_TEXCOORD6:
 				case EVAS_TEXCOORD7:
+				case EVAS_TEXCOORD8:
+				case EVAS_TEXCOORD9:
+				case EVAS_TEXCOORD10:
+				case EVAS_TEXCOORD11:
+				case EVAS_TEXCOORD12:
+				case EVAS_TEXCOORD13:
+				case EVAS_TEXCOORD14:
+				case EVAS_TEXCOORD15:
 					index = SemanticIndex[EVAS_TEXCOORD0]++;
 					break;
 				default:
@@ -206,6 +230,14 @@ namespace irr
 			case EVAS_TEXCOORD5:
 			case EVAS_TEXCOORD6:
 			case EVAS_TEXCOORD7:
+			case EVAS_TEXCOORD8:
+			case EVAS_TEXCOORD9:
+			case EVAS_TEXCOORD10:
+			case EVAS_TEXCOORD11:
+			case EVAS_TEXCOORD12:
+			case EVAS_TEXCOORD13:
+			case EVAS_TEXCOORD14:
+			case EVAS_TEXCOORD15:
 				return "TEXCOORD";
 			case EVAS_TANGENT:
 				return "TANGENT";

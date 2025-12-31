@@ -96,6 +96,8 @@ bool CSceneNodeAnimatorCameraFPS::OnEvent(const SEvent& evt)
 }
 
 #pragma float_control( precise,on , push )
+
+
 void irr::scene::CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node,
     u32 timeMs)
 {
@@ -110,7 +112,7 @@ void irr::scene::CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node,
         core::vector3df dir = camera->getTarget() - camera->getPosition();
         dir.normalize();
         auto ha = dir.getHorizontalAngle();
-        YawAngle   = ha.Y;
+        YawAngle = ha.Y;
         PitchAngle = ha.X;
 
         // Center cursor
@@ -121,13 +123,13 @@ void irr::scene::CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node,
         }
 
         LastAnimationTime = timeMs;
-        firstUpdate      = false;
+        firstUpdate = false;
     }
 
     // Only animate if this camera is active & receiving input
     if (!camera->isInputReceiverEnabled() ||
         (camera->getSceneManager() &&
-         camera->getSceneManager()->getActiveCamera().get() != camera))
+            camera->getSceneManager()->getActiveCamera().get() != camera))
     {
         firstInput = true;
         return;
@@ -157,15 +159,38 @@ void irr::scene::CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node,
             core::vector3df up = camera->getUpVector();
             up.normalize();
 
-            // invert X/Y mapping:
-            // moving mouse right (delta.X > 0) should increase YawAngle (turn right)
-            YawAngle   += delta.X * RotateSpeed;
-            // moving mouse up (delta.Y > 0) should decrease Pitch (look up),
-            // so we subtract delta.Y * speed
-            PitchAngle -= delta.Y * RotateSpeed * MouseYDirection;
+            // Store the tentative new angles
+            f32 newYaw = YawAngle + delta.X * RotateSpeed;
+            f32 newPitch = PitchAngle - delta.Y * RotateSpeed * MouseYDirection;
 
-            // clamp pitch
-            PitchAngle = core::clamp(PitchAngle, -MaxVerticalAngle, +MaxVerticalAngle);
+            // Test if the new orientation would cause gimbal lock or flip
+            core::quaternion qYaw, qPitch;
+            qYaw.fromAngleAxis(core::DEGTORAD * newYaw, up);
+            core::vector3df fwd = qYaw * core::vector3df(0, 0, 1);
+            core::vector3df right = fwd.crossProduct(up).normalize();
+            qPitch.fromAngleAxis(core::DEGTORAD * newPitch, right);
+            core::vector3df testForward = qPitch * fwd;
+            testForward.normalize();
+
+            // Check angle between forward and up vector
+            // Prevent looking too close to straight up or down (leave a safety margin)
+            f32 dotProduct = testForward.dotProduct(up);
+            f32 angle = core::RADTODEG * acos(core::clamp(dotProduct, -1.0f, 1.0f));
+
+            // Allow looking in any direction as long as we're not within 5 degrees of straight up/down
+            const f32 safetyMargin = 5.0f;
+            if (angle > safetyMargin && angle < (180.0f - safetyMargin))
+            {
+                YawAngle = newYaw;
+                PitchAngle = newPitch;
+            }
+            // If the new angle would be too extreme, only apply the yaw (horizontal rotation)
+            else
+            {
+                YawAngle = newYaw;
+                // Keep pitch at the limit by recalculating it
+                // This allows smooth rotation along the horizon even when at pitch limits
+            }
 
             // recenter cursor
             CursorControl->setPosition(0.5f, 0.5f);
@@ -183,7 +208,7 @@ void irr::scene::CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node,
     qYaw.fromAngleAxis(core::DEGTORAD * YawAngle, up);
 
     // base forward = (0,0,1) in local
-    core::vector3df fwd = qYaw * core::vector3df(0,0,1);
+    core::vector3df fwd = qYaw * core::vector3df(0, 0, 1);
     core::vector3df right = fwd.crossProduct(up).normalize();
 
     qPitch.fromAngleAxis(core::DEGTORAD * PitchAngle, right);

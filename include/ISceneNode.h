@@ -708,6 +708,11 @@ namespace irr
 				return nullptr;
 			}
 
+			irr::scene::ISceneNode* getRawParent() const
+			{
+				return rawParent;
+			}
+
 
 			//! Returns type of the scene node
 			/** \return The type of this node. */
