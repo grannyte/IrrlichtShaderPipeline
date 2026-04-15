@@ -739,7 +739,7 @@
       <EnableFiberSafeOptimizations>true</EnableFiberSafeOptimizations>
       <BrowseInformation>false</BrowseInformation>
       <OpenMPSupport>true</OpenMPSupport>
-      <AdditionalOptions>/fp:contract  /Qvec-report:2 </AdditionalOptions>
+      <AdditionalOptions>/fp:contract </AdditionalOptions>
       <AssemblerOutput>NoListing</AssemblerOutput>
       <OmitFramePointers>false</OmitFramePointers>
       <LoopUnrolling>5</LoopUnrolling>
