@@ -115,7 +115,7 @@ namespace irr
 		}
 
 		CD3D11HardwareBuffer::CD3D11HardwareBuffer(scene::IComputeBuffer* computeBuffer, CD3D11Driver* driver) :
-			IHardwareBuffer(scene::EHM_NEVER, 0, 0, EHBT_COMPUTE, EDT_DIRECT3D11), Device(NULL), Context(NULL),
+			IHardwareBuffer(scene::EHM_NEVER, 0, 0, EHBT_COMPUTE, EDT_DIRECT3D11), Device(driver->getExposedVideoData().D3D11.D3DDev11), Context(NULL),
 			Buffer(NULL), UAView(NULL), SRView(NULL), Driver(driver),
 			LastMapDirection((D3D11_MAP)0),  LinkedBuffer(0)
 		{
@@ -459,6 +459,7 @@ namespace irr
 				break;
 			case EHBT_COMPUTE:
 				desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+				desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 				break;
 			case EHBT_SHADER_RESOURCE:
 				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
@@ -524,7 +525,7 @@ namespace irr
 				if (Driver->queryFeature(EVDF_COMPUTING_SHADER_5_0))
 				{
 					UAVDesc.Format = DXGI_FORMAT_UNKNOWN;
-					UAVDesc.Buffer.NumElements = desc.ByteWidth / 4;	// size in floats
+					UAVDesc.Buffer.NumElements = desc.ByteWidth / desc.StructureByteStride;	// size in floats
 				}
 				else
 				{
@@ -543,10 +544,11 @@ namespace irr
 			case EHBT_SHADER_RESOURCE:
 			{
 				D3D11_SHADER_RESOURCE_VIEW_DESC SRVDesc;
+				ZeroMemory(&SRVDesc, sizeof(SRVDesc));
+				SRVDesc.Format = DXGI_FORMAT_UNKNOWN;
 				SRVDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-				SRVDesc.Format = DXGI_FORMAT_R32_FLOAT;
-				SRVDesc.Buffer.ElementOffset = 0;
-				SRVDesc.Buffer.ElementWidth = desc.ByteWidth / 4;
+				SRVDesc.Buffer.FirstElement = 0;
+				SRVDesc.Buffer.NumElements = desc.ByteWidth / desc.StructureByteStride;
 
 				hr = Device->CreateShaderResourceView(Buffer, &SRVDesc, &SRView);
 				if (FAILED(hr))

@@ -44,7 +44,7 @@ namespace irr
 				return Data.capacity();
 			}
 
-			virtual s32 linear_reverse_search(const T& element) const  override
+			virtual s32 linear_reverse_search(const T& element) const
 			{
 				for (s32 i = Data.size() - 1; i >= 0; --i)
 				{
@@ -54,47 +54,50 @@ namespace irr
 				return -1;
 			}
 
-			virtual T& getElement(u32 elem) override
+			virtual T& getElement(u32 elem)
 			{
 				return Data[elem];
 			}
-			virtual void SetElement(u32 elem, const T& element) override
+			virtual void SetElement(u32 elem, const T& element)
 			{
 				Data[elem] = element;
 			}
 
-			virtual u32 getStructureCount() const override
+			u32 getStructureCount() const override
 			{
 				return Data.size();
 			}
 
-			virtual void getStructureStride() const override
+			u32 getStructureStride() const override
 			{
 				return sizeof(T);
 			}
 
-			virtual void getBufferSize() const override
+			u32 getBufferSize() const override
 			{
 				return sizeof(T) * Data.size();
 			}
 
-			virtual void* getBufferPointer() override
+			void* getBufferPointer() const override
 			{
-				return Data.data();
+				return (void*)Data.data();
 			}
 
 			virtual void downloadFromGPU() override
 			{
 				if (HardwareBuffer)
 				{
-					void* lcked = HardwareBuffer->lock(true);
-					// resize the data if needed
+					// Force staging readback
+					void* locked = HardwareBuffer->lock(true);
+					if (!locked)
+					{
+						// lock a retourne null - hardware buffer pas lisible
+						return;
+					}
 					if (Data.size() != HardwareBuffer->size() / sizeof(T))
 						Data.resize(HardwareBuffer->size() / sizeof(T));
-					// copy the data
-					memcpy(Data.data(), lcked, HardwareBuffer->size());
-
-
+					memcpy(Data.data(), locked, HardwareBuffer->size());
+					HardwareBuffer->unlock();
 				}
 			}
 

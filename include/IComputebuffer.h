@@ -23,13 +23,13 @@ namespace irr
 			
 			}
 
-			virtual void* getBufferPointer() = 0;
+			virtual void* getBufferPointer() const = 0;
 
-			virtual u32 getStructureCount() = 0;
+			virtual u32 getStructureCount() const = 0;
 
-			virtual u32 getStructureStride() = 0;
+			virtual u32 getStructureStride() const = 0;
 
-			virtual u32 getBufferSize() = 0;
+			virtual u32 getBufferSize() const = 0;
 
 
 		};

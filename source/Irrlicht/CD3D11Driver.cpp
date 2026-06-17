@@ -679,8 +679,6 @@ namespace irr
 					return;
 
 				bool available = block;
-				GUID tmp;
-				ZeroMemory(&tmp, sizeof(GUID));
 				u64 size = sizeof(u64);
 				;
 				if (!block)
@@ -1080,27 +1078,37 @@ namespace irr
 		{
 			if (!Src || !Dst)
 				return;
-
+			if (Src->getStructureCount() == 0 || Dst->getStructureCount() == 0)
+				return;
 			setComputeState();
 
 			// check if the src buffer has a hardware buffer and if the src buffer has more than 0 elements
-			if (!Src->getHardwareBuffer() && Src->getStructureCount() > 0)
+			if (!Src->getHardwareBuffer())
 				createHardwareBuffer(Src);
-			else if (Src->getStructureCount() > 0 && Src->getHardwareBuffer()->isRequiredUpdate())
+			else if (Src->getHardwareBuffer()->isRequiredUpdate())
 				Src->getHardwareBuffer()->update(Src->getHardwareMappingHint(), Src->getStructureCount() * Src->getStructureStride(), Src->getBufferPointer());
 
 
 			// check if the dst buffer has a hardware buffer and if the dst buffer has more than 0 elements
-			if (!Dst->getHardwareBuffer() && Dst->getStructureCount() > 0)
+			if (!Dst->getHardwareBuffer())
 				createHardwareBuffer(Dst);
-			else if (Dst->getStructureCount() > 0 && Dst->getHardwareBuffer()->isRequiredUpdate())
+			else if (Dst->getHardwareBuffer()->isRequiredUpdate())
 				Dst->getHardwareBuffer()->update(Dst->getHardwareMappingHint(), Dst->getStructureCount() * Dst->getStructureStride(), Dst->getBufferPointer());
 
+			ID3D11ShaderResourceView* ppSRV[1] = { std::static_pointer_cast<CD3D11HardwareBuffer>(Src->getHardwareBuffer())->getShaderResourceView() };
+			Context->CSSetShaderResources(0, 1, ppSRV);
 
 			ID3D11UnorderedAccessView* ppUAViewNULL[1] = { std::static_pointer_cast<CD3D11HardwareBuffer>(Dst->getHardwareBuffer())->getUnorderedAccessView() };
 			Context->CSSetUnorderedAccessViews(0, 1, ppUAViewNULL,
 				NULL);
+			// DISPATCH !
+			Context->Dispatch(groupCount.X, groupCount.Y, groupCount.Z);
 
+			// Cleanup
+			ID3D11UnorderedAccessView* ppUAVNull[1] = { NULL };
+			Context->CSSetUnorderedAccessViews(0, 1, ppUAVNull, NULL);
+			ID3D11ShaderResourceView* ppSRVNull[1] = { NULL };
+			Context->CSSetShaderResources(0, 1, ppSRVNull);
 		}
 
 		void CD3D11Driver::removeAllHardwareBuffers()
