@@ -141,6 +141,7 @@ namespace scene
 					Vertices.set_used(HardwareBuffer->size() / sizeof(T));
 				// copy the data
 				memcpy(Vertices.pointer(), lcked, HardwareBuffer->size());
+				HardwareBuffer->unlock();
 
 
 			}

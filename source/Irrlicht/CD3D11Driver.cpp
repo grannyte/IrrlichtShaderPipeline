@@ -97,9 +97,9 @@ namespace irr
 
 		CD3D11Driver::~CD3D11Driver()
 		{
-			ID3D11Debug* debugDev2 = NULL;
-			Device->QueryInterface(__uuidof(ID3D11Debug), reinterpret_cast<void**>(&debugDev2));
-			debugDev2->ReportLiveDeviceObjects(D3D11_RLDO_DETAIL);
+			//ID3D11Debug* debugDev2 = NULL;
+			//Device->QueryInterface(__uuidof(ID3D11Debug), reinterpret_cast<void**>(&debugDev2));
+			//debugDev2->ReportLiveDeviceObjects(D3D11_RLDO_DETAIL);
 			// Delete renderers and textures
 			deleteVertexDescriptors();
 			deleteMaterialRenders();
