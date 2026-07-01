@@ -344,14 +344,19 @@ namespace irr
 				break;
 			case EST_STREAM_OUTPUT_SHADER:
 			{
+				// Compute the number of SO output buffer slots actually used:
+				// NumStrides must equal max(OutputSlot) + 1 across all SO declaration entries.
+				const auto& soDecl = StreamOutputFormat->getOutputLayoutDescription();
+				irr::u32 maxOutputSlot = 0;
+				for (irr::u32 i = 0; i < soDecl.size(); ++i)
+					if (soDecl[i].OutputSlot > maxOutputSlot)
+						maxOutputSlot = soDecl[i].OutputSlot;
+				irr::u32 stridecount = maxOutputSlot + 1;
 				irr::core::array<u32> strides;
-				irr::u32 stridecount = 0;
-				for (; stridecount < 3; ++stridecount)
-				{
-					strides.push_back(StreamOutputFormat->getVertexSize(stridecount));
-				}
+				for (irr::u32 i = 0; i < stridecount; ++i)
+					strides.push_back(StreamOutputFormat->getVertexSize(i));
 				//flags |= D3DCOMPILE_ENABLE_BACKWARDS_COMPATIBILITY;
-				hr = Device->CreateGeometryShaderWithStreamOutput(shaderBuffer->GetBufferPointer(), shaderBuffer->GetBufferSize(), &StreamOutputFormat->getOutputLayoutDescription()[0], StreamOutputFormat->getOutputLayoutDescription().size(), &strides[0], stridecount, D3D11_SO_NO_RASTERIZED_STREAM, 0, (ID3D11GeometryShader**)(&shaders[type]->shader));
+				hr = Device->CreateGeometryShaderWithStreamOutput(shaderBuffer->GetBufferPointer(), shaderBuffer->GetBufferSize(), &soDecl[0], soDecl.size(), &strides[0], stridecount, D3D11_SO_NO_RASTERIZED_STREAM, 0, (ID3D11GeometryShader**)(&shaders[type]->shader));
 				break;
 			}
 			}

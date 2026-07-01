@@ -416,10 +416,10 @@ namespace irr
 			HRESULT hr = 0;
 
 			D3D11_BUFFER_DESC desc;
-			desc.ByteWidth = Size;
-			desc.StructureByteStride = Stride;
-			desc.MiscFlags = 0;
-			desc.CPUAccessFlags = 0;
+				desc.ByteWidth = Size;
+				desc.StructureByteStride = 0;   // only set for structured (EHBT_COMPUTE) buffers below
+				desc.MiscFlags = 0;
+				desc.CPUAccessFlags = 0;
 
 			// Create new buffer
 			switch (Mapping)
@@ -458,9 +458,10 @@ namespace irr
 				desc.BindFlags = D3D11_BIND_VERTEX_BUFFER | D3D11_BIND_STREAM_OUTPUT;
 				break;
 			case EHBT_COMPUTE:
-				desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
-				desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-				break;
+					desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+					desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+					desc.StructureByteStride = Stride;
+					break;
 			case EHBT_SHADER_RESOURCE:
 				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 				desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
@@ -489,6 +490,12 @@ namespace irr
 			}
 			//std::cout << dump << std::endl;
 			// Create buffer
+			// D3D11 does not allow initial data for stream output buffers
+			// (D3D11 ERROR: CREATEBUFFER_INVALIDARG when pInitialData != NULL and
+			//  D3D11_BIND_STREAM_OUTPUT is set). Always pass NULL for SO buffers.
+			if (Type == EHBT_STREAM_OUTPUT)
+				initialData = nullptr;
+
 			auto plinkedBuffer = LinkedBuffer;
 			auto pGetVertices = LinkedBuffer && LinkedBuffer->getBufferType() == irr::scene::EBT_VERTEX ? ((scene::IVertexBuffer*)LinkedBuffer)->getVertices() : LinkedBuffer && LinkedBuffer->getBufferType() == irr::scene::EBT_INDEX ? ((scene::IIndexBuffer*)LinkedBuffer)->getIndices():0;
 			auto pInitialData = initialData;

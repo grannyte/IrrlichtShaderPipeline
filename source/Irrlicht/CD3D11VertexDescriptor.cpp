@@ -167,6 +167,9 @@ namespace irr
 
 			const u32 size = Attribute.size();
 
+			// Use local counters so the shared SemanticIndex array used by rebuild() is not mutated.
+			u32 localIndex[EVAS_COUNT] = {};
+
 			for (u32 i = 0; i < size; ++i)
 			{
 				desc.SemanticName = getSemanticNameOut(Attribute[i]->getSemantic());
@@ -190,15 +193,20 @@ namespace irr
 				case EVAS_TEXCOORD13:
 				case EVAS_TEXCOORD14:
 				case EVAS_TEXCOORD15:
-					index = SemanticIndex[EVAS_TEXCOORD0]++;
+					index = localIndex[EVAS_TEXCOORD0]++;
 					break;
 				default:
-					index = SemanticIndex[Attribute[i]->getSemantic()]++;
+					index = localIndex[Attribute[i]->getSemantic()]++;
 				}
 				desc.Stream = 0;
 				desc.SemanticIndex = index;
 				desc.StartComponent = 0;
-				desc.ComponentCount = Attribute[i]->getElementCount();
+				// ComponentCount is the number of 32-bit scalars to capture.
+				// Compute from the attribute's total byte size so packed formats like
+				// EVAT_UBYTE*4 (4 bytes = 1 component) map correctly instead of using
+				// the raw element count (which would give 4, meaning 4*4=16 bytes).
+				u32 byteCount = Attribute[i]->getTypeSize() * Attribute[i]->getElementCount();
+				desc.ComponentCount = core::max_<u32>(1u, byteCount / 4u);
 				desc.OutputSlot = Attribute[i]->getBufferID();
 
 				OutputLayoutDesc.push_back(desc);
@@ -207,8 +215,6 @@ namespace irr
 
 		const c8* CD3D11VertexDescriptor::getSemanticNameOut(E_VERTEX_ATTRIBUTE_SEMANTIC semantic) const
 		{
-			if (semantic == EVAS_POSITION)
-				return "SV_Position";
 			return getSemanticName(semantic);
 		}
 
@@ -357,6 +363,7 @@ namespace irr
 		void CD3D11VertexDescriptor::clear()
 		{
 			InputLayoutDesc.clear();
+			OutputLayoutDesc.clear();
 
 			for (u32 i = 0; i < EVAS_COUNT; ++i)
 				SemanticIndex[i] = 0;
