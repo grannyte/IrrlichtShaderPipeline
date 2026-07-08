@@ -1388,6 +1388,9 @@
     <ClInclude Include="CD3D11DeferedDriver.h">
       <Filter>Irrlicht\video\Direct3D11</Filter>
     </ClInclude>
+    <ClInclude Include="IDeferredContext.h">
+      <Filter>include\video</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="..\..\changes.txt">
@@ -2380,6 +2383,7 @@
     <ClCompile Include="CCommandBufferDriver.cpp">
       <Filter>Irrlicht\video\Null</Filter>
     </ClCompile>
+    <ClCompile Include="CNullDriverCommon.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="Irrlicht.rc" />

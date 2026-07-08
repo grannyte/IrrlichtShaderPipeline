@@ -52,6 +52,10 @@ namespace irr
 			{
 				return ViewPort;
 			}
+
+			IVideoDriver* CNullDriverCommon::createDeferredContext();
+
+			void CNullDriverCommon::executeDeferredContext(IDeferredContext* context);
 		protected:
 			core::rect<s32> ViewPort;
 			core::matrix4 TransformationMatrix;

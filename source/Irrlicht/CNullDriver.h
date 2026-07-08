@@ -22,6 +22,7 @@
 #include "SLight.h"
 #include "SExposedVideoData.h"
 #include "CNullDriverCommon.h"
+#include "CCommandBufferDriver.h"
 #include <shared_mutex>
 
 #ifdef _MSC_VER

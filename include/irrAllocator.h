@@ -56,12 +56,12 @@ namespace irr
 
 			virtual void* internal_new(size_t cnt)
 			{
-				return concurrency::Alloc(cnt);
+				return operator new(cnt);
 			}
 
 			virtual void internal_delete(void* ptr)
 			{
-				concurrency::Free(ptr);
+				operator delete(ptr);
 			}
 		};
 

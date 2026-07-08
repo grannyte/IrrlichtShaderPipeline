@@ -1520,7 +1520,8 @@
     <ClInclude Include="..\..\include\IGUIWindow.h" />
     <ClInclude Include="CCgMaterialRenderer.h" />
     <ClInclude Include="CCommandBufferDriver.h">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+      </ExcludedFromBuild>
     </ClInclude>
     <ClInclude Include="CD3D11CallBridge.h" />
     <ClInclude Include="CD3D11DeferedDriver.h" />
@@ -1548,6 +1549,7 @@
     <ClInclude Include="CSceneManager.h" />
     <ClInclude Include="CVertexDescriptor.h" />
     <ClInclude Include="DDSTextureLoader.h" />
+    <ClInclude Include="IDeferredContext.h" />
     <ClInclude Include="Octree.h" />
     <ClInclude Include="CSMFMeshFileLoader.h" />
     <ClInclude Include="C3DSMeshFileLoader.h" />
@@ -1795,7 +1797,8 @@
   <ItemGroup>
     <ClCompile Include="CCgMaterialRenderer.cpp" />
     <ClCompile Include="CCommandBufferDriver.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+      </ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="CD3D11CallBridge.cpp" />
     <ClCompile Include="CD3D11Driver.cpp" />
@@ -1816,6 +1819,7 @@
     <ClCompile Include="CInstancedMeshSceneNode.cpp" />
     <ClCompile Include="CMeshCache.cpp" />
     <ClCompile Include="CMeshManipulator.cpp" />
+    <ClCompile Include="CNullDriverCommon.cpp" />
     <ClCompile Include="COpenGLCgMaterialRenderer.cpp" />
     <ClCompile Include="CSceneManager.cpp" />
     <ClCompile Include="C3DSMeshFileLoader.cpp" />

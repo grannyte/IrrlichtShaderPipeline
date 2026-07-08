@@ -348,6 +348,9 @@ namespace irr
 			E_BLEND_OPERATION BlendOp : 4;
 		};
 
+		//! Forward declaration of the deferred context interface
+		class IDeferredContext;
+
 		//! Interface to driver which is able to perform 2d and 3d graphics functions.
 		/** This interface is one of the most important interfaces of
 		the Irrlicht Engine: All rendering and texture manipulation is done with
@@ -359,6 +362,20 @@ namespace irr
 		class IVideoDriver : public virtual IReferenceCounted
 		{
 		public:
+			// Returns non-null only if this driver instance IS a deferred recording
+			// context. Ordinary drivers return nullptr -- default body means every
+			// existing driver needs zero changes to pick this up.
+			virtual IDeferredContext* getDeferredContextControl() { return nullptr; }
+
+			// Creates a deferred context. Use the returned IVideoDriver* like a normal
+			// driver to record commands, then pass it to executeDeferredContext() below.
+			virtual IVideoDriver* createDeferredContext() = 0;
+
+			// Consumes a deferred context's recorded commands, executing them against
+			// THIS (real) driver. Mirrors ID3D11DeviceContext::ExecuteCommandList --
+			// the immediate driver does the executing, not the recording itself.
+			virtual void executeDeferredContext(IDeferredContext* context) = 0;
+
 
 			//! Applications must call this method before performing any rendering.
 			/** This method can clear the back- and the z-buffer.

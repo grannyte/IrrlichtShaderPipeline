@@ -4,7 +4,7 @@
 // Copyright (C) 2002-2012 Nikolaus Gebhardt
 // This file is part of the "Irrlicht Engine".
 // For conditions of distribution and use, see copyright notice in irrlicht.h
-// 
+//
 #ifndef __C_COMMAND_BUFFER_DRIVER__
 #define __C_COMMAND_BUFFER_DRIVER__
 
@@ -18,24 +18,60 @@
 #include <windows.h>
 #endif
 
-#include<queue>
-#include<functional>
+#include <queue>
+#include <functional>
+#include <mutex>
 
 #include "CNullDriver.h"
 #include "SIrrCreationParameters.h"
 #include "IMaterialRendererServices.h"
 #include "CNullDriverCommon.h"
+#include "IDeferredContext.h"
 
 namespace irr
 {
 	namespace video
 	{
-
+		// CCommandBufferDriver records IVideoDriver calls instead of executing
+		// them, and replays them later against a real driver via execute().
+		//
+		// Split in two categories, matching how the prototype was already
+		// structured:
+		//   - Resource creation / queries (getTexture, addTexture,
+		//     createHardwareBuffer, getMaterialRenderer, ...) execute
+		//     immediately against the wrapped Driver and return a real result.
+		//   - State-setting / draw calls (setMaterial, drawMeshBuffer,
+		//     setTransform, draw2D*, ...) are queued as
+		//     std::function<void(IVideoDriver*)> and only run on execute().
+		//
+		// Any parameter that is still a raw IReferenceCounted*-derived pointer
+		// (ITexture*, IMeshBuffer*, IMesh*) is grab()'d at record time and
+		// drop()'d as the last step of its lambda, so the recorded command
+		// keeps the object alive regardless of what the caller does with its
+		// own reference between record and execute. Parameters already using
+		// std::shared_ptr (ISceneNode, IHardwareBuffer) need no such handling
+		// -- capturing the shared_ptr by value is sufficient.
+		// CCommandBufferDriver is an ordinary IVideoDriver (via
+		// CNullDriverCommon, non-virtual inheritance, unchanged from every
+		// other driver in the codebase) that ALSO implements the small,
+		// unrelated IDeferredContext control interface. There is no shared
+		// base between the two, so this is plain multiple inheritance --
+		// no virtual keyword needed, no diamond, no impact on downcasts
+		// anywhere else in the codebase.
 		class CCommandBufferDriver :
-			public CNullDriverCommon
+			public CNullDriverCommon,
+			public IDeferredContext
 		{
 		public:
-			CCommandBufferDriver() :CurrentRenderTarget(0), Driver(0) {}
+			// Driver is required at construction: it's both the target used
+			// for synchronous passthrough calls, and the default execute()
+			// target if none is supplied.
+			explicit CCommandBufferDriver(IVideoDriver* immediateDriver)
+				: CurrentRenderTarget(0), Driver(immediateDriver), CachedDynamicLightCount(0)
+			{}
+
+			void setImmediateDriver(IVideoDriver* immediateDriver) { Driver = immediateDriver; }
+
 			// Inherited via IVideoDriver
 			virtual bool beginScene(bool backBuffer = true, bool zBuffer = true, SColor color = SColor(255, 0, 0, 0), const SExposedVideoData& videoData = SExposedVideoData(), core::rect<s32>* sourceRect = 0) override;
 			virtual bool endScene() override;
@@ -157,17 +193,225 @@ namespace irr
 			virtual IVertexDescriptor* getVertexDescriptor(const core::stringc& pName) const override;
 			virtual u32 getVertexDescriptorCount() const override;
 
-			virtual void execute(IVideoDriver* driver);
+			// These four were missed by staying on CNullDriverCommon instead
+			// of CNullDriver -- CNullDriver provides default bodies for them,
+			// CNullDriverCommon doesn't. Overriding directly here (rather
+			// than switching base classes) avoids inheriting CNullDriver's
+			// own internal texture/material bookkeeping, which would diverge
+			// from the wrapped Driver's real state.
+			virtual const core::rect<s32>& getViewPort() const override;
+			virtual void batchDraw2DRectangles(const irr::core::array<core::rect<s32>>& pos,
+				const irr::core::array<SColor>& color,
+				const irr::core::array<core::rect<s32>>* clip = 0) override;
+			virtual void batchDraw2DRectangles(const irr::core::array<core::rect<s32>>& pos,
+				irr::core::array<SColor>& colorLeftUp, irr::core::array<SColor>& colorRightUp,
+				irr::core::array<SColor>& colorLeftDown, irr::core::array<SColor>& colorRightDown,
+				const irr::core::array<core::rect<s32>>* clip = 0) override;
+
+			// IGPUProgrammingServices -- all resource-creation calls that
+			// hand back a synchronous material-type ID, so they pass through
+			// to Driver's own IGPUProgrammingServices immediately, same
+			// reasoning as addMaterialRenderer/addTexture elsewhere in this
+			// class. None of these touch per-draw shader constants (those
+			// live on IMaterialRendererServices, which this class doesn't
+			// implement at all -- getGPUProgrammingServices() below
+			// delegates to Driver, so OnSetConstants callbacks only ever run
+			// against the real driver, inside the replayed drawMeshBuffer
+			// lambda, which is what keeps constant-set ordering correct).
+			virtual s32 addHighLevelShaderMaterial(
+				const c8* vertexShaderProgram,
+				const c8* vertexShaderEntryPointName,
+				E_VERTEX_SHADER_TYPE vsCompileTarget,
+				const c8* pixelShaderProgram,
+				const c8* pixelShaderEntryPointName,
+				E_PIXEL_SHADER_TYPE psCompileTarget,
+				const c8* geometryShaderProgram,
+				const c8* geometryShaderEntryPointName = "main",
+				E_GEOMETRY_SHADER_TYPE gsCompileTarget = EGST_GS_4_0,
+				scene::E_PRIMITIVE_TYPE inType = scene::EPT_TRIANGLES,
+				scene::E_PRIMITIVE_TYPE outType = scene::EPT_TRIANGLE_STRIP,
+				u32 verticesOut = 0,
+				IShaderConstantSetCallBack* callback = 0,
+				E_MATERIAL_TYPE baseMaterial = video::EMT_SOLID,
+				IVertexDescriptor* vertexTypeOut = NULL,
+				s32 userData = 0, E_GPU_SHADING_LANGUAGE shadingLang = EGSL_DEFAULT) override;
+
+			virtual s32 addHighLevelShaderMaterial(
+				const c8* vertexShaderProgram,
+				const c8* vertexShaderEntryPointName = 0,
+				E_VERTEX_SHADER_TYPE vsCompileTarget = EVST_VS_1_1,
+				const c8* pixelShaderProgram = 0,
+				const c8* pixelShaderEntryPointName = 0,
+				E_PIXEL_SHADER_TYPE psCompileTarget = EPST_PS_1_1,
+				const c8* geometryShaderProgram = 0,
+				const c8* geometryShaderEntryPointName = "main",
+				E_GEOMETRY_SHADER_TYPE gsCompileTarget = EGST_GS_4_0,
+				const c8* hullShaderProgram = 0,
+				const c8* hullShaderEntryPointName = "main",
+				E_HULL_SHADER_TYPE hsCompileTarget = EHST_HS_5_0,
+				const c8* domainShaderProgram = 0,
+				const c8* domainShaderEntryPointName = "main",
+				E_DOMAIN_SHADER_TYPE dsCompileTarget = EDST_DS_5_0,
+				scene::E_PRIMITIVE_TYPE inType = scene::EPT_TRIANGLES,
+				scene::E_PRIMITIVE_TYPE outType = scene::EPT_TRIANGLE_STRIP,
+				u32 verticesOut = 0,
+				IShaderConstantSetCallBack* callback = 0,
+				E_MATERIAL_TYPE baseMaterial = video::EMT_SOLID, IVertexDescriptor* vertexTypeOut = NULL,
+				s32 userData = 0, E_GPU_SHADING_LANGUAGE shadingLang = EGSL_DEFAULT) override;
+
+			virtual s32 addHighLevelShaderMaterialFromFiles(
+				const io::path& vertexShaderProgramFileName,
+				const c8* vertexShaderEntryPointName,
+				E_VERTEX_SHADER_TYPE vsCompileTarget,
+				const io::path& pixelShaderProgramFileName,
+				const c8* pixelShaderEntryPointName,
+				E_PIXEL_SHADER_TYPE psCompileTarget,
+				const io::path& geometryShaderProgramFileName,
+				const c8* geometryShaderEntryPointName = "main",
+				E_GEOMETRY_SHADER_TYPE gsCompileTarget = EGST_GS_4_0,
+				scene::E_PRIMITIVE_TYPE inType = scene::EPT_TRIANGLES,
+				scene::E_PRIMITIVE_TYPE outType = scene::EPT_TRIANGLE_STRIP,
+				u32 verticesOut = 0,
+				IShaderConstantSetCallBack* callback = 0,
+				E_MATERIAL_TYPE baseMaterial = video::EMT_SOLID, IVertexDescriptor* vertexTypeOut = NULL,
+				s32 userData = 0, E_GPU_SHADING_LANGUAGE shadingLang = EGSL_DEFAULT) override;
+
+			virtual s32 addHighLevelShaderMaterialFromFiles(
+				const io::path& vertexShaderProgramFile,
+				const c8* vertexShaderEntryPointName = "main",
+				E_VERTEX_SHADER_TYPE vsCompileTarget = EVST_VS_1_1,
+				const io::path& pixelShaderProgramFile = "",
+				const c8* pixelShaderEntryPointName = "main",
+				E_PIXEL_SHADER_TYPE psCompileTarget = EPST_PS_1_1,
+				const io::path& geometryShaderProgramFileName = "",
+				const c8* geometryShaderEntryPointName = "main",
+				E_GEOMETRY_SHADER_TYPE gsCompileTarget = EGST_GS_4_0,
+				const io::path& hullShaderProgram = "",
+				const c8* hullShaderEntryPointName = "main",
+				E_HULL_SHADER_TYPE hsCompileTarget = EHST_HS_5_0,
+				const io::path& domainShaderProgram = "",
+				const c8* domainShaderEntryPointName = "main",
+				E_DOMAIN_SHADER_TYPE dsCompileTarget = EDST_DS_5_0,
+				scene::E_PRIMITIVE_TYPE inType = scene::EPT_TRIANGLES,
+				scene::E_PRIMITIVE_TYPE outType = scene::EPT_TRIANGLE_STRIP,
+				u32 verticesOut = 0,
+				IShaderConstantSetCallBack* callback = 0,
+				E_MATERIAL_TYPE baseMaterial = video::EMT_SOLID, IVertexDescriptor* vertexTypeOut = NULL,
+				s32 userData = 0, E_GPU_SHADING_LANGUAGE shadingLang = EGSL_DEFAULT) override;
+
+			virtual s32 addHighLevelShaderMaterialFromFiles(
+				io::IReadFile* vertexShaderProgram,
+				const c8* vertexShaderEntryPointName,
+				E_VERTEX_SHADER_TYPE vsCompileTarget,
+				io::IReadFile* pixelShaderProgram,
+				const c8* pixelShaderEntryPointName,
+				E_PIXEL_SHADER_TYPE psCompileTarget,
+				io::IReadFile* geometryShaderProgram,
+				const c8* geometryShaderEntryPointName = "main",
+				E_GEOMETRY_SHADER_TYPE gsCompileTarget = EGST_GS_4_0,
+				scene::E_PRIMITIVE_TYPE inType = scene::EPT_TRIANGLES,
+				scene::E_PRIMITIVE_TYPE outType = scene::EPT_TRIANGLE_STRIP,
+				u32 verticesOut = 0,
+				IShaderConstantSetCallBack* callback = 0,
+				E_MATERIAL_TYPE baseMaterial = video::EMT_SOLID,
+				IVertexDescriptor* vertexTypeOut = NULL,
+				s32 userData = 0,
+				E_GPU_SHADING_LANGUAGE shadingLang = EGSL_DEFAULT) override;
+
+			virtual s32 addHighLevelShaderMaterialFromFiles(
+				io::IReadFile* vertexShaderProgram,
+				const c8* vertexShaderEntryPointName = "main",
+				E_VERTEX_SHADER_TYPE vsCompileTarget = EVST_VS_1_1,
+				io::IReadFile* pixelShaderProgram = 0,
+				const c8* pixelShaderEntryPointName = "main",
+				E_PIXEL_SHADER_TYPE psCompileTarget = EPST_PS_1_1,
+				io::IReadFile* geometryShaderProgram = 0,
+				const c8* geometryShaderEntryPointName = "main",
+				E_GEOMETRY_SHADER_TYPE gsCompileTarget = EGST_GS_4_0,
+				io::IReadFile* hullShaderProgram = 0,
+				const c8* hullShaderEntryPointName = "main",
+				E_HULL_SHADER_TYPE hsCompileTarget = EHST_HS_5_0,
+				io::IReadFile* domainShaderProgram = 0,
+				const c8* domainShaderEntryPointName = "main",
+				E_DOMAIN_SHADER_TYPE dsCompileTarget = EDST_DS_5_0,
+				scene::E_PRIMITIVE_TYPE inType = scene::EPT_TRIANGLES,
+				scene::E_PRIMITIVE_TYPE outType = scene::EPT_TRIANGLE_STRIP,
+				u32 verticesOut = 0,
+				IShaderConstantSetCallBack* callback = 0,
+				E_MATERIAL_TYPE baseMaterial = video::EMT_SOLID,
+				IVertexDescriptor* vertexTypeOut = NULL,
+				s32 userData = 0, E_GPU_SHADING_LANGUAGE shadingLang = EGSL_DEFAULT) override;
+
+			virtual s32 addShaderMaterial(const c8* vertexShaderProgram = 0,
+				const c8* pixelShaderProgram = 0,
+				IShaderConstantSetCallBack* callback = 0,
+				E_MATERIAL_TYPE baseMaterial = video::EMT_SOLID,
+				s32 userData = 0) override;
+
+			virtual s32 addShaderMaterialFromFiles(io::IReadFile* vertexShaderProgram,
+				io::IReadFile* pixelShaderProgram,
+				IShaderConstantSetCallBack* callback = 0,
+				E_MATERIAL_TYPE baseMaterial = video::EMT_SOLID,
+				s32 userData = 0) override;
+
+			virtual s32 addShaderMaterialFromFiles(const io::path& vertexShaderProgramFileName,
+				const io::path& pixelShaderProgramFileName,
+				IShaderConstantSetCallBack* callback = 0,
+				E_MATERIAL_TYPE baseMaterial = video::EMT_SOLID,
+				s32 userData = 0) override;
+
+			virtual s32 addComputeShader(const c8* computeShaderProgram,
+				const c8* computeShaderEntryPointName = "main",
+				E_COMPUTE_SHADER_TYPE csCompileTarget = ECST_CS_5_0,
+				IShaderConstantSetCallBack* callback = 0,
+				s32 userData = 0) override;
+
+			virtual s32 addComputeShaderFromFile(const io::path& computeShaderProgramFileName,
+				const c8* computeShaderEntryPointName = "main",
+				E_COMPUTE_SHADER_TYPE csCompileTarget = ECST_CS_5_0,
+				IShaderConstantSetCallBack* callback = 0,
+				s32 userData = 0) override;
+
+			// Drains the recorded queue against `driver`, or against the
+			// immediate Driver supplied at construction if none is given.
+			// Thread-safe: swaps the internal queue out under lock, then runs
+			// it unlocked, so a producer can keep recording the next batch of
+			// commands while this one replays.
+			virtual void execute(IVideoDriver* driver = nullptr) override;
+
+			// Discards any recorded-but-not-executed commands and resets this
+			// recorder for reuse. NOTE: only safe to call once execute() has
+			// fully drained the queue -- calling this on a non-empty queue
+			// leaks every grab()'d resource inside the discarded lambdas,
+			// since their drop() calls never run.
+			void beginRecording() override;
+
+			// Number of commands currently queued.
+			size_t pendingCommandCount() const override;
+
+			// Generic driver has nothing async to wait on.
+			virtual void waitForCompletion() override {}
+
+			// Lets a caller holding this object only as an IVideoDriver*
+			// (the normal case while recording) reach the execute()/
+			// beginRecording()/etc. control surface without a cast.
+			virtual IDeferredContext* getDeferredContextControl() override { return this; }
+
 		private:
-			mutable std::queue < std::function<void(IVideoDriver*)>> deferedcalls;
+			mutable std::mutex QueueMutex;
+			std::queue<std::function<void(IVideoDriver*)>> deferedcalls;
+
 			IVideoDriver* Driver;
+			u32 CachedDynamicLightCount;
 
 			// Inherited via IVideoDriver
 			std::shared_ptr<IHardwareBuffer> createHardwareBuffer(scene::IComputeBuffer* computeBuffer) override;
 			void dispatchComputeShader(const core::vector3d<u32>& groupCount, scene::IComputeBuffer* Src, scene::IComputeBuffer* Dst) override;
-			protected:
-				irr::video::ITexture* CurrentRenderTarget;
-				core::matrix4 Matrices[ETS_COUNT];
+
+		protected:
+			irr::video::ITexture* CurrentRenderTarget;
+			core::matrix4 Matrices[ETS_COUNT];
+			core::rect<s32> ViewPortCache;
 		};
 	}
 }
