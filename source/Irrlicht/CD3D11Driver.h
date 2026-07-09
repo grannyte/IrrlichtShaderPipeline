@@ -17,7 +17,9 @@
 #include "CNullDriver.h"
 #include "SIrrCreationParameters.h"
 #include "IMaterialRendererServices.h"
+#include "ID3D11MaterialRendererServices.h"
 #include "CD3D11CallBridge.h"
+#include "IDeferredContext.h"
 #include "CD3D11VertexDescriptor.h"
 
 #include"CMeshBuffer.h"
@@ -48,8 +50,7 @@ namespace irr
 		{
 		public:
 			irrObjectHolder<T>() : ref(nullptr)
-			{
-			}
+			{}
 
 			irrObjectHolder<T>(T* refcounted) : ref(refcounted)
 			{
@@ -152,9 +153,11 @@ namespace irr
 
 
 
-		class CD3D11Driver : public CNullDriver, IMaterialRendererServices
+		class CD3D11Driver : public CNullDriver, public ID3D11MaterialRendererServices, public IDeferredContext
 		{
+
 		public:
+			friend class CD3D11DeferredContext;
 			friend class CD3D11HardwareBuffer;
 			friend class CD3D11Texture;
 
@@ -564,7 +567,7 @@ namespace irr
 			core::array<core::plane3df> ClipPlanes;
 			bool ClipPlaneEnabled[3];
 
-			ID3D11Buffer* SSBObuffers[4] = {nullptr ,nullptr,nullptr,nullptr};
+			ID3D11Buffer* SSBObuffers[4] = { nullptr ,nullptr,nullptr,nullptr };
 			UINT SSBOoffset[4] = { 0,0,0,0 };
 
 			core::rect<s32>* SceneSourceRect;
@@ -574,7 +577,7 @@ namespace irr
 			struct RequestedLight
 			{
 				RequestedLight(SLight const& lightData)
-					: LightData(lightData), HardwareLightIndex(-1), DesireToBeOn(true) { }
+					: LightData(lightData), HardwareLightIndex(-1), DesireToBeOn(true) {}
 
 				SLight	LightData;
 				s32	HardwareLightIndex; // GL_LIGHT0 - GL_LIGHT7
@@ -591,6 +594,52 @@ namespace irr
 
 			CD3D11CallBridge* BridgeCalls;
 
+			// --- Deferred context support (Option A: same instance, Context
+			// and BridgeCalls temporarily swapped to a deferred D3D11
+			// context; NOT thread-safe with concurrent immediate rendering
+			// on the same instance -- see conversation notes). Non-null
+			// members below mean "currently recording"; null means normal
+			// immediate-mode driver.
+			ID3D11DeviceContext* SavedImmediateContext;
+			CD3D11CallBridge* SavedImmediateBridge;
+			ID3D11Query* CompletionQuery;
+
+			void createCompletionQuery();
+
+		public:
+			virtual IVideoDriver* createDeferredContext() override;
+			virtual void executeDeferredContext(IDeferredContext* context) override;
+			virtual IDeferredContext* getDeferredContextControl() override;
+
+			// IDeferredContext
+			virtual void execute(IVideoDriver* driver = nullptr) override;
+			virtual void beginRecording() override;
+			virtual size_t pendingCommandCount() const override { return 0; }
+			virtual void waitForCompletion() override;
+
+			// ID3D11MaterialRendererServices -- always returns THIS driver's
+			// CURRENT BridgeCalls/Context (live lookup, not captured), so
+			// material renderers resolve the right target on every call
+			// regardless of whether this driver is currently recording
+			// (Context/BridgeCalls swapped) or not.
+			virtual CD3D11CallBridge* getBridgeCalls() override { return BridgeCalls; }
+			virtual ID3D11DeviceContext* getContext() override { return Context; }
+
+		protected:
+			// Every draw-time material renderer lookup goes through this
+			// instead of indexing MaterialRenderers[] directly. Default
+			// behavior (this driver) is unchanged. A genuinely separate
+			// deferred-context sibling (CD3D11DeferredContext) overrides
+			// this to forward to the IMMEDIATE driver's own table instead
+			// of maintaining its own -- avoiding both duplicate GPU shader
+			// compilation and the refcounting/double-drop hazard of
+			// copying MaterialRenderers between two owning instances.
+			virtual IMaterialRenderer* getRendererFor(u32 materialType) { return MaterialRenderers[materialType].Renderer; }
+
+		public:
+
+		protected:
+
 			core::array<CD3D11Texture*> DepthBuffers;
 
 			u32 MaxTextureUnits;
@@ -603,7 +652,7 @@ namespace irr
 			DXGI_FORMAT DepthStencilFormat;		// Best format for depth stencil
 			SIrrlichtCreationParameters Params;
 
-			std::array <std::unordered_map<u32,std::queue< std::shared_ptr<CD3D11HardwareBuffer>>>, E_HARDWARE_BUFFER_TYPE::EHBT_COUNT> MeshBuffer2dQueues;
+			std::array <std::unordered_map<u32, std::queue< std::shared_ptr<CD3D11HardwareBuffer>>>, E_HARDWARE_BUFFER_TYPE::EHBT_COUNT> MeshBuffer2dQueues;
 
 			std::shared_ptr<CD3D11HardwareBuffer> GetTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, irr::u32 Stride, const void* initialData);
 
@@ -611,7 +660,7 @@ namespace irr
 
 
 			std::shared_ptr<CD3D11HardwareBuffer> CreateTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, irr::u32 Stride, const void* initialData);
-			std::array <std::unordered_map<u32, std::queue< std::shared_ptr<CD3D11HardwareBuffer>>>,E_HARDWARE_BUFFER_TYPE::EHBT_COUNT> MeshBuffer2dBacks;
+			std::array <std::unordered_map<u32, std::queue< std::shared_ptr<CD3D11HardwareBuffer>>>, E_HARDWARE_BUFFER_TYPE::EHBT_COUNT> MeshBuffer2dBacks;
 
 			void revertTempHWBuffers();
 

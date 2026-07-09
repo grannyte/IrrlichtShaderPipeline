@@ -4,6 +4,7 @@
 //
 
 #include "CD3D11Driver.h"
+#include "CD3D11DeferredContext.h"
 
 #ifdef _IRR_COMPILE_WITH_DIRECT3D_11_
 
@@ -72,6 +73,7 @@ namespace irr
 			CurrentRenderMode(ERM_NONE), MaxActiveLights(8), AlphaToCoverageSupport(true),
 			DepthStencilFormat(DXGI_FORMAT_UNKNOWN), D3DColorFormat(DXGI_FORMAT_R8G8B8A8_UNORM),
 			NullTexture(NULL), MaxTextureUnits(MATERIAL_MAX_TEXTURES), // DirectX 11 can handle much more than this value, but keep compatibility
+			SavedImmediateContext(NULL), SavedImmediateBridge(NULL), CompletionQuery(NULL),
 			Name("Direct3D ") // which version will be added later
 		{
 #ifdef _DEBUG
@@ -100,6 +102,25 @@ namespace irr
 			//ID3D11Debug* debugDev2 = NULL;
 			//Device->QueryInterface(__uuidof(ID3D11Debug), reinterpret_cast<void**>(&debugDev2));
 			//debugDev2->ReportLiveDeviceObjects(D3D11_RLDO_DETAIL);
+
+			if (CompletionQuery)
+				CompletionQuery->Release();
+
+			// Defensive: shouldn't happen in correct usage (execute() should
+			// always be called to close out a recording before the driver is
+			// destroyed), but avoid leaking the deferred context/bridge if it
+			// does.
+			if (SavedImmediateContext)
+			{
+				os::Printer::log("CD3D11Driver::~CD3D11Driver: destroyed while still recording a deferred context", ELL_WARNING);
+				if (BridgeCalls)
+					delete BridgeCalls;
+				if (Context)
+					Context->Release();
+				Context = SavedImmediateContext;
+				BridgeCalls = SavedImmediateBridge;
+			}
+
 			// Delete renderers and textures
 			deleteVertexDescriptors();
 			deleteMaterialRenders();
@@ -195,12 +216,12 @@ namespace irr
 		{
 			//std::cout << "Buffers  count : " << MeshBuffer2dBack.size() << std::endl;
 			for (int type = 0; type < (irr::video::E_HARDWARE_BUFFER_TYPE::EHBT_SYSTEM + 1); type++)
-				for(auto &it : MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type])
-				while (!MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type][it.first].empty())
-				{
-					MeshBuffer2dQueues[(irr::video::E_HARDWARE_BUFFER_TYPE)type][it.first].push(MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type][it.first].front());
-					MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type][it.first].pop();
-				}
+				for (auto& it : MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type])
+					while (!MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type][it.first].empty())
+					{
+						MeshBuffer2dQueues[(irr::video::E_HARDWARE_BUFFER_TYPE)type][it.first].push(MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type][it.first].front());
+						MeshBuffer2dBacks[(irr::video::E_HARDWARE_BUFFER_TYPE)type][it.first].pop();
+					}
 		}
 
 		void CD3D11Driver::createMaterialRenderers()
@@ -687,7 +708,7 @@ namespace irr
 				{
 					do
 					{
-						HRESULT hr = Context->GetData(reinterpret_cast<ID3D11Query*>(OcclusionQueries[index].PID), &OcclusionQueries[index].Result, size,0);
+						HRESULT hr = Context->GetData(reinterpret_cast<ID3D11Query*>(OcclusionQueries[index].PID), &OcclusionQueries[index].Result, size, 0);
 						available = (hr == S_OK);
 						if (hr != S_FALSE)
 							break;
@@ -864,9 +885,9 @@ namespace irr
 
 			CNullDriver::drawMeshBuffer(mb);
 			//we lie to the user we are always using hardware buffers in dx11 it's much faster and avoid stalling the pipeline when writting to a buffer that needs to be used for rendering
-		
 
-			
+
+
 
 
 			bool perInstanceBufferPresent = false;
@@ -876,7 +897,7 @@ namespace irr
 			std::array<ID3D11Buffer*, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT > vbuffers;
 			std::array<u32, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT > strides;
 			std::array<UINT, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT > offsets;
-			
+
 			for (u32 i = 0; i < mb->getVertexBufferCount(); ++i)
 			{
 				if (mb->getVertexBuffer(i)->getVertexCount() < 1)
@@ -893,10 +914,10 @@ namespace irr
 						hwBuff->update(mb->getVertexBuffer(i)->getHardwareMappingHint(), mb->getVertexBuffer(i)->getVertexCount() * mb->getVertexBuffer(i)->getVertexSize(), mb->getVertexBuffer(i)->getVertices());
 				}
 
-				offsets[i]=(0);
-				strides[i] =(mb->getVertexBuffer(i)->getVertexSize());
+				offsets[i] = (0);
+				strides[i] = (mb->getVertexBuffer(i)->getVertexSize());
 				if (mb->getVertexBuffer(i)->getHardwareBuffer())
-					vbuffers[i] =(((CD3D11HardwareBuffer*)hwBuff.get())->getBuffer());
+					vbuffers[i] = (((CD3D11HardwareBuffer*)hwBuff.get())->getBuffer());
 				else
 					vbuffers[i] = (0);
 
@@ -1801,17 +1822,17 @@ namespace irr
 					continue;
 
 				vtx.push_back(S3DVertex((f32)position.UpperLeftCorner.X, (f32)position.UpperLeftCorner.Y, 0.0f,
-										0.0f, 0.0f, 0.0f, colorLeftUp[i], 0.0f, 0.0f));
+					0.0f, 0.0f, 0.0f, colorLeftUp[i], 0.0f, 0.0f));
 				vtx.push_back(S3DVertex((f32)position.LowerRightCorner.X, (f32)position.UpperLeftCorner.Y, 0.0f,
-										0.0f, 0.0f, 0.0f, colorRightUp[i], 0.0f, 1.0f));
+					0.0f, 0.0f, 0.0f, colorRightUp[i], 0.0f, 1.0f));
 				vtx.push_back(S3DVertex((f32)position.LowerRightCorner.X, (f32)position.LowerRightCorner.Y, 0.0f,
-										0.0f, 0.0f, 0.0f, colorRightDown[i], 1.0f, 0.0f));
+					0.0f, 0.0f, 0.0f, colorRightDown[i], 1.0f, 0.0f));
 				vtx.push_back(S3DVertex((f32)position.UpperLeftCorner.X, (f32)position.LowerRightCorner.Y, 0.0f,
 					0.0f, 0.0f, 0.0f, colorLeftDown[i], 1.0f, 1.0f));
 			}
 			for (int j = 0; j < pos.size(); j++)
 			{
-				const u32 curPos = j*4;
+				const u32 curPos = j * 4;
 				indices.push_back(0 + curPos);
 				indices.push_back(1 + curPos);
 				indices.push_back(2 + curPos);
@@ -1830,7 +1851,7 @@ namespace irr
 
 			// Draw
 			draw2DVertexPrimitiveList(vtx.pointer(), vtx.size(), indices.pointer(), indices.size() / 3, video::EVT_STANDARD, scene::EPT_TRIANGLES, video::EIT_16BIT);
-			
+
 		}
 
 
@@ -2306,7 +2327,7 @@ namespace irr
 
 			if (texture)
 			{
-				if(!Matrices[ETS_TEXTURE_0].isIdentity())
+				if (!Matrices[ETS_TEXTURE_0].isIdentity())
 					setTransform(ETS_TEXTURE_0, core::IdentityMatrix);
 
 				Transformation3DChanged = false;
@@ -3228,7 +3249,7 @@ namespace irr
 			if (indices)
 			{
 				// set index buffer
-				Context->IASetIndexBuffer(GetTempBuffer(EHBT_INDEX, indexCount * indexStride, 0,iType == E_INDEX_TYPE::EIT_16BIT? 2:4, indices)->getBuffer(), indexFormat, 0);
+				Context->IASetIndexBuffer(GetTempBuffer(EHBT_INDEX, indexCount * indexStride, 0, iType == E_INDEX_TYPE::EIT_16BIT ? 2 : 4, indices)->getBuffer(), indexFormat, 0);
 			}
 
 			return true;
@@ -3351,7 +3372,7 @@ namespace irr
 				logFormatError(hr, "Could not resize back buffer");
 
 				return;
-		}
+			}
 #endif
 
 			// Get default render target
@@ -3397,7 +3418,7 @@ namespace irr
 
 			setFog(FogColor, FogType, FogStart, FogEnd, FogDensity, PixelFog, RangeFog);
 			setAmbientLight(AmbientLight);
-	}
+		}
 
 		// returns the current size of the screen or rendertarget
 		const core::dimension2d<u32>& CD3D11Driver::getCurrentRenderTargetSize() const
@@ -3742,7 +3763,7 @@ namespace irr
 
 			return vertexDescriptor;
 		}
-} // end namespace video
+	} // end namespace video
 } // end namespace irr
 
 #endif
@@ -3764,6 +3785,145 @@ namespace irr
 			}
 
 			return dx11;
+		}
+
+		// ====================================================================
+		// Deferred context support -- added.
+		//
+		// Design ("Option A", chosen after confirming createMaterialRenderers()
+		// binds each renderer to a fixed `this` driver pointer at construction
+		// -- a genuinely separate CD3D11Driver instance would call back into
+		// the wrong Context. Instead: THIS SAME instance temporarily swaps
+		// Context and BridgeCalls to point at a deferred D3D11 context. NOT
+		// thread-safe with concurrent immediate-mode rendering on the same
+		// instance -- recording and immediate use must be strictly sequential
+		// on a given CD3D11Driver.
+		// ====================================================================
+
+		IVideoDriver* CD3D11Driver::createDeferredContext()
+		{
+			// Phase 2: genuinely separate object, safe now that material
+			// renderers resolve BridgeCalls/Context via the per-call
+			// `services` parameter (Phase 1) instead of a captured member.
+			// Supports real concurrent recording (e.g. on a worker thread)
+			// while this driver continues immediate-mode rendering --
+			// unlike the earlier same-instance swap, which required strict
+			// sequencing. SavedImmediateContext/SavedImmediateBridge below
+			// are kept for that earlier approach in case there's a reason
+			// to revisit it; they stay unused (NULL) on this path.
+			return new CD3D11DeferredContext(this);
+		}
+
+		IDeferredContext* CD3D11Driver::getDeferredContextControl()
+		{
+			// Only "is a deferred context control surface" while actively
+			// recording. Matches IVideoDriver::getDeferredContextControl()'s
+			// documented default-nullptr contract for ordinary drivers.
+			return SavedImmediateContext ? this : nullptr;
+		}
+
+		void CD3D11Driver::executeDeferredContext(IDeferredContext* context)
+		{
+			if (!context)
+			{
+				os::Printer::log("CD3D11Driver::executeDeferredContext: null context", ELL_ERROR);
+				return;
+			}
+			// Phase 2: `context` is a genuinely separate CD3D11DeferredContext
+			// (or, in principle, any IDeferredContext implementation) --
+			// delegate to its own execute(), passing `this` as the target
+			// to submit into. This replaced the earlier Option-A-specific
+			// check (`context != this`), which only made sense when
+			// createDeferredContext() returned `this` with a swapped
+			// Context/BridgeCalls instead of a separate object.
+			context->execute(this);
+		}
+
+		void CD3D11Driver::execute(IVideoDriver* driver)
+		{
+			if (!SavedImmediateContext)
+			{
+				os::Printer::log("CD3D11Driver::execute: not currently recording", ELL_WARNING);
+				return;
+			}
+
+			ID3D11DeviceContext* deferredContext = Context;
+			CD3D11CallBridge* deferredBridge = BridgeCalls;
+
+			ID3D11CommandList* commandList = NULL;
+			HRESULT hr = deferredContext->FinishCommandList(FALSE, &commandList);
+
+			// Restore immediate state BEFORE submitting, so that if the
+			// caller (or a nested call) touches the driver again right
+			// after execute() returns, it's back to acting as the
+			// immediate driver, not still in "recording" mode.
+			Context = SavedImmediateContext;
+			BridgeCalls = SavedImmediateBridge;
+			SavedImmediateContext = NULL;
+			SavedImmediateBridge = NULL;
+
+			if (FAILED(hr))
+			{
+				logFormatError(hr, "CD3D11Driver::execute: FinishCommandList failed");
+				delete deferredBridge;
+				deferredContext->Release();
+				return;
+			}
+
+			CD3D11Driver* target = driver ? static_cast<CD3D11Driver*>(driver) : this;
+			target->Context->ExecuteCommandList(commandList, FALSE);
+			commandList->Release();
+
+			createCompletionQuery();
+			if (CompletionQuery)
+				target->Context->End(CompletionQuery);
+
+			// Deferred context and its dedicated CallBridge were only
+			// needed for this one recording -- discard them. A fresh pair
+			// is created on the next createDeferredContext() call. (If
+			// profiling shows this alloc/dealloc cycle is hot, this is the
+			// spot to add a small pool instead.)
+			delete deferredBridge;
+			deferredContext->Release();
+		}
+
+		void CD3D11Driver::beginRecording()
+		{
+			// FinishCommandList (called from execute()) already resets the
+			// deferred D3D11 context to a clean recording state as a side
+			// effect -- and execute() discards the deferred context/bridge
+			// entirely afterward, so there is nothing to reset here. No-op,
+			// present only to satisfy IDeferredContext's contract uniformly.
+		}
+
+		void CD3D11Driver::createCompletionQuery()
+		{
+			if (CompletionQuery)
+			{
+				CompletionQuery->Release();
+				CompletionQuery = NULL;
+			}
+			if (!Device)
+				return;
+
+			D3D11_QUERY_DESC desc = {};
+			desc.Query = D3D11_QUERY_EVENT;
+			Device->CreateQuery(&desc, &CompletionQuery);
+		}
+
+		void CD3D11Driver::waitForCompletion()
+		{
+			if (!CompletionQuery || !Context)
+				return;
+
+			// D3D11 has no manual fence API (unlike D3D12) -- this is the
+			// standard idiom: poll an event query until the GPU has reached
+			// that point in the command stream.
+			while (Context->GetData(CompletionQuery, NULL, 0, 0) != S_OK)
+			{
+				// Busy-wait. Replace with Sleep(0)/SwitchToThread() between
+				// polls if this shows up in profiling.
+			}
 		}
 #endif // _IRR_COMPILE_WITH_DIRECT3D_11_
 	} // end namespace video

@@ -1391,6 +1391,12 @@
     <ClInclude Include="IDeferredContext.h">
       <Filter>include\video</Filter>
     </ClInclude>
+    <ClInclude Include="Cd3d11deferredcontext.h">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClInclude>
+    <ClInclude Include="Id3d11materialrendererservices.h">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="..\..\changes.txt">
@@ -2384,6 +2390,9 @@
       <Filter>Irrlicht\video\Null</Filter>
     </ClCompile>
     <ClCompile Include="CNullDriverCommon.cpp" />
+    <ClCompile Include="Cd3d11deferredcontext.cpp">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="Irrlicht.rc" />

@@ -1525,6 +1525,7 @@
     </ClInclude>
     <ClInclude Include="CD3D11CallBridge.h" />
     <ClInclude Include="CD3D11DeferedDriver.h" />
+    <ClInclude Include="Cd3d11deferredcontext.h" />
     <ClInclude Include="CD3D11Driver.h" />
     <ClInclude Include="CD3D11FixedPipelineRenderer.h" />
     <ClInclude Include="CD3D11HardwareBuffer.h" />
@@ -1549,6 +1550,7 @@
     <ClInclude Include="CSceneManager.h" />
     <ClInclude Include="CVertexDescriptor.h" />
     <ClInclude Include="DDSTextureLoader.h" />
+    <ClInclude Include="Id3d11materialrendererservices.h" />
     <ClInclude Include="IDeferredContext.h" />
     <ClInclude Include="Octree.h" />
     <ClInclude Include="CSMFMeshFileLoader.h" />
@@ -1801,6 +1803,7 @@
       </ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="CD3D11CallBridge.cpp" />
+    <ClCompile Include="Cd3d11deferredcontext.cpp" />
     <ClCompile Include="CD3D11Driver.cpp" />
     <ClCompile Include="CD3D11FixedPipelineRenderer.cpp" />
     <ClCompile Include="CD3D11HardwareBuffer.cpp" />

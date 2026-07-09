@@ -13,7 +13,7 @@ namespace irr
 {
 	namespace video
 	{
-		CD3D11CallBridge::CD3D11CallBridge(ID3D11Device* device, CD3D11Driver* driver)
+		CD3D11CallBridge::CD3D11CallBridge(ID3D11Device* device, CD3D11Driver* driver, ID3D11DeviceContext* explicitContext)
 			: Context(NULL), Device(device), Driver(driver), InputLayout(NULL),
 			Topology(D3D_PRIMITIVE_TOPOLOGY_UNDEFINED), VtxDescriptor(NULL), ShaderByteCode(NULL), ShaderByteCodeSize(0),
 			samplersChanged(0), texturesChanged(0)
@@ -21,7 +21,24 @@ namespace irr
 			if (Device)
 			{
 				Device->AddRef();
-				Device->GetImmediateContext(&Context);
+				if (explicitContext)
+				{
+					// Used for a deferred recording context: target the
+					// caller-supplied (deferred) ID3D11DeviceContext instead
+					// of the immediate one, so this bridge's cached state
+					// (blend/rasterizer/depthstencil/sampler/shaders/
+					// input layout) tracks the deferred context's own
+					// history, not the immediate context's. Sharing one
+					// CD3D11CallBridge between an immediate and a deferred
+					// context would cause it to wrongly skip real D3D11
+					// calls it believes are already applied.
+					Context = explicitContext;
+					Context->AddRef();
+				}
+				else
+				{
+					Device->GetImmediateContext(&Context);
+				}
 			}
 
 			for (int i = 0; i < EST_COUNT; ++i)
