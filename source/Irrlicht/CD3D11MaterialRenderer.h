@@ -18,6 +18,7 @@
 #include <d3d11.h>
 #include "CD3D11VertexDescriptor.h"
 #include <vector>
+#include <algorithm>
 
 typedef struct _D3D11_SHADER_BUFFER_DESC D3D11_SHADER_BUFFER_DESC;
 
@@ -188,7 +189,7 @@ namespace irr
 
 				for (int i = 0; i < bufferArray.size(); ++i)
 				{
-					BuffCnt = max(bufferArray[i]->bindPoint, BuffCnt + 1);
+					BuffCnt = std::max<u32>(bufferArray[i]->bindPoint, BuffCnt + 1);
 				}
 
 				buffs.resize(BuffCnt);

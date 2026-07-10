@@ -3811,7 +3811,21 @@ namespace irr
 			// sequencing. SavedImmediateContext/SavedImmediateBridge below
 			// are kept for that earlier approach in case there's a reason
 			// to revisit it; they stay unused (NULL) on this path.
-			return new CD3D11DeferredContext(this);
+			CD3D11DeferredContext* deferred = new CD3D11DeferredContext(this);
+
+			// ID3D11Device::CreateDeferredContext fails unconditionally on a
+			// device created with D3D11_CREATE_DEVICE_SINGLETHREADED (i.e.
+			// Params.DriverMultithreaded == false). Surface that failure here
+			// instead of handing back a degenerate object whose Context is
+			// NULL -- callers (and tests) should be able to trust a non-null
+			// return actually supports recording (see OS-376).
+			if (!deferred->getContext())
+			{
+				deferred->drop();
+				return nullptr;
+			}
+
+			return deferred;
 		}
 
 		IDeferredContext* CD3D11Driver::getDeferredContextControl()
