@@ -8,6 +8,7 @@
 #include "IReferenceCounted.h"
 #include "EDriverTypes.h"
 #include "EHardwareBufferFlags.h"
+#include "vector2d.h"
 
 namespace irr
 {

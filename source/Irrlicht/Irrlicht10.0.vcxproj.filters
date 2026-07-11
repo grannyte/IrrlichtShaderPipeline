@@ -1364,7 +1364,34 @@
     <ClInclude Include="CD3D11VertexDescriptor.h">
       <Filter>Irrlicht\video\Direct3D11</Filter>
     </ClInclude>
+    <ClInclude Include="CD3D11On12Driver.h">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClInclude>
     <ClInclude Include="CD3D12Driver.h">
+      <Filter>Irrlicht\video\Direct3D12</Filter>
+    </ClInclude>
+    <ClInclude Include="CD3D12Helpers.h">
+      <Filter>Irrlicht\video\Direct3D12</Filter>
+    </ClInclude>
+    <ClInclude Include="CD3D12HardwareBuffer.h">
+      <Filter>Irrlicht\video\Direct3D12</Filter>
+    </ClInclude>
+    <ClInclude Include="CD3D12Texture.h">
+      <Filter>Irrlicht\video\Direct3D12</Filter>
+    </ClInclude>
+    <ClInclude Include="DDSTextureLoader12.h">
+      <Filter>Irrlicht\video\Direct3D12</Filter>
+    </ClInclude>
+    <ClInclude Include="CD3D12PSOCache.h">
+      <Filter>Irrlicht\video\Direct3D12</Filter>
+    </ClInclude>
+    <ClInclude Include="CD3D12MaterialRenderer.h">
+      <Filter>Irrlicht\video\Direct3D12</Filter>
+    </ClInclude>
+    <ClInclude Include="CD3D12DefaultShaders.h">
+      <Filter>Irrlicht\video\Direct3D12</Filter>
+    </ClInclude>
+    <ClInclude Include="CD3D12DeferredContext.h">
       <Filter>Irrlicht\video\Direct3D12</Filter>
     </ClInclude>
     <ClInclude Include="DDSTextureLoader.h">
@@ -2380,7 +2407,28 @@
     <ClCompile Include="CD3D11VertexDescriptor.cpp">
       <Filter>Irrlicht\video\Direct3D11</Filter>
     </ClCompile>
+    <ClCompile Include="CD3D11On12Driver.cpp">
+      <Filter>Irrlicht\video\Direct3D11</Filter>
+    </ClCompile>
     <ClCompile Include="CD3D12Driver.cpp">
+      <Filter>Irrlicht\video\Direct3D12</Filter>
+    </ClCompile>
+    <ClCompile Include="CD3D12HardwareBuffer.cpp">
+      <Filter>Irrlicht\video\Direct3D12</Filter>
+    </ClCompile>
+    <ClCompile Include="CD3D12Texture.cpp">
+      <Filter>Irrlicht\video\Direct3D12</Filter>
+    </ClCompile>
+    <ClCompile Include="DDSTextureLoader12.cpp">
+      <Filter>Irrlicht\video\Direct3D12</Filter>
+    </ClCompile>
+    <ClCompile Include="CD3D12PSOCache.cpp">
+      <Filter>Irrlicht\video\Direct3D12</Filter>
+    </ClCompile>
+    <ClCompile Include="CD3D12MaterialRenderer.cpp">
+      <Filter>Irrlicht\video\Direct3D12</Filter>
+    </ClCompile>
+    <ClCompile Include="CD3D12DeferredContext.cpp">
       <Filter>Irrlicht\video\Direct3D12</Filter>
     </ClCompile>
     <ClCompile Include="DDSTextureLoader.cpp">

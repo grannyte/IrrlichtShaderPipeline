@@ -46,6 +46,43 @@ namespace irr
 
 			ZeroMemory(CurrentTextures, sizeof(CurrentTextures[0]) * MATERIAL_MAX_TEXTURES);
 			ZeroMemory(SamplerStates, sizeof(SamplerStates[0]) * MATERIAL_MAX_TEXTURES);
+
+			applyInitialStates();
+		}
+
+		//! Pousse une premiere fois les etats caches vers le device.
+		//!
+		//! Le cache de ce bridge (DepthStencilDesc/BlendDesc/RasterizerDesc) demarre sur les valeurs
+		//! de reset(), alors que le DEVICE, lui, demarre sur les valeurs par defaut de D3D11
+		//! (DepthFunc = LESS, DepthWriteMask = ALL...). Sans cette premiere application, le cache
+		//! MENT : les setters comparent le desc demande a une valeur que le device n'a jamais recue,
+		//! concluent "deja applique" et sautent l'appel D3D11. Tout draw dont le materiau tombe pile
+		//! sur les valeurs de reset() s'execute alors avec l'etat PAR DEFAUT du device.
+		//!
+		//! C'est exactement ce qui cassait les occlusion queries : le materiau de requete
+		//! (profondeur activee, GREATER_EQUAL, ecriture desactivee) produit EXACTEMENT le desc de
+		//! reset(), donc OMSetDepthStencilState n'etait jamais appele et la requete tournait avec le
+		//! test LESS par defaut de D3D11 -- qui, en Z inverse (depth efface a 0.0), rejette tous les
+		//! fragments : 0 pixel visible, quelle que soit la geometrie.
+		void CD3D11CallBridge::applyInitialStates()
+		{
+			if (!Device || !Context)
+				return;
+
+			const SD3D11_DEPTH_STENCIL_DESC depthStencil;	// valeurs de reset()
+			const SD3D11_BLEND_DESC blend;
+			const SD3D11_RASTERIZER_DESC rasterizer;
+
+			// Les setters court-circuitent quand le desc demande est egal au cache. On rend donc le
+			// cache different de tout desc legitime, le temps de ces trois appels : ils passeront et
+			// laisseront cache et device d'accord.
+			memset(&DepthStencilDesc, 0xFF, sizeof(DepthStencilDesc));
+			memset(&BlendDesc, 0xFF, sizeof(BlendDesc));
+			memset(&RasterizerDesc, 0xFF, sizeof(RasterizerDesc));
+
+			setDepthStencilState(depthStencil);
+			setBlendState(blend);
+			setRasterizerState(rasterizer);
 		}
 
 		CD3D11CallBridge::~CD3D11CallBridge()

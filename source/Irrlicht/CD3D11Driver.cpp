@@ -699,21 +699,30 @@ namespace irr
 				if (OcclusionQueries[index].Run == u32(~0))
 					return;
 
+				// D3D11_QUERY_OCCLUSION rend un UINT64, mais SOccQuery::Result est un u32 (4 octets)
+				// suivi IMMEDIATEMENT de SOccQuery::Run. Ecrire directement dans &Result en annoncant
+				// sizeof(u64) faisait deborder GetData() de 4 octets sur Run, ecrasant au passage son
+				// sentinelle "jamais lancee" (0xffffffff). On passe donc par un u64 local, puis on
+				// convertit -- meme forme que CD3D9Driver, qui lit dans un temporaire avant d'affecter
+				// Result.
 				bool available = block;
-				u64 size = sizeof(u64);
-				;
+				u64 pixelsVisible = 0;
+				const UINT size = sizeof(u64);
 				if (!block)
-					available = (Context->GetData(reinterpret_cast<ID3D11Query*>(OcclusionQueries[index].PID), &OcclusionQueries[index].Result, size, 0) == S_OK);
+					available = (Context->GetData(reinterpret_cast<ID3D11Query*>(OcclusionQueries[index].PID), &pixelsVisible, size, 0) == S_OK);
 				else
 				{
 					do
 					{
-						HRESULT hr = Context->GetData(reinterpret_cast<ID3D11Query*>(OcclusionQueries[index].PID), &OcclusionQueries[index].Result, size, 0);
+						HRESULT hr = Context->GetData(reinterpret_cast<ID3D11Query*>(OcclusionQueries[index].PID), &pixelsVisible, size, 0);
 						available = (hr == S_OK);
 						if (hr != S_FALSE)
 							break;
 					} while (!available);
 				}
+
+				if (available)
+					OcclusionQueries[index].Result = static_cast<u32>(pixelsVisible);
 			}
 		}
 

@@ -214,6 +214,10 @@ namespace irr
 			void setViewPort(const core::rect<s32>& vp);
 
 		private:
+			//! Synchronise le cache d'etat avec le device au demarrage (voir le .cpp : sans cela le
+			//! cache pretend detenir des etats que le device n'a jamais recus).
+			void applyInitialStates();
+
 			ID3D11DeviceContext* Context;
 			ID3D11Device* Device;
 			CD3D11Driver* Driver;

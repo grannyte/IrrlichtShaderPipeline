@@ -57,6 +57,8 @@ namespace irr
 #ifdef _IRR_COMPILE_WITH_DIRECT3D_12_
 		IVideoDriver* createDirectX12Driver(const irr::SIrrlichtCreationParameters& params,
 			io::IFileSystem* io, HWND window);
+		IVideoDriver* createDirectX11On12Driver(const irr::SIrrlichtCreationParameters& params,
+			io::IFileSystem* io, HWND window);
 #endif
 
 #ifdef _IRR_COMPILE_WITH_OPENGL_
@@ -1250,11 +1252,26 @@ namespace irr
 
 			if (!VideoDriver)
 			{
-				os::Printer::log("Could not create DIRECT3D11 Driver.", ELL_ERROR);
+				os::Printer::log("Could not create DIRECT3D12 (natif) Driver.", ELL_ERROR);
 			}
 #else
-			os::Printer::log("DIRECT3D11 Driver was not compiled into this dll. Try another one.", ELL_ERROR);
-#endif // _IRR_COMPILE_WITH_DIRECT3D_11_
+			os::Printer::log("DIRECT3D12 Driver was not compiled into this dll. Try another one.", ELL_ERROR);
+#endif // _IRR_COMPILE_WITH_DIRECT3D_12_
+
+			break;
+
+		case video::EDT_DIRECT3D11ON12:
+#ifdef _IRR_COMPILE_WITH_DIRECT3D_12_
+
+			VideoDriver = video::createDirectX11On12Driver(CreationParams, FileSystem, HWnd);
+
+			if (!VideoDriver)
+			{
+				os::Printer::log("Could not create DIRECT3D11-on-12 (interop) Driver.", ELL_ERROR);
+			}
+#else
+			os::Printer::log("DIRECT3D11-on-12 Driver was not compiled into this dll. Try another one.", ELL_ERROR);
+#endif // _IRR_COMPILE_WITH_DIRECT3D_12_
 
 			break;
 		case video::EDT_OPENGL:

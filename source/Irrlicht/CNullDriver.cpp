@@ -1943,6 +1943,13 @@ namespace irr
 				mat.AntiAliasing = 0;
 				mat.ColorMask = ECP_NONE;
 				mat.GouraudShading = false;
+				// Une requete d'occlusion demande "quelle part de CET objet est visible ?", et
+				// l'objet a en general DEJA ete dessine dans la passe de scene : il a donc ecrit sa
+				// propre profondeur, et ses fragments retombent ici EXACTEMENT sur la valeur
+				// stockee. Le ECFN_GREATER par defaut de SMaterial (Z inverse) est une comparaison
+				// STRICTE : elle rejette cette egalite, et le compte s'effondre a quelques pixels de
+				// bruit de z-fighting au lieu de la surface reelle. Il faut donc accepter l'egalite.
+				mat.ZBuffer = ECFN_GREATEREQUAL;
 				mat.ZWriteEnable = false;
 				setMaterial(mat);
 			}

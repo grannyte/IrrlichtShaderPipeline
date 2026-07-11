@@ -63,19 +63,29 @@ namespace video
 		"	// transform position to clip space\n"\
 		"	output.pos = mul( input.pos, g_mWorldViewProj );\n"\
 		"\n"\
+		"	// Fix: g_lightPos1/g_lightPos2 are WORLD-space (see OnSetConstants()), so the\n"\
+		"	// vertex position and TBN basis used to build the light vectors below must also be\n"\
+		"	// transformed into world space first -- using the raw object-space input.pos/tangent/\n"\
+		"	// binormal/norm directly against a world-space light position only happened to work\n"\
+		"	// when the object's world matrix was the identity.\n"\
+		"	float4 worldPos = mul( input.pos, g_mWorld );\n"\
+		"	float3 worldTangent  = normalize( mul( input.tangent,  (float3x3)g_mWorld ) );\n"\
+		"	float3 worldBinormal = normalize( mul( input.binormal, (float3x3)g_mWorld ) );\n"\
+		"	float3 worldNormal   = normalize( mul( input.norm,     (float3x3)g_mWorld ) );\n"\
+		"\n"\
 		"	// vertex - lightpositions\n"\
-		"	float4 tempLightVector0 = float4(g_lightPos1, 0.0) - input.pos;\n"\
-		"	float4 tempLightVector1 = float4(g_lightPos2, 0.0) - input.pos;\n"\
+		"	float4 tempLightVector0 = float4(g_lightPos1, 0.0) - worldPos;\n"\
+		"	float4 tempLightVector1 = float4(g_lightPos2, 0.0) - worldPos;\n"\
 		"\n"\
 		"	// transform the light vector 1 with U, V, W\n"\
-		"	output.lightVector1.x = dot(input.tangent,  tempLightVector0.xyz);\n"\
-		"	output.lightVector1.y = dot(input.binormal, tempLightVector0.xyz);\n"\
-		"	output.lightVector1.z = dot(input.norm,   tempLightVector0.xyz);\n"\
+		"	output.lightVector1.x = dot(worldTangent,  tempLightVector0.xyz);\n"\
+		"	output.lightVector1.y = dot(worldBinormal, tempLightVector0.xyz);\n"\
+		"	output.lightVector1.z = dot(worldNormal,   tempLightVector0.xyz);\n"\
 		"\n"\
 		"	// transform the light vector 2 with U, V, W\n"\
-		"	output.lightVector2.x = dot(input.tangent,  tempLightVector1.xyz);\n"\
-		"	output.lightVector2.y = dot(input.binormal, tempLightVector1.xyz);\n"\
-		"	output.lightVector2.z = dot(input.norm,   tempLightVector1.xyz);\n"\
+		"	output.lightVector2.x = dot(worldTangent,  tempLightVector1.xyz);\n"\
+		"	output.lightVector2.y = dot(worldBinormal, tempLightVector1.xyz);\n"\
+		"	output.lightVector2.z = dot(worldNormal,   tempLightVector1.xyz);\n"\
 		"\n"\
 		"	// calculate attenuation of light 0\n"\
 		"	output.lightColor1.w = 0.0;\n"\
