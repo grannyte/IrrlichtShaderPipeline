@@ -98,6 +98,9 @@ namespace irr
 			UINT compileFlags = 0;
 #ifdef _DEBUG
 			compileFlags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+#else
+			compileFlags |= D3DCOMPILE_OPTIMIZATION_LEVEL3;
+			compileFlags |= D3DCOMPILE_AVOID_FLOW_CONTROL;
 #endif
 			ComPtr<ID3DBlob> vs, ps, errors;
 
@@ -302,6 +305,17 @@ namespace irr
 
 #ifdef _DEBUG
 			compileFlags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+#else
+			// These flags allow maximum performance
+			compileFlags |= D3DCOMPILE_OPTIMIZATION_LEVEL3;
+			if (strstr(pixelShaderEntryPointName, "pixelNoiseMain") == NULL)
+			{
+				compileFlags |= D3DCOMPILE_AVOID_FLOW_CONTROL;
+			}
+			else
+			{
+				compileFlags |= D3DCOMPILE_PREFER_FLOW_CONTROL;
+			}
 #endif
 
 			ComPtr<ID3DBlob> vs, ps, errors;

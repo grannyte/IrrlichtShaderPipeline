@@ -773,7 +773,7 @@ namespace irr
 #else
 			// These flags allow maximum performance
 			flags |= D3DCOMPILE_OPTIMIZATION_LEVEL3;
-			if (Lang != EGSL_PCMP && pixelShaderEntryPointName && strcmp("pixelNoiseMain", pixelShaderEntryPointName))
+			if (Lang != EGSL_PCMP && pixelShaderEntryPointName && strstr(pixelShaderEntryPointName, "pixelNoiseMain") == NULL)
 			{
 				flags |= D3DCOMPILE_AVOID_FLOW_CONTROL;
 			}
