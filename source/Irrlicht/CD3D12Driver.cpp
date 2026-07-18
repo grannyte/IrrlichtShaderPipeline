@@ -148,6 +148,10 @@ namespace irr
 			if (!createSwapChain(hwnd, WindowSize.Width, WindowSize.Height))
 				return false;
 
+			ExposedData.D3D12.D3DDev12 = Device.Get();
+			ExposedData.D3D12.SwapChain = SwapChain.Get();
+			ExposedData.D3D12.HWnd = hwnd;
+
 			updateRenderTargetViews();
 
 			// The 4 standard descriptors ("standard"/"2tcoords"/"tangents"/"standardcolorf",
@@ -310,9 +314,18 @@ namespace irr
 				return false;
 			}
 
-			// Picks the hardware adapter with the most dedicated VRAM that supports
-			// D3D_FEATURE_LEVEL_11_0 (compatibility check without actual creation).
+			// Candidate levels, highest first: probing each in turn (ppDevice=nullptr, so no
+			// device is actually constructed) tells us the true ceiling for an adapter without
+			// paying for a real ID3D12Device, and without hardcoding 11_0 as if it were the max.
+			static const D3D_FEATURE_LEVEL candidateLevels[] = {
+				D3D_FEATURE_LEVEL_12_2, D3D_FEATURE_LEVEL_12_1, D3D_FEATURE_LEVEL_12_0,
+				D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0,
+			};
+
+			// Picks the hardware adapter with the most dedicated VRAM that supports at least
+			// D3D_FEATURE_LEVEL_11_0, remembering the highest level each one actually offers.
 			SIZE_T bestVRAM = 0;
+			D3D_FEATURE_LEVEL bestFeatureLevel = D3D_FEATURE_LEVEL_11_0;
 			ComPtr<IDXGIAdapter1> candidate;
 			for (UINT i = 0; DXGIFactory->EnumAdapterByGpuPreference(i,
 				DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&candidate)) != DXGI_ERROR_NOT_FOUND; ++i)
@@ -321,12 +334,25 @@ namespace irr
 				candidate->GetDesc1(&desc);
 				if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
 					continue;
-				if (FAILED(D3D12CreateDevice(candidate.Get(), D3D_FEATURE_LEVEL_11_0,
-					_uuidof(ID3D12Device), nullptr)))
+
+				D3D_FEATURE_LEVEL supportedLevel = D3D_FEATURE_LEVEL_11_0;
+				bool supported = false;
+				for (D3D_FEATURE_LEVEL level : candidateLevels)
+				{
+					if (SUCCEEDED(D3D12CreateDevice(candidate.Get(), level, _uuidof(ID3D12Device), nullptr)))
+					{
+						supportedLevel = level;
+						supported = true;
+						break;
+					}
+				}
+				if (!supported)
 					continue;
+
 				if (desc.DedicatedVideoMemory > bestVRAM)
 				{
 					bestVRAM = desc.DedicatedVideoMemory;
+					bestFeatureLevel = supportedLevel;
 					candidate.As(&Adapter);
 				}
 			}
@@ -336,7 +362,7 @@ namespace irr
 				return false;
 			}
 
-			hr = D3D12CreateDevice(Adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&Device));
+			hr = D3D12CreateDevice(Adapter.Get(), bestFeatureLevel, IID_PPV_ARGS(&Device));
 			if (FAILED(hr))
 			{
 				os::Printer::log("CD3D12Driver: D3D12CreateDevice a echoue", ELL_ERROR);
