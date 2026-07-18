@@ -3401,10 +3401,10 @@ namespace irr
 
 				return;
 			}
-			backBuffer->Release();
 			D3D11_TEXTURE2D_DESC tdesc;
 			ZeroMemory(&tdesc, sizeof(D3D11_TEXTURE2D_DESC));
 			backBuffer->GetDesc(&tdesc);
+			backBuffer->Release();
 			// create depth buffer
 
 			DefaultDepthBuffer = createDepthStencilView(core::dimension2du(tdesc.Width, tdesc.Height), getColorFormatFromD3DFormat(DepthStencilFormat));
