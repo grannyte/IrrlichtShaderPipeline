@@ -1224,12 +1224,14 @@ namespace irr
 			//! (CD3D12DefaultShaders.h).
 			void bindFog(const SMaterial& material);
 
-			//! Auxiliary PSO key for stencil-marking a shadow volume (zpass technique): no color write
-			//! (RenderTargetWriteMask=0), no depth write, StencilPassOp=passOp on success of the standard
-			//! depth test (LESS_EQUAL). cullMode determines which face of the volume this PSO handles
-			//! (the same passOp is applied to FrontFace and BackFace, see the comment in
+			//! Auxiliary PSO key for stencil-marking a shadow volume: no color write
+			//! (RenderTargetWriteMask=0), no depth write. useDepthFailOp selects which stencil op field
+			//! "op" is written to -- StencilPassOp (zpass technique, on depth-test success) or
+			//! StencilDepthFailOp (zfail technique, on depth-test failure); the untouched field stays
+			//! D3D12_STENCIL_OP_KEEP. cullMode determines which face of the volume this PSO handles
+			//! (the same op is applied to FrontFace and BackFace, see the comment in
 			//! CD3D12PSOCache.h -- irrelevant since cullMode already discards the other side).
-			SPSOKey buildShadowVolumeStencilKey(D3D12_CULL_MODE cullMode, D3D12_STENCIL_OP passOp) const;
+			SPSOKey buildShadowVolumeStencilKey(D3D12_CULL_MODE cullMode, D3D12_STENCIL_OP op, bool useDepthFailOp) const;
 
 			//! Draws vertices (already flattened, no indices) with the given topology, via
 			//! bindDrawState() + allocateVertices(). Used by all immediate 2D/3D draw functions

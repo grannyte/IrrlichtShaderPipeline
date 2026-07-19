@@ -92,7 +92,14 @@ namespace irr
 			ESNRP_TRANSPARENT_EFFECT = 32,
 
 			//! Drawn after the solid nodes, before the transparent nodes, the time for drawing shadow volumes
-			ESNRP_SHADOW = 64
+			ESNRP_SHADOW = 64,
+
+			//! Drawn once per frame right after the solid nodes (and their G-buffer) are complete,
+			//! before shadows/transparent/transparent-effect nodes. For screen-space/volumetric
+			//! effects (light scattering, volumetric clouds, etc.) that need a post-solid-pass
+			//! render callback but are not real geometry and must not be mistaken by
+			//! ISceneManager::RenderShadow() for a shadow-casting node.
+			ESNRP_VOLUMETRIC_EFFECT = 128
 		};
 
 		class IAnimatedMesh;
@@ -1238,6 +1245,11 @@ namespace irr
 
 			//!Explicitly Render all Shadow Scenenodes
 			virtual void RenderShadow() = 0;
+
+			//!Explicitly render all ESNRP_VOLUMETRIC_EFFECT scenenodes (screen-space/volumetric
+			//!effects needing a post-solid-pass callback, e.g. light scattering, volumetric
+			//!clouds -- NOT real shadow-casting geometry, see ESNRP_VOLUMETRIC_EFFECT).
+			virtual void RenderVolumetricEffect() = 0;
 
 			//!Explicitly Render transparent Scenenodes
 			virtual void RenderTransparent() = 0;

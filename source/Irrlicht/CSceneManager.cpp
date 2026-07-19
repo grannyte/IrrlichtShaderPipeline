@@ -324,6 +324,7 @@ namespace irr
 				getProfiler().add(EPID_SM_RENDER_SKYBOXES, L"skyboxes", L"Irrlicht scene");
 				getProfiler().add(EPID_SM_RENDER_DEFAULT, L"defaultnodes", L"Irrlicht scene");
 				getProfiler().add(EPID_SM_RENDER_SHADOWS, L"shadows", L"Irrlicht scene");
+				getProfiler().add(EPID_SM_RENDER_VOLUMETRIC_EFFECT, L"volumetriceffect", L"Irrlicht scene");
 				getProfiler().add(EPID_SM_RENDER_TRANSPARENT, L"transp.nodes", L"Irrlicht scene");
 				getProfiler().add(EPID_SM_RENDER_EFFECT, L"effectnodes", L"Irrlicht scene");
 				getProfiler().add(EPID_SM_REGISTER, L"reg.render.node", L"Irrlicht scene");
@@ -1400,6 +1401,13 @@ namespace irr
 					taken = 1;
 				}
 				break;
+			case ESNRP_VOLUMETRIC_EFFECT:
+				if (!isCulled(node))
+				{
+					VolumetricEffectNodeList.push_back(node);
+					taken = 1;
+				}
+				break;
 
 			case ESNRP_NONE: // ignore this one
 
@@ -1627,6 +1635,37 @@ namespace irr
 				LightManager->OnRenderPassPostRender(CurrentRenderPass);
 		}
 
+		void CSceneManager::RenderVolumetricEffect()
+		{
+			IRR_PROFILE(CProfileScope psVolumetricEffect(EPID_SM_RENDER_VOLUMETRIC_EFFECT);)
+			CurrentRenderPass = ESNRP_VOLUMETRIC_EFFECT;
+			Driver->getOverrideMaterial().Enabled = ((Driver->getOverrideMaterial().EnablePasses & CurrentRenderPass) != 0);
+
+			if (LightManager)
+			{
+				LightManager->OnRenderPassPreRender(CurrentRenderPass);
+				for (u32 i = 0; i < VolumetricEffectNodeList.size(); ++i)
+				{
+					auto node = VolumetricEffectNodeList[i];
+					LightManager->OnNodePreRender(node);
+					node->render();
+					LightManager->OnNodePostRender(node);
+				}
+			}
+			else
+			{
+				for (u32 i = 0; i < VolumetricEffectNodeList.size(); ++i)
+				{
+					VolumetricEffectNodeList[i]->render();
+				}
+			}
+
+			VolumetricEffectNodeList.clear();
+
+			if (LightManager)
+				LightManager->OnRenderPassPostRender(CurrentRenderPass);
+		}
+
 		void CSceneManager::RenderTransparent()
 		{
 			IRR_PROFILE(CProfileScope psTrans(EPID_SM_RENDER_TRANSPARENT);)
@@ -1770,6 +1809,9 @@ namespace irr
 
 			// render shadows
 			RenderShadow();
+
+			// render volumetric/screen-space effects (light scattering, volumetric clouds, ...)
+			RenderVolumetricEffect();
 
 			// render transparent objects.
 			RenderTransparent();

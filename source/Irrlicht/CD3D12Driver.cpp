@@ -299,9 +299,14 @@ namespace irr
 					// message "the root cause occurred EARLIER" and no useful call stack. GBV
 					// instruments the shaders to detect these accesses at the moment they
 					// occur (see SetBreakOnSeverity below), at a significant CPU/GPU cost --
-					// reserved for debug builds.
+					// reserved for debug builds. It is not compatible with GPU capture tools
+					// (VS Graphics Debugger, PIX): their capture layer crashes if it is enabled
+					// while their hook DLL is already loaded in the process, so skip it whenever
+					// one is detected.
+					bool captureToolAttached = GetModuleHandleW(L"DXCaptureReplay.dll") != nullptr
+						|| GetModuleHandleW(L"WinPixGpuCapturer.dll") != nullptr;
 					ComPtr<ID3D12Debug1> debugController1;
-					if (SUCCEEDED(debugController.As(&debugController1)))
+					if (!captureToolAttached && SUCCEEDED(debugController.As(&debugController1)))
 						debugController1->SetEnableGPUBasedValidation(TRUE);
 				}
 				factoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
@@ -3031,7 +3036,7 @@ namespace irr
 			return true;
 		}
 
-		SPSOKey CD3D12Driver::buildShadowVolumeStencilKey(D3D12_CULL_MODE cullMode, D3D12_STENCIL_OP passOp) const
+		SPSOKey CD3D12Driver::buildShadowVolumeStencilKey(D3D12_CULL_MODE cullMode, D3D12_STENCIL_OP op, bool useDepthFailOp) const
 		{
 			SPSOKey key;
 			key.VSHash = std::hash<void*>()(getSolidVertexShader());
@@ -3041,8 +3046,9 @@ namespace irr
 			key.DepthTestEnable = true;
 			key.DepthWriteEnable = false; // stencil marking must never modify the depth buffer
 			// Same comparison as CD3D11Driver::setRenderStatesStencilShadowMode()
-			// (D3D11_COMPARISON_GREATER): zpass technique, consistent with OuterSpace's inverted
-			// depth convention rather than with the drawn material's SMaterial::ZBuffer.
+			// (D3D11_COMPARISON_GREATER), used for both zpass and zfail, consistent with
+			// OuterSpace's inverted depth convention rather than with the drawn material's
+			// SMaterial::ZBuffer.
 			key.DepthFunc = D3D12_COMPARISON_FUNC_GREATER;
 			key.CullMode = cullMode;
 			key.FillMode = D3D12_FILL_MODE_SOLID;
@@ -3057,8 +3063,10 @@ namespace irr
 			key.StencilEnable = true;
 			key.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
 			key.StencilFailOp = D3D12_STENCIL_OP_KEEP;
-			key.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP; // zpass technique: only StencilPassOp matters
-			key.StencilPassOp = passOp;
+			// zpass fires op on depth-test success (StencilPassOp); zfail fires it on depth-test
+			// failure (StencilDepthFailOp) -- the field not selected stays KEEP.
+			key.StencilDepthFailOp = useDepthFailOp ? op : D3D12_STENCIL_OP_KEEP;
+			key.StencilPassOp = useDepthFailOp ? D3D12_STENCIL_OP_KEEP : op;
 			key.RenderTargetWriteMask = 0; // stencil marking only, no color writes
 			return key;
 		}
@@ -4119,23 +4127,20 @@ namespace irr
 		}
 
 		// ========================== Phase 5: stencil shadow volumes ==========================
-		// zpass technique only (see buildShadowVolumeStencilKey()): two passes that
-		// draw the shadow volume into the stencil without writing color or depth
-		// (RenderTargetWriteMask=0, DepthWriteEnable=false), incrementing/decrementing the
-		// stencil as the standard depth test (LESS_EQUAL) passes -- front faces (cull
-		// back) increment, back faces (cull front) decrement. The area where stencil != 0 is
-		// in shadow. The zfail method (more robust when the camera is INSIDE the
-		// volume) is not implemented separately in this pass -- approximated by zpass with
-		// a warning, see drawStencilShadowVolume().
+		// Two passes draw the shadow volume into the stencil without writing color or depth
+		// (RenderTargetWriteMask=0, DepthWriteEnable=false); the area where stencil != 0 is in
+		// shadow (see drawStencilShadow()). zpass (see buildShadowVolumeStencilKey()) increments
+		// on the standard depth test passing: front faces (cull back) increment, back faces
+		// (cull front) decrement. zpass under/over-marks the stencil when the volume isn't fully
+		// capped or the camera/near-clip-plane intersects it. zfail avoids that by incrementing
+		// on depth-test FAILURE instead, with cull modes swapped relative to zpass (matching
+		// CD3D11Driver::drawStencilShadowVolume()): cull front increments, cull back decrements.
 
 		void CD3D12Driver::drawStencilShadowVolume(const core::array<core::vector3df>& triangles, bool zfail, u32 debugDataVisible)
 		{
 			const u32 count = triangles.size();
 			if (!count)
 				return;
-			if (zfail)
-				os::Printer::log("CD3D12Driver::drawStencilShadowVolume: methode zfail non"
-					" implementee dans cette passe, approximee par zpass", ELL_INFORMATION);
 
 			std::vector<S3DVertex> verts(count);
 			for (u32 i = 0; i < count; ++i)
@@ -4146,8 +4151,9 @@ namespace irr
 			if (vbView.SizeInBytes == 0)
 				return;
 
-			// Pass 1: front faces (cull back => only front faces survive), increments.
-			SPSOKey keyIncr = buildShadowVolumeStencilKey(D3D12_CULL_MODE_BACK, D3D12_STENCIL_OP_INCR);
+			SPSOKey keyIncr = zfail
+				? buildShadowVolumeStencilKey(D3D12_CULL_MODE_FRONT, D3D12_STENCIL_OP_INCR, true)
+				: buildShadowVolumeStencilKey(D3D12_CULL_MODE_BACK, D3D12_STENCIL_OP_INCR, false);
 			ID3D12PipelineState* psoIncr = getOrCreateAuxPSO(keyIncr);
 			if (psoIncr)
 			{
@@ -4160,8 +4166,9 @@ namespace irr
 				CommandList->DrawInstanced(count, 1, 0, 0);
 			}
 
-			// Pass 2: back faces (cull front => only back faces survive), decrements.
-			SPSOKey keyDecr = buildShadowVolumeStencilKey(D3D12_CULL_MODE_FRONT, D3D12_STENCIL_OP_DECR);
+			SPSOKey keyDecr = zfail
+				? buildShadowVolumeStencilKey(D3D12_CULL_MODE_BACK, D3D12_STENCIL_OP_DECR, true)
+				: buildShadowVolumeStencilKey(D3D12_CULL_MODE_FRONT, D3D12_STENCIL_OP_DECR, false);
 			ID3D12PipelineState* psoDecr = getOrCreateAuxPSO(keyDecr);
 			if (psoDecr)
 			{

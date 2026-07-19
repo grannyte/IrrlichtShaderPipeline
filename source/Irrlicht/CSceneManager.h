@@ -164,6 +164,9 @@ namespace irr
 			//!Explicitly Render all Shadow Scenenodes
 			virtual void RenderShadow() _IRR_OVERRIDE_;
 
+			//!Explicitly render all ESNRP_VOLUMETRIC_EFFECT scenenodes
+			virtual void RenderVolumetricEffect() _IRR_OVERRIDE_;
+
 			//!Explicitly Render transparent Scenenodes
 			virtual void RenderTransparent() _IRR_OVERRIDE_;
 
@@ -703,6 +706,7 @@ namespace irr
 			core::array< std::shared_ptr<ISceneNode>> CameraList;
 			core::array < std::shared_ptr<ISceneNode>> LightList;
 			core::array < std::shared_ptr<ISceneNode>> ShadowNodeList;
+			core::array < std::shared_ptr<ISceneNode>> VolumetricEffectNodeList;
 			core::array < std::shared_ptr<ISceneNode>> SkyBoxList;
 			core::array<DefaultNodeEntry> SolidNodeList;
 			core::array<TransparentNodeEntry> TransparentNodeList;
