@@ -61,6 +61,15 @@ namespace scene
 		/** If enabled then moving the mouse down will cause
 		the camera to look up. It is disabled by default. */
 		virtual void setInvertMouse(bool invert) = 0;
+
+		//! Resets the animator's stored yaw/pitch to look along a direction
+		/** Unlike ICameraSceneNode::setTarget(), which the next animateNode()
+		tick silently overwrites (Target is rebuilt every tick from the
+		animator's own persistent yaw/pitch), this actually updates that
+		persistent state so the new direction sticks. \param direction
+		Desired look direction (need not be normalized). \param up Camera's
+		current up vector, used the same way animateNode() uses it. */
+		virtual void setLookDirection(const core::vector3df& direction, const core::vector3df& up) = 0;
 	};
 } // end namespace scene
 } // end namespace irr

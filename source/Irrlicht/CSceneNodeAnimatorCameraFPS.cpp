@@ -115,6 +115,10 @@ void irr::scene::CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node,
         YawAngle = ha.Y;
         PitchAngle = ha.X;
 
+        LastUp = camera->getUpVector();
+        LastUp.normalize();
+        LastForward = dir;
+
         // Center cursor
         if (CursorControl)
         {
@@ -145,6 +149,13 @@ void irr::scene::CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node,
     f32 dt = (f32)(timeMs - LastAnimationTime);
     LastAnimationTime = timeMs;
 
+    // Up vector may be reassigned externally between ticks (e.g. orbit-attach); rebase to preserve look direction
+    core::vector3df up = camera->getUpVector();
+    up.normalize();
+    if (up.dotProduct(LastUp) < 0.9999f)
+        rebaseYawPitchToUp(up, LastForward);
+    LastUp = up;
+
     //
     // --- MOUSE LOOK (inverted X/Y) ---
     //
@@ -155,10 +166,6 @@ void irr::scene::CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node,
 
         if (delta.X != 0.f || delta.Y != 0.f)
         {
-            // arbitrary up
-            core::vector3df up = camera->getUpVector();
-            up.normalize();
-
             // Store the tentative new angles
             f32 newYaw = YawAngle + delta.X * RotateSpeed;
             f32 newPitch = PitchAngle - delta.Y * RotateSpeed * MouseYDirection;
@@ -201,8 +208,6 @@ void irr::scene::CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node,
     //
     // --- REBUILD FORWARD FROM YAW/PITCH ---
     //
-    core::vector3df up = camera->getUpVector();
-    up.normalize();
     core::quaternion qYaw, qPitch;
 
     qYaw.fromAngleAxis(core::DEGTORAD * YawAngle, up);
@@ -213,6 +218,7 @@ void irr::scene::CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node,
 
     qPitch.fromAngleAxis(core::DEGTORAD * PitchAngle, right);
     core::vector3df finalForward = qPitch * fwd;
+    LastForward = finalForward;
 
     //
     // --- MOVEMENT (strafe signs inverted) ---
@@ -251,17 +257,38 @@ void irr::scene::CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node,
             }
     }
 
-    // Write position and target
+    // Write position and target (Target is absolute/world space, so anchor on absolute position, not local pos)
     camera->setPosition(pos);
-    camera->setPosition(pos);
-    irr::core::vector3df displacementCorrection(0);
-    if (camera->getParent() == camera->getSceneManager()->getRootSceneNode())
-        displacementCorrection = pos;
+    camera->updateAbsolutePosition();
+    core::vector3df displacementCorrection = camera->getAbsolutePosition();
     camera->setTarget(displacementCorrection + finalForward.normalize() * std::max(pos.getLength(), 1.0f));
 }
 
 #pragma float_control( pop )
 
+
+// Rebuilds Yaw/PitchAngle so that reconstructing forward under `up` yields (as close as possible to) `forward`,
+// instead of letting the old angles get reinterpreted against the new up vector. Exact when Z is perpendicular
+// to up (the common world-up case); an approximation otherwise.
+void CSceneNodeAnimatorCameraFPS::rebaseYawPitchToUp(const core::vector3df& up, const core::vector3df& forward)
+{
+	core::vector3df horiz = forward - up * forward.dotProduct(up);
+	if (horiz.getLengthSQ() < 0.0001f)
+		horiz = core::vector3df(1, 0, 0) - up * up.X;
+	horiz.normalize();
+
+	core::vector3df zRef(0, 0, 1);
+	core::vector3df zHoriz = zRef - up * up.Z;
+	if (zHoriz.getLengthSQ() < 0.0001f)
+		zHoriz = core::vector3df(1, 0, 0) - up * up.X;
+	zHoriz.normalize();
+
+	f32 cosYaw = core::clamp(zHoriz.dotProduct(horiz), -1.0f, 1.0f);
+	core::vector3df cross = zHoriz.crossProduct(horiz);
+	f32 sign = (cross.dotProduct(up) >= 0.0f) ? 1.0f : -1.0f;
+	YawAngle = core::RADTODEG * acosf(cosYaw) * sign;
+	PitchAngle = 90.0f - core::RADTODEG * acosf(core::clamp(forward.dotProduct(up), -1.0f, 1.0f));
+}
 
 void CSceneNodeAnimatorCameraFPS::allKeysUp()
 {
@@ -338,6 +365,16 @@ void CSceneNodeAnimatorCameraFPS::setInvertMouse(bool invert)
 		MouseYDirection = 1.0f;
 }
 
+
+void CSceneNodeAnimatorCameraFPS::setLookDirection(const core::vector3df& direction, const core::vector3df& up)
+{
+	core::vector3df dir = direction;
+	dir.normalize();
+	rebaseYawPitchToUp(up, dir);
+	LastUp = up;
+	LastUp.normalize();
+	LastForward = dir;
+}
 
 ISceneNodeAnimator* CSceneNodeAnimatorCameraFPS::createClone(std::shared_ptr<ISceneNode> node, std::shared_ptr<ISceneManager> newManager)
 {

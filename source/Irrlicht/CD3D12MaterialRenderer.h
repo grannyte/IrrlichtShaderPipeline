@@ -58,20 +58,45 @@ namespace irr
 	{
 		using Microsoft::WRL::ComPtr;
 
-		//! Register space of a USER SHADER's cbuffers: space0.
-		//!
-		//! Forced by existing content, not a free choice: the engine's shaders are written for
-		//! D3D11 and declare "cbuffer X : register(b0)", which is space0 (D3D11 has no register
-		//! space). In D3D12 the root signature is a contract validated at PSO-creation time: if a
-		//! shader reads b0/space0 and the root signature doesn't expose b0/space0 at that stage,
-		//! CreateGraphicsPipelineState fails and nothing draws. The driver therefore keeps its OWN
-		//! constants elsewhere (DriverConstantRegisterSpace below) and leaves space0 to user shaders.
+		//! Register space of a USER SHADER's cbuffers: space0 is the default/most common (the
+		//! engine's own shaders are written for D3D11 and declare "cbuffer X : register(b0)",
+		//! which is space0 -- D3D11 has no register space), but a user shader may target any space
+		//! in [0, MaxUserShaderRegisterSpaces). In D3D12 the root signature is a contract validated
+		//! at PSO-creation time: if a shader reads a (register, space) pair the root signature
+		//! doesn't expose at that stage, CreateGraphicsPipelineState fails -- and, worse, doing so
+		//! under the D3D12 debug layer's GPU-based validation has been observed to crash the whole
+		//! process via a fail-fast inside Microsoft's own D3D12SDKLayers.dll while it reports the
+		//! error, not just fail the one draw (see the space-mismatch bug this constant/array
+		//! replaced). reflectCBuffer() reads each cbuffer's actual space via D3DReflect and rejects
+		//! (clear error, not a crash) any space >= MaxUserShaderRegisterSpaces. The driver keeps its
+		//! OWN constants elsewhere (DriverConstantRegisterSpace below), out of every user space.
 		static const UINT UserShaderRegisterSpace = 0;
 
+		//! Number of user shader cbuffer register spaces CD3D12Driver::createRootSignature()
+		//! reserves a descriptor table for, per stage (VS/PS/GS/HS/DS) -- see
+		//! CD3D12Driver::UserShaderConstantSlotVS/PS/GS/HS/DS (now UINT[MaxUserShaderRegisterSpaces]
+		//! arrays, one root-signature slot per space) and allocateUserCBVTable(space, buffers).
+		//! Bounded rather than fully dynamic: the root signature is built once at device creation,
+		//! not per-material, so "any space a shader wants" would need a per-material root signature
+		//! -- out of scope for now (see CLAUDE.md's D3D12-specific notes). 4 covers every user
+		//! shader in this codebase as of the value's introduction; raise it (and mirror the change
+		//! into createRootSignature()/bindDrawState()) if a shader genuinely needs a 5th space
+		//! rather than reusing one of the first 4. The COMPUTE root signature
+		//! (createComputeRootSignature()) is NOT covered by this -- it still hardcodes
+		//! UserShaderRegisterSpace (space0) only; a compute shader with a cbuffer outside space0
+		//! will hit the same class of bug this fixes for the graphics pipeline.
+		static const UINT MaxUserShaderRegisterSpaces = 4;
+
 		//! Register space of the driver's INTERNAL cbuffers (World/ViewProj/ClipPlanes/Lighting/
-		//! Fog, b0..b4) -- see CD3D12DefaultShaders.h, which declares them as "register(bN, space2)".
-		//! Must stay distinct from UserShaderRegisterSpace.
-		static const UINT DriverConstantRegisterSpace = 2;
+		//! Fog, b0..b4) -- see CD3D12DefaultShaders.h, which declares them as "register(bN, space4)".
+		//! Must be >= MaxUserShaderRegisterSpaces, not just distinct from UserShaderRegisterSpace:
+		//! reflectCBuffer() accepts a user cbuffer at any space in [0, MaxUserShaderRegisterSpaces), so
+		//! a value inside that range (previously space2, which collided once MaxUserShaderRegisterSpaces
+		//! grew to cover 0..3) makes createRootSignature() build two overlapping descriptor ranges at
+		//! the same (BaseShaderRegister=0, RegisterSpace) pair -- D3D12SerializeVersionedRootSignature
+		//! then fails outright, so D3D12 device creation fails for every shader, not just one PSO.
+		//! Defined off MaxUserShaderRegisterSpaces so it can't re-collide if that bound grows.
+		static const UINT DriverConstantRegisterSpace = MaxUserShaderRegisterSpaces;
 
 		//! Number of CBV registers (b0..b7, in UserShaderRegisterSpace) the driver's root signature
 		//! reserves per stage for a user shader's cbuffers (see
@@ -102,8 +127,9 @@ namespace irr
 			bool TransposeOnSet = false;
 		};
 
-		//! A reflected cbuffer. BindPoint is the HLSL register bN (0..7, space0 -- see
-		//! UserShaderRegisterSpace and CD3D12Driver::UserShaderConstantSlotVS/PS): CPU-side mirror
+		//! A reflected cbuffer. BindPoint is the HLSL register bN (0..7) and Space is its register
+		//! space (0..MaxUserShaderRegisterSpaces-1, as reflected from the shader -- see
+		//! CD3D12Driver::UserShaderConstantSlotVS/PS): CPU-side mirror
 		//! (Scratch) filled by CD3D12Driver::setVertexShaderConstant()/setPixelShaderConstant() and
 		//! copied as-is into the frame's constant ring (CD3D12Driver::allocateConstant()) on every
 		//! draw using this shader -- no D3D11-style Map/Unmap, the upload-heap ring already plays
@@ -112,6 +138,7 @@ namespace irr
 		{
 			core::stringc Name;
 			UINT BindPoint = 0;
+			UINT Space = 0;
 			std::vector<u8> Scratch;
 		};
 

@@ -1109,13 +1109,16 @@ namespace irr
 
 			//! Writes MaxUserShaderCBVSlotsPerStage contiguous CBV descriptors into the current frame's
 			//! shader-visible heap (same CBV/SRV/UAV heap as allocateSRVTableSlot(), different descriptor
-			//! type): one per buffer entry, placed at slot SD3D12UserShaderCBuffer::BindPoint (previously
-			//! uploaded into the constant ring via allocateConstant()), remaining slots left as a null CBV
-			//! (BufferLocation=0) so the whole bound table stays valid even if the shader doesn't read
-			//! every register. Grows the frame's shader-visible heap on demand
-			//! (growShaderVisibleSRVHeap()) if needed. Returns a null handle if buffers is empty or if
-			//! this growth fails.
-			D3D12_GPU_DESCRIPTOR_HANDLE allocateUserCBVTable(const std::vector<SD3D12UserShaderCBuffer>& buffers);
+			//! type) for the ONE table at register space `space` (0..MaxUserShaderRegisterSpaces-1):
+			//! one descriptor per buffer entry whose Space matches, placed at slot
+			//! SD3D12UserShaderCBuffer::BindPoint (previously uploaded into the constant ring via
+			//! allocateConstant()) -- entries for a DIFFERENT space in `buffers` are skipped, since
+			//! each space gets its own root-signature table/call (see bindDrawState()). Remaining
+			//! slots left as a null CBV (BufferLocation=0) so the whole bound table stays valid even
+			//! if the shader doesn't read every register. Grows the frame's shader-visible heap on
+			//! demand (growShaderVisibleSRVHeap()) if needed. Returns a null handle if no buffer
+			//! matches `space` or if this growth fails.
+			D3D12_GPU_DESCRIPTOR_HANDLE allocateUserCBVTable(const std::vector<SD3D12UserShaderCBuffer>& buffers, UINT space);
 
 			//! Translates an SMaterialLayer's filtering/addressing settings into a D3D12_SAMPLER_DESC.
 			//! Takes the MaxUserShaderTextureSlots layers (s0..s8, see
@@ -1527,17 +1530,28 @@ namespace irr
 			//! MaterialRenderers[material.MaterialType], which no longer distinguishes built-in from
 			//! user (see choosePixelShaderForMaterial()).
 			static const s32 UserShaderMaterialTypeBase = 24;
-			//! Root parameter index (see createRootSignature()) of the CBV b0..b7/space0 descriptor
-			//! tables reserved for user shader VS/PS cbuffers (see MaxUserShaderCBVSlotsPerStage,
-			//! CD3D12MaterialRenderer.h) -- fixed shared slots rather than a root signature per shader.
-			static const UINT UserShaderConstantSlotVS = 5;
-			static const UINT UserShaderConstantSlotPS = 6;
-			//! Same table as VS/PS above, but visible on the GS side (see
+			//! Root parameter index (see createRootSignature()) of the CBV b0..b7 descriptor table
+			//! reserved for user shader VS cbuffers AT A GIVEN SPACE -- indexed by
+			//! CD3D12MaterialRenderer::SD3D12UserShaderCBuffer::Space (0..MaxUserShaderRegisterSpaces-1,
+			//! see MaxUserShaderCBVSlotsPerStage/MaxUserShaderRegisterSpaces, CD3D12MaterialRenderer.h)
+			//! -- fixed shared slots rather than a root signature per shader. PS/GS/HS/DS below are
+			//! the same shape, one array per stage. LightingConstantSlot/FogConstantSlot (further
+			//! down, currently hardcoded 25/26 in bindLighting()/bindFog()) come right after these
+			//! 5*MaxUserShaderRegisterSpaces slots -- renumber them too if this count changes.
+			static constexpr UINT UserShaderConstantSlotVS[MaxUserShaderRegisterSpaces] = { 5, 6, 7, 8 };
+			static constexpr UINT UserShaderConstantSlotPS[MaxUserShaderRegisterSpaces] = { 9, 10, 11, 12 };
+			//! Same tables as VS/PS above, but visible on the GS side (see
 			//! CD3D12MaterialRenderer::GS/GSBuffers).
-			static const UINT UserShaderConstantSlotGS = 7;
+			static constexpr UINT UserShaderConstantSlotGS[MaxUserShaderRegisterSpaces] = { 13, 14, 15, 16 };
 			//! Same, for HS/DS (see CD3D12MaterialRenderer::HS/DS, HSBuffers/DSBuffers).
-			static const UINT UserShaderConstantSlotHS = 8;
-			static const UINT UserShaderConstantSlotDS = 9;
+			static constexpr UINT UserShaderConstantSlotHS[MaxUserShaderRegisterSpaces] = { 17, 18, 19, 20 };
+			static constexpr UINT UserShaderConstantSlotDS[MaxUserShaderRegisterSpaces] = { 21, 22, 23, 24 };
+			//! Root parameter indices of the driver's own Lighting (b3)/Fog (b4) CBVs -- see
+			//! createRootSignature()'s rootParams[25]/[26] and bindLighting()/bindFog(). Named here
+			//! (rather than the literal 10/11 these replaced) so the 5*MaxUserShaderRegisterSpaces
+			//! shift when that constant changes has exactly one place to update.
+			static const UINT LightingConstantSlot = 25;
+			static const UINT FogConstantSlot = 26;
 			//! D3D12 counterpart of CNullDriver::MaterialRenderers, at the SAME index: NativeRenderers[i]
 			//! is the CD3D12MaterialRenderer* for MaterialRenderers[i].Renderer when that renderer was
 			//! actually built by this driver (compiled blobs + reflection needed by

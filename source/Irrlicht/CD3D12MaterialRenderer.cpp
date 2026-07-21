@@ -84,7 +84,7 @@ namespace irr
 		}
 
 		// BUILT-IN shaders compile at Shader Model 5.1, not 5.0: they declare their cbuffers in a
-		// dedicated register space ("register(b0, space2)", see CD3D12DefaultShaders.h /
+		// dedicated register space ("register(b0, space4)", see CD3D12DefaultShaders.h /
 		// DriverConstantRegisterSpace), and the "spaceN" syntax only exists from SM 5.1 onward --
 		// it's a compile error under 5_0. SM 5.1 is available on all D3D12 hardware, so there's no
 		// compatibility cost.
@@ -197,18 +197,34 @@ namespace irr
 
 				if (bindDesc.BindPoint >= MaxUserShaderCBVSlotsPerStage)
 				{
-					os::Printer::log("CD3D12MaterialRenderer: cbuffer register outside the b0..b7 table "
-						"(b0..b7, space0), skipped -- see MaxUserShaderCBVSlotsPerStage: ", bindDesc.Name, ELL_WARNING);
+					os::Printer::log("CD3D12MaterialRenderer: cbuffer register outside the b0..b7 table, "
+						"skipped -- see MaxUserShaderCBVSlotsPerStage: ", bindDesc.Name, ELL_WARNING);
+					continue;
+				}
+
+				// The root signature only reserves tables for a bounded set of spaces (see
+				// MaxUserShaderRegisterSpaces) -- it's built once at device creation, not per-shader,
+				// so a shader can't just declare any space it likes. Rejecting here with a clear
+				// message is far better than letting it reach CreateGraphicsPipelineState: under the
+				// D3D12 debug layer that mismatch has been observed to crash the whole process (a
+				// fail-fast inside Microsoft's own D3D12SDKLayers.dll while it reports the error),
+				// not just fail this one shader.
+				if (bindDesc.Space >= MaxUserShaderRegisterSpaces)
+				{
+					os::Printer::log("CD3D12MaterialRenderer: cbuffer register space not reserved by the "
+						"root signature (raise MaxUserShaderRegisterSpaces and mirror into "
+						"CD3D12Driver::createRootSignature()/bindDrawState() if this space is genuinely "
+						"needed), skipped: ", bindDesc.Name, ELL_ERROR);
 					continue;
 				}
 
 				bool duplicate = false;
 				for (const SD3D12UserShaderCBuffer& existing : outBuffers)
 				{
-					if (existing.BindPoint == bindDesc.BindPoint)
+					if (existing.BindPoint == bindDesc.BindPoint && existing.Space == bindDesc.Space)
 					{
-						os::Printer::log("CD3D12MaterialRenderer: two cbuffers reflected at the same register, "
-							"keeping the first, skipped: ", bindDesc.Name, ELL_WARNING);
+						os::Printer::log("CD3D12MaterialRenderer: two cbuffers reflected at the same "
+							"register/space, keeping the first, skipped: ", bindDesc.Name, ELL_WARNING);
 						duplicate = true;
 						break;
 					}
@@ -223,6 +239,7 @@ namespace irr
 				SD3D12UserShaderCBuffer newBuffer;
 				newBuffer.Name = bindDesc.Name;
 				newBuffer.BindPoint = bindDesc.BindPoint;
+				newBuffer.Space = bindDesc.Space;
 				newBuffer.Scratch.assign(bufferDesc.Size, 0);
 				outBuffers.push_back(newBuffer);
 				const s32 bufferIndex = static_cast<s32>(outBuffers.size() - 1);
@@ -493,6 +510,27 @@ namespace irr
 
 			if (!reflectCBuffer(cs.Get(), CSBuffers, CSVariables))
 				return false;
+
+			// Unlike the graphics stages (VS/PS/GS/HS/DS), createComputeRootSignature() still only
+			// reserves ONE user-cbuffer table, hardcoded to UserShaderRegisterSpace (space0) -- it
+			// hasn't been extended to MaxUserShaderRegisterSpaces tables the way the graphics root
+			// signature has (see the "COMPUTE root signature" paragraph in
+			// MaxUserShaderRegisterSpaces' own comment). reflectCBuffer() alone can't catch this: it
+			// accepts any space < MaxUserShaderRegisterSpaces since that check is shared with the
+			// graphics stages. Enforce space0-only here specifically, so a compute shader using
+			// space1..3 fails compilation with a clear message instead of reflecting "successfully"
+			// and then silently getting a null CBV at dispatch time (allocateUserCBVTable() filters
+			// by space; only space0 has a real table for compute).
+			for (const SD3D12UserShaderCBuffer& buf : CSBuffers)
+			{
+				if (buf.Space != UserShaderRegisterSpace)
+				{
+					os::Printer::log("CD3D12MaterialRenderer::compileComputeFromHLSL: compute shader cbuffer "
+						"must use space0 (UserShaderRegisterSpace) -- the compute root signature doesn't "
+						"support other spaces yet, unlike the graphics stages: ", buf.Name.c_str(), ELL_ERROR);
+					return false;
+				}
+			}
 
 			CS = cs;
 

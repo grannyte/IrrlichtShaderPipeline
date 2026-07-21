@@ -652,25 +652,30 @@ namespace irr
 			//       visible in PS (see allocateSamplerTableSlot()).
 			//   [4] CBV b2, root descriptor -- user clip planes, visible in PS
 			//       (see setClipPlane()/bindTransformsAndTexture()).
-			//   [5] Descriptor table, CBV b0..b7 in space0 (UserShaderRegisterSpace) (see MaxUserShaderCBVSlotsPerStage)
-			//       -- user cbuffers on the VS side, visible in VS (see addHighLevelShaderMaterial()/
-			//       UserShaderConstantSlotVS, CD3D12MaterialRenderer::reflectCBuffer()).
-			//   [6] Descriptor table, CBV b0..b7 in space0 (UserShaderRegisterSpace) -- user cbuffers on the PS side,
-			//       visible in PS (see UserShaderConstantSlotPS).
-			//   [7] Descriptor table, CBV b0..b7 in space0 (UserShaderRegisterSpace) -- user cbuffers on the GS side,
-			//       visible in GS (Milestone B, see UserShaderConstantSlotGS). A user
-			//       geometry shader rasterizes normally by default (see
-			//       CD3D12MaterialRenderer::GS); setStreamOutputBuffer() binds an SO target at
-			//       draw level independently of this root signature parameter.
-			//   [8] Descriptor table, CBV b0..b7 in space0 (UserShaderRegisterSpace) -- user cbuffers on the HS side,
-			//       visible in HS (Milestone C, see UserShaderConstantSlotHS).
-			//   [9] Descriptor table, CBV b0..b7 in space0 (UserShaderRegisterSpace) -- user cbuffers on the DS side,
-			//       visible in DS (Milestone C, see UserShaderConstantSlotDS). HS/DS only exist
-			//       together (see CD3D12MaterialRenderer::HS/DS, registerUserShaderMaterial()):
-			//       a patch topology (D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH) only makes sense if
-			//       both tessellation stages are present.
-			//   [10] CBV b3, root descriptor, visible in VS AND PS -- dynamic lighting
-			//       (SMaterial::Lighting/AmbientColor/DiffuseColor/SpecularColor/
+			//   [5..24] Descriptor tables, CBV b0..b7 (see MaxUserShaderCBVSlotsPerStage) -- user
+			//       cbuffers, one table per (stage, register space) pair: MaxUserShaderRegisterSpaces
+			//       (4) spaces x 5 stages (VS/PS/GS/HS/DS), indexed by
+			//       UserShaderConstantSlotVS/PS/GS/HS/DS[space] (UINT[4] arrays, not single indices
+			//       -- see MaxUserShaderRegisterSpaces/SD3D12UserShaderCBuffer::
+			//       Space, reflectCBuffer()). A user shader can therefore target any of the 4
+			//       reserved spaces instead of being forced into one hardcoded space -- but the root
+			//       signature is still built once here, not per-material, so the set of usable
+			//       spaces is this bounded array, not fully dynamic (raise the constant, and mirror
+			//       the change into bindDrawState(), if a 5th is genuinely needed; see the constant's
+			//       own comment in CD3D12MaterialRenderer.h). GS/HS/DS tables exist for Milestone B/C:
+			//       a user geometry shader rasterizes normally by default (see
+			//       CD3D12MaterialRenderer::GS); setStreamOutputBuffer() binds an SO target at draw
+			//       level independently of this root signature parameter. HS/DS only exist together
+			//       (see CD3D12MaterialRenderer::HS/DS, registerUserShaderMaterial()): a patch
+			//       topology (D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH) only makes sense if both
+			//       tessellation stages are present. Each table is only bound
+			//       (SetGraphicsRootDescriptorTable, see allocateUserCBVTable()) for a user material
+			//       that has at least one cbuffer reflected at that (stage, space), but existing in
+			//       the shared root signature costs the built-in materials nothing: their shaders
+			//       declare nothing outside DriverConstantRegisterSpace so never read them (see
+			//       bindDrawState()).
+			//   [25] CBV b3 (LightingConstantSlot), root descriptor, visible in VS AND PS -- dynamic
+			//       lighting (SMaterial::Lighting/AmbientColor/DiffuseColor/SpecularColor/
 			//       EmissiveColor/ColorMaterial/NormalizeNormals + the light list
 			//       CNullDriver::Lights, see addDynamicLight()/getDynamicLight()). VSMain
 			//       (calcLighting(), D3D12DefaultShaderHLSL) reads it for per-vertex lighting of the
@@ -680,35 +685,27 @@ namespace irr
 			//       PSMainNormalMap*/PSMainParallaxMap* read it TOO, on the PS side this time --
 			//       per-pixel lighting is needed for these 6 types (the normal perturbed by the
 			//       normal map varies per texel, a per-vertex normal wouldn't be enough), hence the
-			//       ALL visibility rather than VERTEX alone. b3/b4 in space0 were
-			//       unused before this parameter was added (verified by grepping "ShaderRegister = 3"/"= 4" in this
-			//       file before adding it); not to be confused with b3/b4 in space1
-			//       (rootParams[5]/[6] above).
-			//   [11] CBV b4, root descriptor, visible in PS only -- fog (
+			//       ALL visibility rather than VERTEX alone.
+			//   [26] CBV b4 (FogConstantSlot), root descriptor, visible in PS only -- fog (
 			//       SMaterial::FogEnable + setFog()/getFog(), see bindFog()/CD3D12DefaultShaders.h's
 			//       FogCB/calcFogFactor()). Same pattern as rootParams[4] (ClipPlanes): root
 			//       descriptor PS-only, content evaluated entirely in the pixel shader (fogDist is
 			//       computed by VSMain and interpolated, but the fog decision itself -- mode/
 			//       start/end/density/enableFog -- is only read by PSMainXxx).
-			//   These five tables [5]..[9] are only bound (SetGraphicsRootDescriptorTable, see
-			//   allocateUserCBVTable()) for a user material that has at least one cbuffer
-			//   reflected on the corresponding stage, but existing in the shared root signature
-			//   costs the built-in materials nothing: their shaders declare nothing in space1
-			//   so never read them (see bindDrawState()).
-			// b0/b1/b2/b4 remain root descriptors (no table): faster to update
-			// per draw, a single CBV each. b3 space1 (above) are tables: multiple
-			// user cbuffers per stage are now possible, a table is the only way to expose
-			// several without blowing up the number of root parameters.
-			D3D12_ROOT_PARAMETER1 rootParams[12] = {};
+			// b0/b1/b2/b4/[25]/[26] remain root descriptors (no table): faster to update per draw, a
+			// single CBV each. [5..24] are tables: multiple user cbuffers per (stage, space) are now
+			// possible, a table is the only way to expose several without blowing up the number of
+			// root parameters.
+			D3D12_ROOT_PARAMETER1 rootParams[27] = {};
 
-			// The driver's internal CBVs (b0..b4) are in space2, NOT space0 -- see the long
+			// The driver's internal CBVs (b0..b4) are in space4, NOT space0 -- see the long
 			// comment at the top of CD3D12DefaultShaders.h. In short: the engine's user shaders
 			// are written for D3D11 and declare their cbuffers as register(bN), hence
 			// space0. As long as the driver occupied space0 with its own constants, any PSO
 			// using a user shader with a cbuffer failed at creation ("Root Signature
 			// doesn't match Pixel Shader: Shader CBV descriptor range (BaseShaderRegister=0,
-			// RegisterSpace=0) is not fully bound") -- black screen. space0 now belongs to
-			// user shaders (rootParams[5..9] below).
+			// RegisterSpace=0) is not fully bound") -- black screen. space0..space3 now belong to
+			// user shaders (rootParams[5..24] below).
 			rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 			rootParams[0].Descriptor.ShaderRegister = 0;
 			rootParams[0].Descriptor.RegisterSpace = DriverConstantRegisterSpace;
@@ -783,97 +780,79 @@ namespace irr
 			rootParams[4].Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE;
 			rootParams[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-			// space0, UserShaderRegisterSpace: CBV b0..b7 tables -- user cbuffers (see UserShaderConstantSlotVS/PS and
-			// addHighLevelShaderMaterial()). Flag NONE (not DATA_STATIC_WHILE_SET_AT_EXECUTE):
-			// unlike b0/b1/b2, the content changes from one draw to the next for the same user
-			// shader (written by IShaderConstantSetCallBack::OnSetConstants() on every
-			// draw), so it isn't "static during execution" in the sense of this flag.
-			D3D12_DESCRIPTOR_RANGE1 vsUserCBVRange = {};
-			vsUserCBVRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
-			vsUserCBVRange.NumDescriptors = MaxUserShaderCBVSlotsPerStage;
-			vsUserCBVRange.BaseShaderRegister = 0;
-			vsUserCBVRange.RegisterSpace = UserShaderRegisterSpace;
-			vsUserCBVRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE;
-			vsUserCBVRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+			// CBV b0..b7 tables, one per reserved register space (0..MaxUserShaderRegisterSpaces-1)
+			// -- user cbuffers (see UserShaderConstantSlotVS/PS/GS/HS/DS and
+			// addHighLevelShaderMaterial()/CD3D12MaterialRenderer::reflectCBuffer()). Flag NONE (not
+			// DATA_STATIC_WHILE_SET_AT_EXECUTE): unlike b0/b1/b2, the content changes from one draw
+			// to the next for the same user shader (written by
+			// IShaderConstantSetCallBack::OnSetConstants() on every draw), so it isn't "static
+			// during execution" in the sense of this flag.
+			//
+			// The ranges must outlive the D3D12SerializeVersionedRootSignature() call below (each
+			// root param's pDescriptorRanges just points at one), hence the arrays living in this
+			// function's scope rather than being built inline per stage.
+			constexpr UINT kSpaces = MaxUserShaderRegisterSpaces;
+			D3D12_DESCRIPTOR_RANGE1 vsUserCBVRanges[kSpaces] = {};
+			D3D12_DESCRIPTOR_RANGE1 psUserCBVRanges[kSpaces] = {};
+			// Milestone B: same shape as VS/PS above, visible on the GS side.
+			D3D12_DESCRIPTOR_RANGE1 gsUserCBVRanges[kSpaces] = {};
+			// Milestone C: same shape as VS/PS/GS above, visible on the HS/DS side (HS/DS only exist
+			// together -- see CD3D12MaterialRenderer::HS/DS, registerUserShaderMaterial()).
+			D3D12_DESCRIPTOR_RANGE1 hsUserCBVRanges[kSpaces] = {};
+			D3D12_DESCRIPTOR_RANGE1 dsUserCBVRanges[kSpaces] = {};
 
-			rootParams[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-			rootParams[5].DescriptorTable.NumDescriptorRanges = 1;
-			rootParams[5].DescriptorTable.pDescriptorRanges = &vsUserCBVRange;
-			rootParams[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+			struct SUserCBVStage
+			{
+				D3D12_DESCRIPTOR_RANGE1* ranges;
+				const UINT* slots;
+				D3D12_SHADER_VISIBILITY visibility;
+			};
+			const SUserCBVStage userCBVStages[5] = {
+				{ vsUserCBVRanges, UserShaderConstantSlotVS, D3D12_SHADER_VISIBILITY_VERTEX },
+				{ psUserCBVRanges, UserShaderConstantSlotPS, D3D12_SHADER_VISIBILITY_PIXEL },
+				{ gsUserCBVRanges, UserShaderConstantSlotGS, D3D12_SHADER_VISIBILITY_GEOMETRY },
+				{ hsUserCBVRanges, UserShaderConstantSlotHS, D3D12_SHADER_VISIBILITY_HULL },
+				{ dsUserCBVRanges, UserShaderConstantSlotDS, D3D12_SHADER_VISIBILITY_DOMAIN },
+			};
+			for (const SUserCBVStage& stage : userCBVStages)
+			{
+				for (UINT space = 0; space < kSpaces; ++space)
+				{
+					D3D12_DESCRIPTOR_RANGE1& range = stage.ranges[space];
+					range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
+					range.NumDescriptors = MaxUserShaderCBVSlotsPerStage;
+					range.BaseShaderRegister = 0;
+					range.RegisterSpace = space;
+					range.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE;
+					range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-			D3D12_DESCRIPTOR_RANGE1 psUserCBVRange = {};
-			psUserCBVRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
-			psUserCBVRange.NumDescriptors = MaxUserShaderCBVSlotsPerStage;
-			psUserCBVRange.BaseShaderRegister = 0;
-			psUserCBVRange.RegisterSpace = UserShaderRegisterSpace;
-			psUserCBVRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE;
-			psUserCBVRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+					D3D12_ROOT_PARAMETER1& param = rootParams[stage.slots[space]];
+					param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+					param.DescriptorTable.NumDescriptorRanges = 1;
+					param.DescriptorTable.pDescriptorRanges = &range;
+					param.ShaderVisibility = stage.visibility;
+				}
+			}
 
-			rootParams[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-			rootParams[6].DescriptorTable.NumDescriptorRanges = 1;
-			rootParams[6].DescriptorTable.pDescriptorRanges = &psUserCBVRange;
-			rootParams[6].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-
-			// Milestone B: CBV b0..b7 table in space0 (UserShaderRegisterSpace) on the GS side, same shape as VS/PS above.
-			D3D12_DESCRIPTOR_RANGE1 gsUserCBVRange = {};
-			gsUserCBVRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
-			gsUserCBVRange.NumDescriptors = MaxUserShaderCBVSlotsPerStage;
-			gsUserCBVRange.BaseShaderRegister = 0;
-			gsUserCBVRange.RegisterSpace = UserShaderRegisterSpace;
-			gsUserCBVRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE;
-			gsUserCBVRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
-
-			rootParams[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-			rootParams[7].DescriptorTable.NumDescriptorRanges = 1;
-			rootParams[7].DescriptorTable.pDescriptorRanges = &gsUserCBVRange;
-			rootParams[7].ShaderVisibility = D3D12_SHADER_VISIBILITY_GEOMETRY;
-
-			// Milestone C: CBV b0..b7 tables in space0 (UserShaderRegisterSpace) on the HS/DS side, same shape as VS/PS/GS above.
-			D3D12_DESCRIPTOR_RANGE1 hsUserCBVRange = {};
-			hsUserCBVRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
-			hsUserCBVRange.NumDescriptors = MaxUserShaderCBVSlotsPerStage;
-			hsUserCBVRange.BaseShaderRegister = 0;
-			hsUserCBVRange.RegisterSpace = UserShaderRegisterSpace;
-			hsUserCBVRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE;
-			hsUserCBVRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
-
-			rootParams[8].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-			rootParams[8].DescriptorTable.NumDescriptorRanges = 1;
-			rootParams[8].DescriptorTable.pDescriptorRanges = &hsUserCBVRange;
-			rootParams[8].ShaderVisibility = D3D12_SHADER_VISIBILITY_HULL;
-
-			D3D12_DESCRIPTOR_RANGE1 dsUserCBVRange = {};
-			dsUserCBVRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
-			dsUserCBVRange.NumDescriptors = MaxUserShaderCBVSlotsPerStage;
-			dsUserCBVRange.BaseShaderRegister = 0;
-			dsUserCBVRange.RegisterSpace = UserShaderRegisterSpace;
-			dsUserCBVRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE;
-			dsUserCBVRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
-
-			rootParams[9].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-			rootParams[9].DescriptorTable.NumDescriptorRanges = 1;
-			rootParams[9].DescriptorTable.pDescriptorRanges = &dsUserCBVRange;
-			rootParams[9].ShaderVisibility = D3D12_SHADER_VISIBILITY_DOMAIN;
-
-			// CBV b3, space0 -- dynamic lighting, same pattern as rootParams[4]
-			// (ClipPlanes) above: single root descriptor visible on the VS side only (see
-			// bindLighting()/CD3D12DefaultShaders.h).
-			rootParams[10].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-			rootParams[10].Descriptor.ShaderRegister = 3;
-			rootParams[10].Descriptor.RegisterSpace = DriverConstantRegisterSpace;
-			rootParams[10].Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE;
+			// CBV b3, space4 (DriverConstantRegisterSpace) -- dynamic lighting, same pattern as
+			// rootParams[4] (ClipPlanes) above: single root descriptor visible on the VS side only
+			// (see bindLighting()/CD3D12DefaultShaders.h).
+			rootParams[LightingConstantSlot].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+			rootParams[LightingConstantSlot].Descriptor.ShaderRegister = 3;
+			rootParams[LightingConstantSlot].Descriptor.RegisterSpace = DriverConstantRegisterSpace;
+			rootParams[LightingConstantSlot].Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE;
 			// ALL (not VERTEX alone) -- PSMainNormalMap*/PSMainParallaxMap* (CD3D12DefaultShaders.h)
 			// now call calcLighting() from the pixel shader, see the comment above.
-			rootParams[10].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+			rootParams[LightingConstantSlot].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-			// CBV b4, space0 -- fog, same pattern as rootParams[4] (ClipPlanes)
-			// above: single root descriptor, but visible on the PS side (see bindFog()/
+			// CBV b4, space4 (DriverConstantRegisterSpace) -- fog, same pattern as rootParams[4]
+			// (ClipPlanes) above: single root descriptor, but visible on the PS side (see bindFog()/
 			// CD3D12DefaultShaders.h).
-			rootParams[11].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-			rootParams[11].Descriptor.ShaderRegister = 4;
-			rootParams[11].Descriptor.RegisterSpace = DriverConstantRegisterSpace;
-			rootParams[11].Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE;
-			rootParams[11].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+			rootParams[FogConstantSlot].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+			rootParams[FogConstantSlot].Descriptor.ShaderRegister = 4;
+			rootParams[FogConstantSlot].Descriptor.RegisterSpace = DriverConstantRegisterSpace;
+			rootParams[FogConstantSlot].Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE;
+			rootParams[FogConstantSlot].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
 			D3D12_VERSIONED_ROOT_SIGNATURE_DESC desc = {};
 			desc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
@@ -2432,7 +2411,7 @@ namespace irr
 			return destGPU;
 		}
 
-		D3D12_GPU_DESCRIPTOR_HANDLE CD3D12Driver::allocateUserCBVTable(const std::vector<SD3D12UserShaderCBuffer>& buffers)
+		D3D12_GPU_DESCRIPTOR_HANDLE CD3D12Driver::allocateUserCBVTable(const std::vector<SD3D12UserShaderCBuffer>& buffers, UINT space)
 		{
 			D3D12_GPU_DESCRIPTOR_HANDLE nullHandle = {};
 
@@ -2467,7 +2446,7 @@ namespace irr
 				const SD3D12UserShaderCBuffer* match = nullptr;
 				for (const SD3D12UserShaderCBuffer& buf : buffers)
 				{
-					if (buf.BindPoint == slot)
+					if (buf.BindPoint == slot && buf.Space == space)
 					{
 						match = &buf;
 						break;
@@ -2877,7 +2856,7 @@ namespace irr
 
 			D3D12_GPU_VIRTUAL_ADDRESS addr = allocateConstant(&constants, sizeof(constants));
 			if (addr)
-				CommandList->SetGraphicsRootConstantBufferView(10, addr);
+				CommandList->SetGraphicsRootConstantBufferView(LightingConstantSlot, addr);
 		}
 
 		// CBV b4 -- fog. Same split of responsibilities as
@@ -2912,7 +2891,7 @@ namespace irr
 
 			D3D12_GPU_VIRTUAL_ADDRESS addr = allocateConstant(&constants, sizeof(constants));
 			if (addr)
-				CommandList->SetGraphicsRootConstantBufferView(11, addr);
+				CommandList->SetGraphicsRootConstantBufferView(FogConstantSlot, addr);
 		}
 
 
@@ -3005,33 +2984,43 @@ namespace irr
 			// just above.
 			bindFog(material);
 
-			// space0, UserShaderRegisterSpace: upload + bind of the CBV b0..b7 tables (see createRootSignature()/
-			// allocateUserCBVTable()) -- after bindTransformsAndTexture() since the content was
-			// just written into the scratch buffers by OnSetConstants() above
+			// Upload + bind of the CBV b0..b7 tables, one per (stage, register space) pair (see
+			// createRootSignature()/allocateUserCBVTable()) -- after bindTransformsAndTexture() since
+			// the content was just written into the scratch buffers by OnSetConstants() above
 			// (setVertexShaderConstant() etc. memcpy into CD3D12MaterialRenderer::VSBuffers/
 			// PSBuffers[i].Scratch, see further below).
-			// These 5 tables are set on EVERY draw, including for a built-in material (no
-			// activeRenderer, hence no user cbuffer: allocateUserCBVTable() then returns a
-			// table of null CBVs, valid). A TABLE-type root argument that a draw doesn't reset
-			// does in fact keep the PREVIOUS draw's -- resetting the same root signature doesn't invalidate
-			// it. But growShaderVisibleSRVHeap() creates a NEW heap and binds it: the previous draw's
-			// handles then point into a heap that's no longer bound, and D3D12 rejects the draw
-			// (EXECUTION ERROR #554 SET_DESCRIPTOR_HEAP_INVALID) after reading garbage descriptors.
-			// This is what all 2D/GUI drawing (draw2DImage -> drawImmediate, built-in
-			// material) used to do as soon as the frame's heap grew: wrong textures, varying from
-			// frame to frame depending on when the growth happened.
+			// All 5*MaxUserShaderRegisterSpaces tables are set on EVERY draw, including for a
+			// built-in material (no activeRenderer, hence no user cbuffer: allocateUserCBVTable()
+			// then returns a table of null CBVs, valid). A TABLE-type root argument that a draw
+			// doesn't reset does in fact keep the PREVIOUS draw's -- resetting the same root
+			// signature doesn't invalidate it. But growShaderVisibleSRVHeap() creates a NEW heap and
+			// binds it: the previous draw's handles then point into a heap that's no longer bound,
+			// and D3D12 rejects the draw (EXECUTION ERROR #554 SET_DESCRIPTOR_HEAP_INVALID) after
+			// reading garbage descriptors. This is what all 2D/GUI drawing (draw2DImage ->
+			// drawImmediate, built-in material) used to do as soon as the frame's heap grew: wrong
+			// textures, varying from frame to frame depending on when the growth happened.
 			static const std::vector<SD3D12UserShaderCBuffer> NoUserCBuffers;
 
-			CommandList->SetGraphicsRootDescriptorTable(UserShaderConstantSlotVS,
-				allocateUserCBVTable(activeRenderer ? activeRenderer->VSBuffers : NoUserCBuffers));
-			CommandList->SetGraphicsRootDescriptorTable(UserShaderConstantSlotPS,
-				allocateUserCBVTable(activeRenderer ? activeRenderer->PSBuffers : NoUserCBuffers));
-			CommandList->SetGraphicsRootDescriptorTable(UserShaderConstantSlotGS,
-				allocateUserCBVTable(activeRenderer ? activeRenderer->GSBuffers : NoUserCBuffers));
-			CommandList->SetGraphicsRootDescriptorTable(UserShaderConstantSlotHS,
-				allocateUserCBVTable(activeRenderer ? activeRenderer->HSBuffers : NoUserCBuffers));
-			CommandList->SetGraphicsRootDescriptorTable(UserShaderConstantSlotDS,
-				allocateUserCBVTable(activeRenderer ? activeRenderer->DSBuffers : NoUserCBuffers));
+			struct SUserCBVBindStage
+			{
+				const std::vector<SD3D12UserShaderCBuffer>* buffers;
+				const UINT* slots;
+			};
+			const SUserCBVBindStage bindStages[5] = {
+				{ activeRenderer ? &activeRenderer->VSBuffers : &NoUserCBuffers, UserShaderConstantSlotVS },
+				{ activeRenderer ? &activeRenderer->PSBuffers : &NoUserCBuffers, UserShaderConstantSlotPS },
+				{ activeRenderer ? &activeRenderer->GSBuffers : &NoUserCBuffers, UserShaderConstantSlotGS },
+				{ activeRenderer ? &activeRenderer->HSBuffers : &NoUserCBuffers, UserShaderConstantSlotHS },
+				{ activeRenderer ? &activeRenderer->DSBuffers : &NoUserCBuffers, UserShaderConstantSlotDS },
+			};
+			for (const SUserCBVBindStage& stage : bindStages)
+			{
+				for (UINT space = 0; space < MaxUserShaderRegisterSpaces; ++space)
+				{
+					CommandList->SetGraphicsRootDescriptorTable(stage.slots[space],
+						allocateUserCBVTable(*stage.buffers, space));
+				}
+			}
 
 			return true;
 		}
@@ -4333,30 +4322,35 @@ namespace irr
 			// the occlusion result counts (same auxiliary-PSO technique as stencil shadow volume
 			// marking: RenderTargetWriteMask=0).
 			ID3D12PipelineState* pso = nullptr;
+			// Dedicated occlusion material, NOT `Material` (the driver's current state, i.e.
+			// whatever the last draw left behind) -- this is what CNullDriver::runOcclusionQuery()
+			// does for D3D9/D3D11, and relying on the current state made the query
+			// non-deterministic. Concretely, CLensFlareSceneNode forces ZBuffer = ECFN_ALWAYS on
+			// its own material: if that is what's sitting in Material at query time, the depth
+			// test is disabled, EVERY pixel of the sphere passes, and the star is reported as
+			// never occluded.
+			//
+			// The queried node has usually already drawn itself (and so already wrote its own
+			// depth) before the query runs -- see CNullDriver::runOcclusionQuery()'s equivalent
+			// comment. A fresh SMaterial's default ZBuffer (ECFN_GREATER, fully inverted-Z in
+			// this fork -- do NOT "fix" to ECFN_LESSEQUAL despite SMaterial.h's stale comment) is
+			// a STRICT test: it rejects fragments landing exactly on that already-stored depth,
+			// collapsing the query to a handful of z-fighting-noise pixels. ECFN_GREATEREQUAL
+			// accepts the equality, same as CD3D9Driver/CNullDriver::runOcclusionQuery() do for
+			// D3D9/D3D11.
+			SMaterial occlusionMaterial;
+			occlusionMaterial.Lighting = false;
+			occlusionMaterial.AntiAliasing = 0;
+			occlusionMaterial.ColorMask = ECP_NONE;
+			occlusionMaterial.GouraudShading = false;
+			occlusionMaterial.ZWriteEnable = false;
+			occlusionMaterial.ZBuffer = ECFN_GREATEREQUAL;
 			if (visible)
 			{
 				pso = getPSOForMaterial(Material);
 			}
 			else
 			{
-				// Dedicated occlusion material, NOT `Material` (the driver's current state, i.e.
-				// whatever the last draw left behind) -- this is what CNullDriver::runOcclusionQuery()
-				// does for D3D9/D3D11, and relying on the current state made the query
-				// non-deterministic. Concretely, CLensFlareSceneNode forces ZBuffer = ECFN_ALWAYS on
-				// its own material: if that is what's sitting in Material at query time, the depth
-				// test is disabled, EVERY pixel of the sphere passes, and the star is reported as
-				// never occluded.
-				//
-				// A fresh SMaterial already carries the right test for this engine: SMaterial::SMaterial()
-				// initialises ZBuffer to ECFN_GREATER (fully inverted-Z rendering in this fork -- do
-				// NOT "fix" to ECFN_LESSEQUAL despite SMaterial.h's stale comment).
-				SMaterial occlusionMaterial;
-				occlusionMaterial.Lighting = false;
-				occlusionMaterial.AntiAliasing = 0;
-				occlusionMaterial.ColorMask = ECP_NONE;
-				occlusionMaterial.GouraudShading = false;
-				occlusionMaterial.ZWriteEnable = false;
-
 				SPSOKey key = buildPSOKeyFromMaterial(occlusionMaterial);
 				key.RenderTargetWriteMask = 0;
 				key.DepthWriteEnable = false;
@@ -4365,10 +4359,22 @@ namespace irr
 			if (!pso)
 				return;
 
+			const SMaterial& drawMaterial = visible ? Material : occlusionMaterial;
+
 			CommandList->SetGraphicsRootSignature(RootSignature.Get());
 			CommandList->SetPipelineState(pso);
 			bindTransformsAndTexture(node->getAbsoluteTransformation(), Matrices[ETS_VIEW], Matrices[ETS_PROJECTION],
 				visible ? Material.getTexture(0) : nullptr);
+			// getSolidVertexShader()/getPSOForMaterial()'s shaders read the Lighting (CBV b3) and
+			// Fog (CBV b4) root descriptors unconditionally -- bindDrawState() always binds both
+			// for every normal draw (see its comment). This draw call is not routed through
+			// bindDrawState(), so without these two calls b3/b4 stay whatever a PRIOR draw in this
+			// command list happened to leave them as. When the occlusion query is the first (or
+			// only) draw of the frame, that's nothing at all: GPU-based validation then reports
+			// "Uninitialized root argument accessed" on root parameter 25 (LightingConstantSlot)
+			// and the device hangs/gets removed (DXGI_ERROR_DEVICE_HUNG).
+			bindLighting(drawMaterial);
+			bindFog(drawMaterial);
 			CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 			CommandList->IASetVertexBuffers(0, 1, &vbView);
 
@@ -5191,7 +5197,10 @@ namespace irr
 			if (uavTable.ptr != 0)
 				cmdList->SetComputeRootDescriptorTable(1, uavTable);
 
-			D3D12_GPU_DESCRIPTOR_HANDLE cbvTable = allocateUserCBVTable(renderer->CSBuffers);
+			// Compute stays space0-only -- see the "COMPUTE root signature" note on
+			// MaxUserShaderRegisterSpaces and compileComputeFromHLSL()'s space0 guard, which already
+			// rejected compilation if CSBuffers contained anything else.
+			D3D12_GPU_DESCRIPTOR_HANDLE cbvTable = allocateUserCBVTable(renderer->CSBuffers, UserShaderRegisterSpace);
 			if (cbvTable.ptr != 0)
 				cmdList->SetComputeRootDescriptorTable(2, cbvTable);
 

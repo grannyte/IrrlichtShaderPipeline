@@ -53,17 +53,17 @@ namespace irr
 {
 	namespace video
 	{
-		// Driver's internal cbuffers live in space2, not space0: user shaders (written for
-		// D3D11) declare their own constants at b0..b7/space0, and PSO creation fails if the
-		// root signature doesn't expose registers a shader reads. Space0 is reserved for user
-		// shaders (see createRootSignature()); driver constants use space2.
+		// Driver's internal cbuffers live in space4, not space0: user shaders (written for
+		// D3D11) declare their own constants at b0..b7/space0..space3, and PSO creation fails if the
+		// root signature doesn't expose registers a shader reads. space0..space3 are reserved for
+		// user shaders (see createRootSignature()); driver constants use space4 (out of that range).
 		static const char* const D3D12DefaultShaderHLSL = R"(
-cbuffer PerObject : register(b0, space2)
+cbuffer PerObject : register(b0, space4)
 {
     float4x4 World;
 };
 
-cbuffer PerFrame : register(b1, space2)
+cbuffer PerFrame : register(b1, space4)
 {
     float4x4 View;
     float4x4 Proj;
@@ -74,7 +74,7 @@ cbuffer PerFrame : register(b1, space2)
 
 // User clip planes (setClipPlane/enableClipPlane). A disabled plane is sent as (0,0,0,1),
 // so dot(WorldPos1, plane) is always 1 and ApplyClipPlanes() never clips it.
-cbuffer ClipPlanesCB : register(b2, space2)
+cbuffer ClipPlanesCB : register(b2, space4)
 {
     float4 ClipPlanes[3];
 };
@@ -100,7 +100,7 @@ struct SLightMaterialGPU
     float4 Emissive;
 };
 
-cbuffer LightingCB : register(b3, space2)
+cbuffer LightingCB : register(b3, space4)
 {
     SLightGPU Lights[MAX_LIGHTS];
     SLightMaterialGPU Mat;
@@ -172,7 +172,7 @@ SLitColors calcLighting(float3 worldNormal, float3 worldPos, float3 cameraPos, f
 #define FOGMODE_EXP2   3
 #define FOG_E 2.71828
 
-cbuffer FogCB : register(b4, space2)
+cbuffer FogCB : register(b4, space4)
 {
     float4 FogColor;
     int FogMode;
