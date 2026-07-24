@@ -99,7 +99,14 @@ namespace irr
 			//! effects (light scattering, volumetric clouds, etc.) that need a post-solid-pass
 			//! render callback but are not real geometry and must not be mistaken by
 			//! ISceneManager::RenderShadow() for a shadow-casting node.
-			ESNRP_VOLUMETRIC_EFFECT = 128
+			ESNRP_VOLUMETRIC_EFFECT = 128,
+
+			//! Drawn once per frame, own dedicated pass -- for CInstancedDisplacementManager's
+			//! instanced quads and any SPARK particle contributors (heat haze, gravitational
+			//! lensing, ...) that accumulate screen-space displacement into a dedicated RTT.
+			//! Deliberately its own pass rather than reusing ESNRP_TRANSPARENT_EFFECT or
+			//! ESNRP_VOLUMETRIC_EFFECT, both of which already have their own real meaning/users.
+			ESNRP_DISPLACEMENT_EFFECT = 256
 		};
 
 		class IAnimatedMesh;
@@ -1256,6 +1263,10 @@ namespace irr
 
 			//!Explicitly Render transparent Effect Scenenodes
 			virtual void RenderTransparentEffect() = 0;
+
+			//!Explicitly render all ESNRP_DISPLACEMENT_EFFECT scenenodes (see
+			//!ESNRP_DISPLACEMENT_EFFECT -- CInstancedDisplacementManager's own dedicated pass).
+			virtual void RenderDisplacementEffect() = 0;
 
 			//! Explicitly clear material, transforms and other states.
 			virtual void CleanupDraw() = 0;

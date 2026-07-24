@@ -325,6 +325,7 @@ namespace irr
 				getProfiler().add(EPID_SM_RENDER_DEFAULT, L"defaultnodes", L"Irrlicht scene");
 				getProfiler().add(EPID_SM_RENDER_SHADOWS, L"shadows", L"Irrlicht scene");
 				getProfiler().add(EPID_SM_RENDER_VOLUMETRIC_EFFECT, L"volumetriceffect", L"Irrlicht scene");
+			getProfiler().add(EPID_SM_RENDER_DISPLACEMENT_EFFECT, L"displacementeffect", L"Irrlicht scene");
 				getProfiler().add(EPID_SM_RENDER_TRANSPARENT, L"transp.nodes", L"Irrlicht scene");
 				getProfiler().add(EPID_SM_RENDER_EFFECT, L"effectnodes", L"Irrlicht scene");
 				getProfiler().add(EPID_SM_REGISTER, L"reg.render.node", L"Irrlicht scene");
@@ -1408,6 +1409,13 @@ namespace irr
 					taken = 1;
 				}
 				break;
+			case ESNRP_DISPLACEMENT_EFFECT:
+				if (!isCulled(node))
+				{
+					DisplacementEffectNodeList.push_back(node);
+					taken = 1;
+				}
+				break;
 
 			case ESNRP_NONE: // ignore this one
 
@@ -1661,6 +1669,37 @@ namespace irr
 			}
 
 			VolumetricEffectNodeList.clear();
+
+			if (LightManager)
+				LightManager->OnRenderPassPostRender(CurrentRenderPass);
+		}
+
+		void CSceneManager::RenderDisplacementEffect()
+		{
+			IRR_PROFILE(CProfileScope psDisplacementEffect(EPID_SM_RENDER_DISPLACEMENT_EFFECT);)
+			CurrentRenderPass = ESNRP_DISPLACEMENT_EFFECT;
+			Driver->getOverrideMaterial().Enabled = ((Driver->getOverrideMaterial().EnablePasses & CurrentRenderPass) != 0);
+
+			if (LightManager)
+			{
+				LightManager->OnRenderPassPreRender(CurrentRenderPass);
+				for (u32 i = 0; i < DisplacementEffectNodeList.size(); ++i)
+				{
+					auto node = DisplacementEffectNodeList[i];
+					LightManager->OnNodePreRender(node);
+					node->render();
+					LightManager->OnNodePostRender(node);
+				}
+			}
+			else
+			{
+				for (u32 i = 0; i < DisplacementEffectNodeList.size(); ++i)
+				{
+					DisplacementEffectNodeList[i]->render();
+				}
+			}
+
+			DisplacementEffectNodeList.clear();
 
 			if (LightManager)
 				LightManager->OnRenderPassPostRender(CurrentRenderPass);
