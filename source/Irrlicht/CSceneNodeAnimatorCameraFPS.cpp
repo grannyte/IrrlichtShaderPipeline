@@ -173,7 +173,7 @@ void irr::scene::CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node,
             // Test if the new orientation would cause gimbal lock or flip
             core::quaternion qYaw, qPitch;
             qYaw.fromAngleAxis(core::DEGTORAD * newYaw, up);
-            core::vector3df fwd = qYaw * core::vector3df(0, 0, 1);
+            core::vector3df fwd = qYaw * yawBase(up);
             core::vector3df right = fwd.crossProduct(up).normalize();
             qPitch.fromAngleAxis(core::DEGTORAD * newPitch, right);
             core::vector3df testForward = qPitch * fwd;
@@ -212,8 +212,8 @@ void irr::scene::CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node,
 
     qYaw.fromAngleAxis(core::DEGTORAD * YawAngle, up);
 
-    // base forward = (0,0,1) in local
-    core::vector3df fwd = qYaw * core::vector3df(0, 0, 1);
+    // base forward = (0,0,1) projected into the horizon plane of up (see yawBase)
+    core::vector3df fwd = qYaw * yawBase(up);
     core::vector3df right = fwd.crossProduct(up).normalize();
 
     qPitch.fromAngleAxis(core::DEGTORAD * PitchAngle, right);
@@ -267,9 +267,20 @@ void irr::scene::CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node,
 #pragma float_control( pop )
 
 
-// Rebuilds Yaw/PitchAngle so that reconstructing forward under `up` yields (as close as possible to) `forward`,
-// instead of letting the old angles get reinterpreted against the new up vector. Exact when Z is perpendicular
-// to up (the common world-up case); an approximation otherwise.
+// (0,0,1) projected into the horizon plane of up. Yawing this (not raw (0,0,1)) about up is what keeps the
+// reconstruction consistent with rebaseYawPitchToUp when up is tilted; equals (0,0,1) for world up.
+core::vector3df CSceneNodeAnimatorCameraFPS::yawBase(const core::vector3df& up)
+{
+	core::vector3df zHoriz = core::vector3df(0, 0, 1) - up * up.Z;
+	if (zHoriz.getLengthSQ() < 0.0001f)
+		zHoriz = core::vector3df(1, 0, 0) - up * up.X;
+	zHoriz.normalize();
+	return zHoriz;
+}
+
+// Rebuilds Yaw/PitchAngle so that reconstructing forward under `up` yields `forward`, instead of letting the
+// old angles get reinterpreted against the new up vector. Consistent with the reconstruction now that both use
+// yawBase(up) as the yaw reference.
 void CSceneNodeAnimatorCameraFPS::rebaseYawPitchToUp(const core::vector3df& up, const core::vector3df& forward)
 {
 	core::vector3df horiz = forward - up * forward.dotProduct(up);
@@ -277,11 +288,7 @@ void CSceneNodeAnimatorCameraFPS::rebaseYawPitchToUp(const core::vector3df& up, 
 		horiz = core::vector3df(1, 0, 0) - up * up.X;
 	horiz.normalize();
 
-	core::vector3df zRef(0, 0, 1);
-	core::vector3df zHoriz = zRef - up * up.Z;
-	if (zHoriz.getLengthSQ() < 0.0001f)
-		zHoriz = core::vector3df(1, 0, 0) - up * up.X;
-	zHoriz.normalize();
+	core::vector3df zHoriz = yawBase(up);
 
 	f32 cosYaw = core::clamp(zHoriz.dotProduct(horiz), -1.0f, 1.0f);
 	core::vector3df cross = zHoriz.crossProduct(horiz);

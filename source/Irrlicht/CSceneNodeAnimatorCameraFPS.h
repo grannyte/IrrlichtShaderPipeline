@@ -96,6 +96,8 @@ namespace scene
 	private:
 		void allKeysUp();
 		void rebaseYawPitchToUp(const core::vector3df& up, const core::vector3df& forward);
+		// (0,0,1) projected into the horizon plane of up; the yaw reference the reconstruction shares with rebaseYawPitchToUp
+		static core::vector3df yawBase(const core::vector3df& up);
 
 		gui::ICursorControl *CursorControl;
 
