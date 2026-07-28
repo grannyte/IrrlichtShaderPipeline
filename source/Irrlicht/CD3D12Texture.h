@@ -113,9 +113,17 @@ namespace irr
 			//! single draw. Combined with sampleCount > 1 is unsupported (rejected upstream
 			//! by CD3D12Driver::addRenderTargetTexture()). arraySlices == 1 (default) is the
 			//! plain single-slice case.
+			//! unorderedAccess=true => the resource also gets ALLOW_UNORDERED_ACCESS +
+			//! a UAV, so a compute shader can write it via
+			//! CD3D12Driver::dispatchComputeShaderToTexture(); ignored (with a warning)
+			//! when combined with renderTarget=true, since the render-target path never
+			//! needs it here. Same non-RT/non-depth CurrentState (COPY_DEST) as the plain
+			//! empty-texture case - transitionTo() moves it to UNORDERED_ACCESS on first
+			//! compute write.
 			CD3D12Texture(CD3D12Driver* driver, const core::dimension2d<u32>& size,
 				const io::path& name, ECOLOR_FORMAT format, bool renderTarget,
-				u32 sampleCount = 1, u32 sampleQuality = 0, u32 arraySlices = 1);
+				u32 sampleCount = 1, u32 sampleQuality = 0, u32 arraySlices = 1,
+				bool unorderedAccess = false);
 
 			//! 2D array / cube / cube array / 3D texture (depth = images.size() for
 			//! ETT_3D), built from N already-loaded 2D images (one per slice/face/Z-layer).
@@ -180,6 +188,11 @@ namespace irr
 			D3D12_CPU_DESCRIPTOR_HANDLE getShaderResourceView() const { return SRVHandle; }
 			UINT getSRVHeapIndex() const { return SRVHeapIndex; }
 
+			//! True for a texture created with unorderedAccess=true (see the size-based
+			//! constructor) - a compute shader can write it via dispatchComputeShaderToTexture.
+			bool hasUnorderedAccessView() const { return HasUAV; }
+			D3D12_CPU_DESCRIPTOR_HANDLE getUnorderedAccessView() const { return UAVHandle; }
+
 			//! Sample count of the RTV resource (1 = no MSAA). Read by
 			//! CD3D12Driver::setRenderTarget() to propagate SPSOKey::SampleCount and by
 			//! checkRTTDepthBuffer() to match the depth buffer.
@@ -199,6 +212,9 @@ namespace irr
 			bool createResource(bool asRenderTarget);
 			bool createShaderResourceView();
 			bool createRenderTargetView();
+			//! Creates the UAV (same heap as SRV/CBV, see CD3D12Driver::getSRVHeap()) for a
+			//! texture created with unorderedAccess=true. Only called from createResource().
+			bool createUnorderedAccessView();
 			//! Creates ResolvedResource (D3D12_HEAP_TYPE_DEFAULT, single-sample,
 			//! D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) and its SRV (HasSRV/SRVHandle
 			//! point at it, never at the MSAA resource itself). Only called when
@@ -247,6 +263,10 @@ namespace irr
 			bool HasSRV = false;
 			D3D12_CPU_DESCRIPTOR_HANDLE SRVHandle = {};
 			UINT SRVHeapIndex = 0;
+
+			bool HasUAV = false;
+			D3D12_CPU_DESCRIPTOR_HANDLE UAVHandle = {};
+			UINT UAVHeapIndex = 0;
 
 			bool HasRTV = false;
 			D3D12_CPU_DESCRIPTOR_HANDLE RTVHandle = {};

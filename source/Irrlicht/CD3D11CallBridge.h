@@ -206,6 +206,8 @@ namespace irr
 			void setRasterizerState(const SD3D11_RASTERIZER_DESC& rasterizerDesc);
 
 			void setShaderResources(SD3D11_SAMPLER_DESC SamplerDesc[MATERIAL_MAX_TEXTURES], ITexture* shaderViews[MATERIAL_MAX_TEXTURES]);
+			//! Forget a cached texture binding, so the next material set rebinds it.
+			void invalidateTextureBinding(ITexture* texture);
 			void setPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY top);
 			void setInputLayout(IVertexDescriptor* vtxDescriptor, IMaterialRenderer* r);
 

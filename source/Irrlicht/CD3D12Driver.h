@@ -306,6 +306,12 @@ namespace irr
 			virtual void dispatchComputeShader(const core::vector3d<u32>& groupCount,
 				scene::IComputeBuffer* Src, scene::IComputeBuffer* Dst) _IRR_OVERRIDE_;
 
+			//! Same as dispatchComputeShader() but Dst is a UAV-bindable texture (see
+			//! addUAVTexture()) rather than a structured buffer, so a compute shader can write
+			//! something directly sampleable afterward (e.g. an FFT displacement/normal map).
+			virtual void dispatchComputeShaderToTexture(const core::vector3d<u32>& groupCount,
+				scene::IComputeBuffer* Src, ITexture* Dst) _IRR_OVERRIDE_;
+
 			// --- IVideoDriver: transformations and current material ---
 			virtual void setTransform(E_TRANSFORMATION_STATE state, const core::matrix4& mat) _IRR_OVERRIDE_;
 			virtual const core::matrix4& getTransform(E_TRANSFORMATION_STATE state) const _IRR_OVERRIDE_;
@@ -641,9 +647,11 @@ namespace irr
 			//! without this (inline, trivial body) because it calls nothing like that.
 			virtual ITexture* addTextureArray(const core::array<IImage*>& images, E_TEXTURE_TYPE type, const io::path& name);
 
-			// TODO: createHardwareBuffer(IComputeBuffer*) is done (default-heap buffers + UAV/SRV
-			//       views) but dispatchComputeShader() remains a stub (no compute root
-			//       signature/PSO, no shader-visible heap -- see the TODO next to its declaration).
+			//! addUAVTexture() creates a texture a compute shader can write to directly (see
+			//! dispatchComputeShaderToTexture()), rather than only a structured buffer.
+			virtual ITexture* addUAVTexture(const core::dimension2d<u32>& size,
+				const io::path& name = "uav", const ECOLOR_FORMAT format = ECF_A32B32G32R32F) _IRR_OVERRIDE_;
+
 			// --- IVideoDriver: deferred context (see CD3D12DeferredContext.h) ---
 			// Reuses the existing generic IDeferredContext rather than a lighter D3D12-specific
 			// interface -- keeps a uniform driver->createDeferredContext()/executeDeferredContext() API

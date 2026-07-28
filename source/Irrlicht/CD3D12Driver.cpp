@@ -5209,6 +5209,92 @@ namespace irr
 			upload.endAndWait();
 		}
 
+		// Same shape as dispatchComputeShader() above, but the UAV target is a texture
+		// (created via addUAVTexture()) instead of a structured buffer, so the result can
+		// be sampled afterward by ordinary Texture2D/Texture2DArray shader code (e.g. an
+		// FFT displacement/normal map consumed by WaterDomainShader/pixelMain) rather than
+		// read back to the CPU. Still fully synchronous (endAndWait()): the texture is left
+		// in PIXEL_SHADER_RESOURCE state before returning, so the very next draw call - on
+		// the per-frame CommandList, a different list than this dispatch's own UploadScope -
+		// can safely sample it without further synchronization.
+		void CD3D12Driver::dispatchComputeShaderToTexture(const core::vector3d<u32>& groupCount,
+			scene::IComputeBuffer* Src, ITexture* Dst)
+		{
+			if (!Src || !Dst || Src->getStructureCount() == 0 || !Dst->isUnorderedAccess())
+				return;
+
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(Material.MaterialType);
+			if (!renderer || !renderer->CS)
+			{
+				os::Printer::log("CD3D12Driver::dispatchComputeShaderToTexture: le materiau actif n'a pas "
+					"de compute shader", ELL_ERROR);
+				return;
+			}
+			ID3D12PipelineState* pso = getOrCreateComputePSO(renderer->CS.Get());
+			if (!pso)
+				return;
+
+			if (!Src->getHardwareBuffer())
+				createHardwareBuffer(Src);
+			else if (Src->getHardwareBuffer()->isRequiredUpdate())
+				Src->getHardwareBuffer()->update(Src->getHardwareMappingHint(),
+					Src->getStructureCount() * Src->getStructureStride(), Src->getBufferPointer());
+
+			CD3D12HardwareBuffer* srcBuf = static_cast<CD3D12HardwareBuffer*>(Src->getHardwareBuffer().get());
+			CD3D12Texture* dstTex = static_cast<CD3D12Texture*>(Dst);
+			if (!srcBuf || !srcBuf->hasShaderResourceView() || !dstTex->hasUnorderedAccessView())
+			{
+				os::Printer::log("CD3D12Driver::dispatchComputeShaderToTexture: Src/Dst sans vue SRV/UAV "
+					"(pas cree par ce driver ?)", ELL_ERROR);
+				return;
+			}
+
+			UploadScope upload(this);
+			ID3D12GraphicsCommandList* cmdList = upload.commandList();
+			if (!cmdList)
+				return;
+
+			SD3D12FrameContext& frame = Frames[CurrentFrameIndex];
+			if (!reserveShaderVisibleSRVDescriptors(frame, MaxShaderVisibleSRVDescriptorsPerDraw))
+				return;
+
+			ID3D12DescriptorHeap* shaderVisibleHeaps[] = { frame.ShaderVisibleSRVHeap.Get() };
+			cmdList->SetDescriptorHeaps(1, shaderVisibleHeaps);
+
+			srcBuf->transitionTo(cmdList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+			dstTex->transitionTo(cmdList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+			cmdList->SetComputeRootSignature(ComputeRootSignature.Get());
+			cmdList->SetPipelineState(pso);
+
+			ActiveMaterialRendererIndex = Material.MaterialType;
+			if (renderer->CallBack)
+			{
+				renderer->CallBack->OnSetMaterial(Material);
+				renderer->CallBack->OnSetConstants(this, renderer->UserData);
+			}
+
+			D3D12_GPU_DESCRIPTOR_HANDLE srvTable = allocateDescriptorTableSlot(srcBuf->getShaderResourceView());
+			if (srvTable.ptr != 0)
+				cmdList->SetComputeRootDescriptorTable(0, srvTable);
+
+			D3D12_GPU_DESCRIPTOR_HANDLE uavTable = allocateDescriptorTableSlot(dstTex->getUnorderedAccessView());
+			if (uavTable.ptr != 0)
+				cmdList->SetComputeRootDescriptorTable(1, uavTable);
+
+			D3D12_GPU_DESCRIPTOR_HANDLE cbvTable = allocateUserCBVTable(renderer->CSBuffers, UserShaderRegisterSpace);
+			if (cbvTable.ptr != 0)
+				cmdList->SetComputeRootDescriptorTable(2, cbvTable);
+
+			cmdList->Dispatch(groupCount.X, groupCount.Y, groupCount.Z);
+
+			// Leave the texture ready to be sampled by the next draw, since endAndWait()
+			// below blocks until the GPU has actually finished this dispatch.
+			dstTex->transitionTo(cmdList, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+			upload.endAndWait();
+		}
+
 		// ================================ Phase 2 : textures ================================
 
 		// Le verrou est pris ici et relache par le destructeur : tout le bloc
@@ -5349,6 +5435,22 @@ namespace irr
 
 			// Meme contrat que CNullDriver::addTexture(size, ...) : le cache prend sa reference
 			// (grab), on rend la notre, l'appelant recoit une texture possedee par le driver.
+			CNullDriver::addTexture(texture);
+			texture->drop();
+			return texture;
+		}
+
+		ITexture* CD3D12Driver::addUAVTexture(const core::dimension2d<u32>& size,
+			const io::path& name, const ECOLOR_FORMAT format)
+		{
+			CD3D12Texture* texture = new CD3D12Texture(ResourceOwner, size, name, format, false, 1, 0, 1, true);
+			if (!texture->hasDeviceResource() || !texture->hasUnorderedAccessView())
+			{
+				os::Printer::log("CD3D12Driver::addUAVTexture: creation de la ressource D3D12 impossible", name, ELL_ERROR);
+				texture->drop();
+				return nullptr;
+			}
+
 			CNullDriver::addTexture(texture);
 			texture->drop();
 			return texture;

@@ -279,9 +279,12 @@ namespace irr
 
 		CD3D12Texture::CD3D12Texture(CD3D12Driver* driver, const core::dimension2d<u32>& size,
 			const io::path& name, ECOLOR_FORMAT format, bool renderTarget,
-			u32 sampleCount, u32 sampleQuality, u32 arraySlices)
+			u32 sampleCount, u32 sampleQuality, u32 arraySlices, bool unorderedAccess)
 			: ITexture(name), Driver(driver)
 		{
+			if (unorderedAccess && renderTarget)
+				os::Printer::log("CD3D12Texture: unorderedAccess ignore (renderTarget=true)", ELL_WARNING);
+			IsUnorderedAccess = unorderedAccess && !renderTarget;
 			DriverType = EDT_DIRECT3D12;
 			// arraySlices > 1 only applies to a render-target-texture; a non-RT texture
 			// stays ETT_2D. arraySlices > 1 combined with sampleCount > 1 is already
@@ -338,6 +341,8 @@ namespace irr
 				Driver->retireDescriptor(Driver->getRTVHeap(), RTVHeapIndex);
 			if (HasSRV)
 				Driver->retireDescriptor(Driver->getSRVHeap(), SRVHeapIndex);
+			if (HasUAV)
+				Driver->retireDescriptor(Driver->getSRVHeap(), UAVHeapIndex);
 			if (HasDSV)
 				Driver->retireDescriptor(Driver->getDSVHeap(), DSVHeapIndex);
 
@@ -395,6 +400,8 @@ namespace irr
 			else
 				desc.Flags = (asRenderTarget || (MipLevelCount > 1 && mipBlitCapable)) ?
 					D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET : D3D12_RESOURCE_FLAG_NONE;
+			if (IsUnorderedAccess)
+				desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 
 			D3D12_CLEAR_VALUE clearValue = {};
 			D3D12_CLEAR_VALUE* pClearValue = nullptr;
@@ -458,6 +465,8 @@ namespace irr
 			{
 				if (!createShaderResourceView())
 					return false;
+				if (IsUnorderedAccess && !createUnorderedAccessView())
+					return false;
 			}
 
 			return true;
@@ -520,6 +529,40 @@ namespace irr
 			device->CreateShaderResourceView(Resource.Get(), &srvDesc, handle);
 			SRVHandle = handle;
 			HasSRV = true;
+			return true;
+		}
+
+		bool CD3D12Texture::createUnorderedAccessView()
+		{
+			ID3D12Device2* device = Driver->getDevice();
+			CD3DX12_CPU_DESCRIPTOR_HANDLE handle;
+			// Same heap type as SRV/CBV (D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) - see
+			// CD3D12HardwareBuffer::createComputeViews() for the identical precedent on
+			// the structured-buffer UAV path.
+			if (!Driver->getSRVHeap().allocate(UAVHeapIndex, handle))
+			{
+				os::Printer::log("CD3D12Texture: heap UAV plein", ELL_ERROR);
+				return false;
+			}
+
+			D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+			uavDesc.Format = DxgiFormat;
+			if (TextureType == ETT_2D_ARRAY)
+			{
+				uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+				uavDesc.Texture2DArray.MipSlice = 0;
+				uavDesc.Texture2DArray.FirstArraySlice = 0;
+				uavDesc.Texture2DArray.ArraySize = NumberOfArraySlices;
+			}
+			else
+			{
+				uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+				uavDesc.Texture2D.MipSlice = 0;
+			}
+
+			device->CreateUnorderedAccessView(Resource.Get(), nullptr, &uavDesc, handle);
+			UAVHandle = handle;
+			HasUAV = true;
 			return true;
 		}
 

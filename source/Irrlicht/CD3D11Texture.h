@@ -30,7 +30,7 @@ namespace irr
 			//! rendertarget constructor
 			CD3D11Texture(CD3D11Driver* driver, const core::dimension2d<u32>& size, const io::path& name,
 				const ECOLOR_FORMAT format = ECF_UNKNOWN, u32 arraySlices = 1,
-				u32 sampleCount = 1, u32 sampleQuality = 0);
+				u32 sampleCount = 1, u32 sampleQuality = 0, bool unorderedAccess = false);
 			//! Array constructor
 			CD3D11Texture(const core::array<ITexture*>* surfaces, CD3D11Driver* driver,
 				u32 flags, const io::path& name, E_TEXTURE_TYPE Type, u32 arraySlices, void* mipmapData);
@@ -67,6 +67,9 @@ namespace irr
 			//! return shader resource view
 			ID3D11ShaderResourceView* getShaderResourceView() const;
 
+			//! return unordered access view (compute-writable textures only, see IsUnorderedAccess)
+			ID3D11UnorderedAccessView* getUnorderedAccessView() const;
+
 		private:
 			friend class CD3D11Driver;
 
@@ -75,6 +78,7 @@ namespace irr
 			ID3D11Resource* Texture;
 			ID3D11RenderTargetView* RTView;
 			ID3D11ShaderResourceView* SRView;
+			ID3D11UnorderedAccessView* UAView;
 			ID3D11DepthStencilView* dsView;
 			D3D11_RESOURCE_DIMENSION TextureDimension;
 			D3D11_MAP LastMapDirection;

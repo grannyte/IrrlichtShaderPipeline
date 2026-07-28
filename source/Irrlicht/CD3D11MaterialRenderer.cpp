@@ -773,7 +773,13 @@ namespace irr
 #else
 			// These flags allow maximum performance
 			flags |= D3DCOMPILE_OPTIMIZATION_LEVEL3;
-			if (Lang != EGSL_PCMP && pixelShaderEntryPointName && strstr(pixelShaderEntryPointName, "pixelNoiseMain") == NULL)
+			// Shaders whose branches must survive opt in with a PREFER_FLOW_CONTROL marker in
+			// their source; the rest are flattened. Marker must be in the top-level file, not
+			// an include - D3DCompile resolves those later. pixelNoiseMain predates the marker.
+			const bool preferFlowControl =
+				(pixelShaderProgram && strstr(pixelShaderProgram, "PREFER_FLOW_CONTROL") != NULL) ||
+				(pixelShaderEntryPointName && strstr(pixelShaderEntryPointName, "pixelNoiseMain") != NULL);
+			if (Lang != EGSL_PCMP && !preferFlowControl)
 			{
 				flags |= D3DCOMPILE_AVOID_FLOW_CONTROL;
 			}

@@ -228,6 +228,9 @@ public:
 	bool isRenderTarget() const { return IsRenderTarget; }
 
 	bool isDeptStencil() const { return IsDepthStencil; }
+
+	//! Check whether a compute shader can write to this texture via dispatchComputeShaderToTexture
+	bool isUnorderedAccess() const { return IsUnorderedAccess; }
 	//! Get name of texture (in most cases this is the filename)
 	const io::SNamedPath& getName() const { return NamedPath; }
 
@@ -268,6 +271,7 @@ protected:
 	bool HasAlpha;
 	bool IsRenderTarget;
 	bool IsDepthStencil;
+	bool IsUnorderedAccess = false;
 	E_TEXTURE_SOURCE Source;
 	E_TEXTURE_TYPE TextureType;
 };

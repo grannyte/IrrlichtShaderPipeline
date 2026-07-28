@@ -196,6 +196,9 @@ namespace irr
 			*/
 			virtual void dispatchComputeShader(const core::vector3d<u32>& groupCount, scene::IComputeBuffer* Src, scene::IComputeBuffer* Dst) override;
 
+			//! Dispatch compute shader, writing into a UAV-bindable texture instead of a buffer
+			virtual void dispatchComputeShaderToTexture(const core::vector3d<u32>& groupCount, scene::IComputeBuffer* Src, ITexture* Dst) override;
+
 			virtual void draw2DVertexPrimitiveList(const void* vertices, u32 vertexCount, const void* indices,
 				u32 primitiveCount, E_VERTEX_TYPE vType, scene::E_PRIMITIVE_TYPE pType, E_INDEX_TYPE iType) _IRR_OVERRIDE_;
 
@@ -422,6 +425,10 @@ namespace irr
 			virtual ITexture* addRenderTargetTexture(const core::dimension2d<u32>& size,
 				const io::path& name, const ECOLOR_FORMAT format = ECF_UNKNOWN,
 				u32 sampleCount = 1, u32 sampleQuality = 0, u32 arraySlices = 1);
+
+			//! Creates a texture a compute shader can write to via dispatchComputeShaderToTexture.
+			virtual ITexture* addUAVTexture(const core::dimension2d<u32>& size,
+				const io::path& name = "uav", const ECOLOR_FORMAT format = ECF_A32B32G32R32F) override;
 
 			//! Clears the ZBuffer.
 			virtual void clearZBuffer();

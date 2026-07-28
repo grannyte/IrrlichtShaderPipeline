@@ -598,6 +598,20 @@ namespace irr
 			//os::Printer::log(texchange.c_str());
 		}
 
+		void CD3D11CallBridge::invalidateTextureBinding(ITexture* texture)
+		{
+			if (!texture)
+				return;
+
+			// Binding a texture as a UAV makes D3D11 unbind it from every SRV slot, so the cached
+			// binding here no longer matches the context and would suppress the next rebind.
+			for (u32 i = 0; i < MATERIAL_MAX_TEXTURES; ++i)
+			{
+				if (CurrentTextures[i] == texture)
+					CurrentTextures[i] = NULL;
+			}
+		}
+
 		void CD3D11CallBridge::setPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY topology)
 		{
 			if (Topology != topology)

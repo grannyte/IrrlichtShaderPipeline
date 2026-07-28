@@ -570,6 +570,15 @@ namespace irr
 				return nullptr;
 			};
 
+			//! Creates a texture a compute shader can write to via dispatchComputeShaderToTexture,
+			//! and that can also be sampled normally afterward (e.g. FFT-generated displacement/
+			//! normal maps). \return Pointer to the created texture or 0 if it could not be
+			//! created; not dropped by the caller (same ownership rule as addRenderTargetTexture).
+			virtual ITexture* addUAVTexture(const core::dimension2d<u32>& size,
+				const io::path& name = "uav", const ECOLOR_FORMAT format = ECF_A32B32G32R32F) {
+				return nullptr;
+			};
+
 
 			//! Removes a texture from the texture cache and deletes it.
 			/** This method can free a lot of memory!
@@ -1075,8 +1084,18 @@ namespace irr
 			* \param Src Source buffer
 			* \param Dst Destination buffer
 			*/
-			virtual void dispatchComputeShader(const core::vector3d<u32>& groupCount,scene::IComputeBuffer* Src, scene::IComputeBuffer* Dst ) = 0; 
-			
+			virtual void dispatchComputeShader(const core::vector3d<u32>& groupCount,scene::IComputeBuffer* Src, scene::IComputeBuffer* Dst ) = 0;
+
+			//! Dispatch compute shader, writing into a UAV-bindable texture (see addUAVTexture)
+			//! instead of a structured buffer - for results (e.g. FFT displacement/normal maps)
+			//! meant to be sampled afterward by ordinary Texture2D/Texture2DArray shader code.
+			/** \param groupCount Number of groups to dispatch
+			* \param Src Source buffer
+			* \param Dst Destination texture, created via addUAVTexture
+			*/
+			virtual void dispatchComputeShaderToTexture(const core::vector3d<u32>& groupCount,
+				scene::IComputeBuffer* Src, ITexture* Dst) {};
+
 
 			//! Draws normals of a mesh buffer
 			/** \param mb Buffer to draw the normals of

@@ -1141,6 +1141,37 @@ namespace irr
 			Context->CSSetShaderResources(0, 1, ppSRVNull);
 		}
 
+		void CD3D11Driver::dispatchComputeShaderToTexture(const core::vector3d<u32>& groupCount, scene::IComputeBuffer* Src, ITexture* Dst)
+		{
+			if (!Src || !Dst || !Dst->isUnorderedAccess())
+				return;
+			if (Src->getStructureCount() == 0)
+				return;
+			setComputeState();
+
+			if (!Src->getHardwareBuffer())
+				createHardwareBuffer(Src);
+			else if (Src->getHardwareBuffer()->isRequiredUpdate())
+				Src->getHardwareBuffer()->update(Src->getHardwareMappingHint(), Src->getStructureCount() * Src->getStructureStride(), Src->getBufferPointer());
+
+			ID3D11ShaderResourceView* ppSRV[1] = { std::static_pointer_cast<CD3D11HardwareBuffer>(Src->getHardwareBuffer())->getShaderResourceView() };
+			Context->CSSetShaderResources(0, 1, ppSRV);
+
+			ID3D11UnorderedAccessView* ppUAView[1] = { static_cast<CD3D11Texture*>(Dst)->getUnorderedAccessView() };
+			Context->CSSetUnorderedAccessViews(0, 1, ppUAView, NULL);
+
+			Context->Dispatch(groupCount.X, groupCount.Y, groupCount.Z);
+
+			ID3D11UnorderedAccessView* ppUAVNull[1] = { NULL };
+			Context->CSSetUnorderedAccessViews(0, 1, ppUAVNull, NULL);
+			ID3D11ShaderResourceView* ppSRVNull[1] = { NULL };
+			Context->CSSetShaderResources(0, 1, ppSRVNull);
+
+			// The UAV bind above kicked Dst out of every SRV slot it was in, so drop the cached
+			// binding too or the next material set sees no change and never rebinds it.
+			BridgeCalls->invalidateTextureBinding(Dst);
+		}
+
 		void CD3D11Driver::removeAllHardwareBuffers()
 		{
 			HardwareBuffer.clear();
@@ -2519,6 +2550,18 @@ namespace irr
 			u32 sampleCount, u32 sampleQuality, u32 arraySlices)
 		{
 			ITexture* tex = new CD3D11Texture(this, size, name, format, arraySlices, sampleCount, sampleQuality);
+			if (tex)
+			{
+				addTexture(tex);
+				tex->drop();
+			}
+			return tex;
+		}
+
+		ITexture* CD3D11Driver::addUAVTexture(const core::dimension2d<u32>& size,
+			const io::path& name, const ECOLOR_FORMAT format)
+		{
+			ITexture* tex = new CD3D11Texture(this, size, name, format, 1, 1, 0, true);
 			if (tex)
 			{
 				addTexture(tex);

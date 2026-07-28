@@ -21,10 +21,10 @@ namespace irr
 		//! rendertarget constructor
 		CD3D11Texture::CD3D11Texture(CD3D11Driver* driver, const core::dimension2d<u32>& size,
 			const io::path& name, const ECOLOR_FORMAT format, u32 arraySlices,
-			u32 sampleCount, u32 sampleQuality)
+			u32 sampleCount, u32 sampleQuality, bool unorderedAccess)
 			: ITexture(name), Texture(0), TextureBuffer(0),
 			Device(0), Context(0), Driver(driver),
-			RTView(0), SRView(0),
+			RTView(0), SRView(0), UAView(0),
 			TextureDimension(D3D11_RESOURCE_DIMENSION_TEXTURE2D),
 			MipLevelLocked(0), NumberOfMipLevels(0), ArraySliceLocked(0), NumberOfArraySlices(arraySlices),
 			SampleCount(sampleCount), SampleQuality(sampleQuality),
@@ -40,6 +40,7 @@ namespace irr
 			OriginalSize = size;
 			Size = size;
 			IsRenderTarget = true;
+			IsUnorderedAccess = unorderedAccess;
 			MipMaps = false;
 
 			Device = driver->getExposedVideoData().D3D11.D3DDev11;
@@ -57,7 +58,7 @@ namespace irr
 			u32 flags, const io::path& name, u32 arraySlices, void* mipmapData)
 			: ITexture(name), Texture(0), TextureBuffer(0),
 			Device(0), Context(0), Driver(driver),
-			RTView(0), SRView(0),
+			RTView(0), SRView(0), UAView(0),
 			TextureDimension(D3D11_RESOURCE_DIMENSION_TEXTURE2D),
 			LastMapDirection((D3D11_MAP)0), dsView(0), MipLevelLocked(0), NumberOfMipLevels(0),
 			ArraySliceLocked(0), NumberOfArraySlices(arraySlices), SampleCount(1), SampleQuality(0),
@@ -118,7 +119,7 @@ namespace irr
 			u32 flags, const io::path& name, E_TEXTURE_TYPE Type, u32 arraySlices, void* mipmapData)
 			: ITexture(name), Texture(0), TextureBuffer(0),
 			Device(0), Context(0), Driver(driver),
-			RTView(0), SRView(0),
+			RTView(0), SRView(0), UAView(0),
 			TextureDimension(D3D11_RESOURCE_DIMENSION_TEXTURE2D),
 			LastMapDirection((D3D11_MAP)0), dsView(0), MipLevelLocked(0), NumberOfMipLevels(0),
 			ArraySliceLocked(0), NumberOfArraySlices(arraySlices), SampleCount(1), SampleQuality(0), HardwareMipMaps(false)
@@ -232,6 +233,9 @@ namespace irr
 			if (SRView)
 				SRView->Release();
 
+			if (UAView)
+				UAView->Release();
+
 			if (Texture)
 				Texture->Release();
 
@@ -259,6 +263,12 @@ namespace irr
 				Context->GenerateMips(SRView);
 
 			return SRView;
+		}
+
+		//! return unordered access view (compute-writable textures only, see IsUnorderedAccess)
+		ID3D11UnorderedAccessView* CD3D11Texture::getUnorderedAccessView() const
+		{
+			return UAView;
 		}
 
 		//! lock function
@@ -438,6 +448,8 @@ namespace irr
 				}
 			}
 			irr::u32 bindflags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+			if (IsUnorderedAccess)
+				bindflags |= D3D11_BIND_UNORDERED_ACCESS;
 
 			switch (ColorFormat)
 			{
@@ -990,6 +1002,37 @@ namespace irr
 				logFormatError(hr, "Could not create shader resource view : " + NumberOfMipLevels);
 
 				return false;
+			}
+
+			// create unordered access view (compute-writable textures only, e.g. FFT displacement)
+			if (IsUnorderedAccess)
+			{
+				if (UAView)
+					UAView->Release();
+
+				D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc;
+				::ZeroMemory(&uavDesc, sizeof(uavDesc));
+				uavDesc.Format = format;
+				if (NumberOfArraySlices > 1)
+				{
+					uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2DARRAY;
+					uavDesc.Texture2DArray.ArraySize = NumberOfArraySlices;
+					uavDesc.Texture2DArray.FirstArraySlice = 0;
+					uavDesc.Texture2DArray.MipSlice = 0;
+				}
+				else
+				{
+					uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+					uavDesc.Texture2D.MipSlice = 0;
+				}
+
+				hr = Device->CreateUnorderedAccessView(Texture, &uavDesc, &UAView);
+				if (FAILED(hr))
+				{
+					logFormatError(hr, "Could not create unordered access view");
+
+					return false;
+				}
 			}
 
 			return true;
