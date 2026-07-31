@@ -106,16 +106,33 @@ void irr::scene::CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node,
 
     auto camera = static_cast<ICameraSceneNode*>(node);
 
+    // The animator runs in the camera's PARENT space, because that is the space its position
+    // lives in. Up vector and target are world-space, so they get converted on the way in and
+    // back out. Doing the yaw/movement math in world space instead drags the camera off-heading
+    // as soon as the parent rotates (a planet the camera is orbit-attached to).
+    core::matrix4 parentToWorld;
+    core::matrix4 worldToParent;
+    if (ISceneNode* parent = camera->getRawParent())
+    {
+        parentToWorld = parent->getAbsoluteTransformation();
+        parentToWorld.setTranslation(core::vector3df(0.f, 0.f, 0.f));
+        worldToParent = parentToWorld;
+        worldToParent.makeInverse();
+    }
+
     if (firstUpdate)
     {
-        // Initialize yaw/pitch from current orientation
-        core::vector3df dir = camera->getTarget() - camera->getPosition();
+        // Initialize yaw/pitch from current orientation. Target and absolute position are both
+        // world-space; the result is converted to parent space like everything else here.
+        core::vector3df dir = camera->getTarget() - camera->getAbsolutePosition();
+        worldToParent.rotateVect(dir);
         dir.normalize();
         auto ha = dir.getHorizontalAngle();
         YawAngle = ha.Y;
         PitchAngle = ha.X;
 
         LastUp = camera->getUpVector();
+        worldToParent.rotateVect(LastUp);
         LastUp.normalize();
         LastForward = dir;
 
@@ -149,10 +166,15 @@ void irr::scene::CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node,
     f32 dt = (f32)(timeMs - LastAnimationTime);
     LastAnimationTime = timeMs;
 
-    // Up vector may be reassigned externally between ticks (e.g. orbit-attach); rebase to preserve look direction
+    // Up vector may be reassigned externally between ticks (e.g. orbit-attach); rebase to preserve look direction.
+    // Rebase on any real change, not past a coarse threshold: an orbiting body turns the up vector by far less
+    // than a degree per tick, so a threshold large enough to be worth having never fires and the stored angles
+    // get silently reinterpreted instead. Rebasing also hides yawBase's reference flip, since the rebase and the
+    // reconstruction below share the same yawBase(up).
     core::vector3df up = camera->getUpVector();
+    worldToParent.rotateVect(up);
     up.normalize();
-    if (up.dotProduct(LastUp) < 0.9999f)
+    if (up != LastUp)
         rebaseYawPitchToUp(up, LastForward);
     LastUp = up;
 
@@ -257,18 +279,27 @@ void irr::scene::CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node,
             }
     }
 
-    // Write position and target (Target is absolute/world space, so anchor on absolute position, not local pos)
+    // Write position (parent-local) and target (world). Target is anchored on the absolute position
+    // because that is the space it is consumed in - every reader differences it against the camera's
+    // absolute position to recover a direction. Under a camera-centred floating origin the absolute
+    // position sits at ~0, so the distance below is normally just the 1.0 floor; that is fine, a
+    // short baseline from a near-origin camera gives the most exact direction.
     camera->setPosition(pos);
     camera->updateAbsolutePosition();
-    core::vector3df displacementCorrection = camera->getAbsolutePosition();
-    camera->setTarget(displacementCorrection + finalForward.normalize() * std::max(pos.getLength(), 1.0f));
+    core::vector3df worldForward = finalForward;
+    parentToWorld.rotateVect(worldForward);
+    worldForward.normalize();
+    const core::vector3df absolutePosition = camera->getAbsolutePosition();
+    camera->setTarget(absolutePosition + worldForward * std::max(absolutePosition.getLength(), 1.0f));
 }
 
 #pragma float_control( pop )
 
 
 // (0,0,1) projected into the horizon plane of up. Yawing this (not raw (0,0,1)) about up is what keeps the
-// reconstruction consistent with rebaseYawPitchToUp when up is tilted; equals (0,0,1) for world up.
+// reconstruction consistent with rebaseYawPitchToUp when up is tilted; equals (0,0,1) for an untilted up.
+// The fallback branch is a discontinuity, but up only ever reaches it by changing, and any change to up
+// rebases the angles against this same reference first, so the flip cancels out.
 core::vector3df CSceneNodeAnimatorCameraFPS::yawBase(const core::vector3df& up)
 {
 	core::vector3df zHoriz = core::vector3df(0, 0, 1) - up * up.Z;
@@ -373,6 +404,7 @@ void CSceneNodeAnimatorCameraFPS::setInvertMouse(bool invert)
 }
 
 
+// direction and up are in the camera's parent space, the frame animateNode() keeps its angles in.
 void CSceneNodeAnimatorCameraFPS::setLookDirection(const core::vector3df& direction, const core::vector3df& up)
 {
 	core::vector3df dir = direction;
