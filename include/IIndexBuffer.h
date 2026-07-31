@@ -49,6 +49,9 @@ namespace scene
 		virtual u32 getIndexSize() const = 0;
 
 		virtual void setIndex(u32 id, u32 index) = 0;
+
+		//! Reserve capacity without changing the used count, so repeated addIndex() calls don't reallocate.
+		virtual void reallocate(u32 size) = 0;
 	};
 }
 }

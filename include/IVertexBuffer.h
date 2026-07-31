@@ -40,6 +40,9 @@ namespace scene
 		virtual u32 getVertexSize() const = 0;
 
 		virtual void setVertex(u32 id, const void* vertex) = 0;
+
+		//! Reserve capacity without changing the used count, so repeated addVertex() calls don't reallocate.
+		virtual void reallocate(u32 size) = 0;
 	};
 }
 }
