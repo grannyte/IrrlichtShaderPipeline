@@ -344,7 +344,9 @@ namespace irr
 		bool CNullDriver::endScene()
 		{
 			FPSCounter.registerFrame(os::Timer::getRealTime(), PrimitivesDrawn);
-			updateAllOcclusionQueries();
+			// non-blocking: a frame-old occlusion result is acceptable, and blocking here
+			// stalls the CPU on the GPU finishing every query issued last frame.
+			updateAllOcclusionQueries(false);
 			return true;
 		}
 
