@@ -1003,7 +1003,7 @@ namespace irr
 				case D3D_SIT_SAMPLER:
 				{
 					for (u32 j = resourceDesc.BindPoint; j < resourceDesc.BindPoint + resourceDesc.BindCount; ++j)
-						sh->samplersUsed += 1 << j;
+						sh->samplersUsed |= 1 << j;
 					//irr::core::stringc BindingTexture = "sampler bind count : ";
 					//BindingTexture += resourceDesc.BindCount;
 					//BindingTexture += " sampler Bind Point : ";

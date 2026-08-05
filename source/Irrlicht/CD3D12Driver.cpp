@@ -3474,6 +3474,31 @@ namespace irr
 			return levels.NumQualityLevels;
 		}
 
+		bool CD3D12Driver::copyTexture(ITexture* dest, ITexture* source)
+		{
+			if (!dest || !source || dest == source)
+				return false;
+
+			if (dest->getSize() != source->getSize() ||
+				dest->getColorFormat() != source->getColorFormat())
+			{
+				os::Printer::log("copyTexture needs matching size and format.", ELL_ERROR);
+				return false;
+			}
+
+			CD3D12Texture* d = static_cast<CD3D12Texture*>(dest);
+			CD3D12Texture* s = static_cast<CD3D12Texture*>(source);
+			if (!d->getResource() || !s->getResource() || !CommandList)
+				return false;
+
+			// Unlike D3D11 the copy states must be requested explicitly; transitionTo()
+			// is a no-op when the resource already rests in the state asked for.
+			d->transitionTo(CommandList.Get(), D3D12_RESOURCE_STATE_COPY_DEST);
+			s->transitionTo(CommandList.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE);
+			CommandList->CopyResource(d->getResource(), s->getResource());
+			return true;
+		}
+
 		void CD3D12Driver::clearZBuffer()
 		{
 			// Targets the DSV actually bound by the last setRenderTarget() (back buffer or

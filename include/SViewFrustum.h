@@ -312,17 +312,30 @@ namespace scene
 		planes[VF_BOTTOM_PLANE].Normal.Z = mat[11] + mat[9];
 		planes[VF_BOTTOM_PLANE].D =        mat[15] + mat[13];
 
-		// far clipping plane
-		planes[VF_FAR_PLANE].Normal.X = mat[3 ] - mat[2];
-		planes[VF_FAR_PLANE].Normal.Y = mat[7 ] - mat[6];
-		planes[VF_FAR_PLANE].Normal.Z = mat[11] - mat[10];
-		planes[VF_FAR_PLANE].D =        mat[15] - mat[14];
+		// The two z-boundary planes of the clip volume (0<=z'<=w' in clip space). Which one is
+		// physically the near plane and which is the far plane depends on the projection's NDC-z
+		// convention: standard (z'=0 at near, z'=w' at far - e.g. the orthographic GUI camera) has
+		// row2 as near, row3-row2 as far; OuterSpace's world/game cameras use a reversed-Z
+		// perspective matrix (buildProjectionMatrixPerspectiveFovLH maps near to z'~=w', far to
+		// z'~=0 - see CD3D12Driver::clearZBuffer's comment), which swaps that. Assigning by row
+		// index unconditionally silently mislabels near/far for every reversed-Z camera: with
+		// this engine's real zNear/zFar (0.5 / 5e9), the row2 plane sits at view-space z=-zFar
+		// (behind the camera, never culls anything) and the row3-row2 plane sits at z~=zNear
+		// (functions as a near plane, not a far one). Assign by actual distance from the camera
+		// instead of by row, so this is correct for either convention.
+		core::plane3d<f32> zBoundaryA, zBoundaryB;
+		zBoundaryA.Normal.X = mat[2];
+		zBoundaryA.Normal.Y = mat[6];
+		zBoundaryA.Normal.Z = mat[10];
+		zBoundaryA.D =        mat[14];
 
-		// near clipping plane
-		planes[VF_NEAR_PLANE].Normal.X = mat[2];
-		planes[VF_NEAR_PLANE].Normal.Y = mat[6];
-		planes[VF_NEAR_PLANE].Normal.Z = mat[10];
-		planes[VF_NEAR_PLANE].D =        mat[14];
+		zBoundaryB.Normal.X = mat[3 ] - mat[2];
+		zBoundaryB.Normal.Y = mat[7 ] - mat[6];
+		zBoundaryB.Normal.Z = mat[11] - mat[10];
+		zBoundaryB.D =        mat[15] - mat[14];
+
+		planes[VF_NEAR_PLANE] = zBoundaryA;
+		planes[VF_FAR_PLANE] = zBoundaryB;
 
 		// normalize normals
 		u32 i;
@@ -332,6 +345,14 @@ namespace scene
 					planes[i].Normal.getLengthSQ());
 			planes[i].Normal *= len;
 			planes[i].D *= len;
+		}
+
+		if (core::abs_<f32>(planes[VF_NEAR_PLANE].getDistanceTo(cameraPosition)) >
+			core::abs_<f32>(planes[VF_FAR_PLANE].getDistanceTo(cameraPosition)))
+		{
+			core::plane3d<f32> tmp = planes[VF_NEAR_PLANE];
+			planes[VF_NEAR_PLANE] = planes[VF_FAR_PLANE];
+			planes[VF_FAR_PLANE] = tmp;
 		}
 
 		// make bounding box

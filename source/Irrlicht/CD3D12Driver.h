@@ -330,6 +330,9 @@ namespace irr
 			virtual const core::dimension2d<u32>& getCurrentRenderTargetSize() const _IRR_OVERRIDE_ { return CurrentRenderTargetSize; }
 			virtual ECOLOR_FORMAT getColorFormat() const _IRR_OVERRIDE_ { return ECF_A8R8G8B8; }
 			virtual void clearZBuffer() _IRR_OVERRIDE_;
+
+			//! Copies a whole texture to another of identical size and format.
+			virtual bool copyTexture(ITexture* dest, ITexture* source) _IRR_OVERRIDE_;
 			virtual bool setRenderTarget(video::ITexture* texture, bool clearBackBuffer = true,
 				bool clearZBuffer = true, SColor color = video::SColor(0, 0, 0, 0),
 				video::ITexture* depthStencil = 0) _IRR_OVERRIDE_;

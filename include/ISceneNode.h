@@ -89,7 +89,7 @@ namespace irr
 			*/
 			virtual void OnRegisterSceneNode()
 			{
-				if (IsVisible)
+				if (IsVisible && Children.size() > 0)
 				{
 					ChildLock.lock_read();
 					for (auto& child : Children)

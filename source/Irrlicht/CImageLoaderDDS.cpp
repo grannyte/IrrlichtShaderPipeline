@@ -128,6 +128,8 @@ extracts relevant info from a dds texture, returns 0 on success
 			*pf = DDS_PF_BC6_U;
 		else if (d10header.dxgiFormat == DXGI_FORMAT_BC6H_SF16)
 			*pf = DDS_PF_BC6_S;
+		else if (d10header.dxgiFormat == DXGI_FORMAT_R16G16B16A16_FLOAT)
+			*pf = DDS_PF_R16G16B16A16F;
 		else
 			__debugbreak();
 	}
@@ -902,6 +904,23 @@ IImage* CImageLoaderDDS::loadImage(io::IReadFile* file) const
 					format = ECF_DXT5;
 					break;
 				}
+				case DDS_PF_R16G16B16A16F:
+				{
+					// Uncompressed half-float RGBA, straight copy - no decompression function, unlike
+					// the BC6/BC7 cases below. Still goes through the SAME post-switch "bundle the
+					// whole file" path as every other FourCC format here, though: CD3D11Texture's
+					// IImage* constructor (CD3D11Texture.cpp) branches purely on the FILE EXTENSION
+					// being ".dds", not on whether the format is block-compressed, and unconditionally
+					// hands the whole buffer to CreateDDSTextureFromMemory (a DirectXTex-style loader
+					// that parses the DDS/DX10 headers itself and needs them present, sized via
+					// CImage::CompressedSize = the full file size). A stripped-down, header-free
+					// buffer was tried here and made CreateDDSTextureFromMemory fail outright (null
+					// texture, then an access violation on the next line's GetDesc call) - confirmed
+					// against a real in-engine load, not just reasoned about.
+					dataSize = header.Width * header.Height * 8;
+					format = ECF_A16B16G16R16F;
+				}
+				break;
 				case DDS_PF_BC6_U:
 				{
 					u32 curHeight = header.Height;

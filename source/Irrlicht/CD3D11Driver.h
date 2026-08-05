@@ -430,6 +430,9 @@ namespace irr
 			virtual ITexture* addUAVTexture(const core::dimension2d<u32>& size,
 				const io::path& name = "uav", const ECOLOR_FORMAT format = ECF_A32B32G32R32F) override;
 
+			//! Copies a whole texture to another of identical size and format.
+			virtual bool copyTexture(ITexture* dest, ITexture* source) override;
+
 			//! Clears the ZBuffer.
 			virtual void clearZBuffer();
 

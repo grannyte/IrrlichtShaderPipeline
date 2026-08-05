@@ -2587,6 +2587,28 @@ namespace irr
 			return 0;
 		}
 
+		bool CD3D11Driver::copyTexture(ITexture* dest, ITexture* source)
+		{
+			if (!dest || !source || dest == source)
+				return false;
+
+			if (dest->getSize() != source->getSize() ||
+				dest->getColorFormat() != source->getColorFormat())
+			{
+				os::Printer::log("copyTexture needs matching size and format.", ELL_ERROR);
+				return false;
+			}
+
+			ID3D11Resource* d = static_cast<CD3D11Texture*>(dest)->getTextureResource();
+			ID3D11Resource* s = static_cast<CD3D11Texture*>(source)->getTextureResource();
+			if (!d || !s)
+				return false;
+
+			// Neither may be bound; the caller unbinds the source depth surface first.
+			Context->CopyResource(d, s);
+			return true;
+		}
+
 		void CD3D11Driver::clearZBuffer()
 		{
 			if (CurrentDepthBuffer)

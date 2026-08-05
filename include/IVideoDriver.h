@@ -570,6 +570,14 @@ namespace irr
 				return nullptr;
 			};
 
+			//! Copies a whole texture to another of identical size and format.
+			/** Works for depth textures, which cannot be copied by rendering.
+			Neither texture may be bound to the pipeline during the call.
+			\return True on success, false if unsupported or the two do not match. */
+			virtual bool copyTexture(ITexture* dest, ITexture* source) {
+				return false;
+			};
+
 			//! Creates a texture a compute shader can write to via dispatchComputeShaderToTexture,
 			//! and that can also be sampled normally afterward (e.g. FFT-generated displacement/
 			//! normal maps). \return Pointer to the created texture or 0 if it could not be

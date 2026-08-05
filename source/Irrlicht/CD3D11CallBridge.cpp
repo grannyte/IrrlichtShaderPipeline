@@ -174,7 +174,7 @@ namespace irr
 			{
 				// only set samplers and textures if a shader is set and if samplers / textures are used, setted and changed
 				u32 samplersToSet = shader->samplersUsed & samplersChanged;
-				u32 texturesToSet = shader->texturesUsed & texturesChanged;
+				u32 texturesToSet = texturesChanged;
 
 				//irr::core::stringc texchange = "Vertex texture changed : ";
 				//texchange += texturesChanged;
@@ -255,9 +255,6 @@ namespace irr
 						if ((shader->texturesUsed | texturesChanged) & (1 << i) && CurrentTextures[i])
 						{
 							views[i] = ((CD3D11Texture*)CurrentTextures[i])->getShaderResourceView();
-
-							if (i == 0)
-								Context->VSSetShaderResources(i, 1, &views[0]);
 
 							//texchange += "\n texture Set : ";
 							//texchange += i;
