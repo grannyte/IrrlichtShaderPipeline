@@ -925,7 +925,7 @@ IImage* CImageLoaderDDS::loadImage(io::IReadFile* file) const
 				{
 					u32 curHeight = header.Height;
 					u32 curWidth = header.Width;
-					dataSize = curHeight * curHeight;
+					dataSize = ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
 					do
 					{
 						if (curWidth > 1)
@@ -943,7 +943,7 @@ IImage* CImageLoaderDDS::loadImage(io::IReadFile* file) const
 				{
 					u32 curHeight = header.Height;
 					u32 curWidth = header.Width;
-					dataSize = curHeight * curHeight;
+					dataSize = ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
 					do
 					{
 						if (curWidth > 1)
@@ -961,7 +961,7 @@ IImage* CImageLoaderDDS::loadImage(io::IReadFile* file) const
 				{
 					u32 curHeight = header.Height;
 					u32 curWidth = header.Width;
-					dataSize = curHeight * curHeight; 
+					dataSize = ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16; 
 					do
 					{
 						if (curWidth > 1)
@@ -979,7 +979,7 @@ IImage* CImageLoaderDDS::loadImage(io::IReadFile* file) const
 				{
 					u32 curHeight = header.Height;
 					u32 curWidth = header.Width;
-					dataSize = curHeight * curHeight;
+					dataSize = ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
 					do
 					{
 						if (curWidth > 1)

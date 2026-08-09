@@ -3396,7 +3396,7 @@ namespace irr
 			u32 size;
 			os::Printer::log("Resetting D3D11 device.", ELL_INFORMATION);
 			{
-				std::lock_guard<std::shared_mutex> texturelock(textureArrayLock);
+				concurrency::reader_writer_lock::scoped_lock texturelock(textureArrayLock);
 				size = Textures.size();
 				for (i = 0; i < size; ++i)
 				{

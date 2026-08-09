@@ -24,6 +24,7 @@
 #include "CNullDriverCommon.h"
 #include "CCommandBufferDriver.h"
 #include <shared_mutex>
+#include <concrt.h>
 
 #ifdef _MSC_VER
 #pragma warning( disable: 4996)
@@ -824,7 +825,11 @@ namespace irr
 				virtual void unlock()_IRR_OVERRIDE_ {}
 				virtual void regenerateMipMapLevels(void* mipmapData = 0) _IRR_OVERRIDE_ {}
 			};
-			mutable std::shared_mutex textureArrayLock;
+			// Cooperative on purpose: getTexture(files[],Type) loads slices via parallel_for from
+			// callers that are themselves PPL tasks. A std::shared_mutex block is invisible to the
+			// scheduler, so blocked workers starve it and no inner task ever runs; reader_writer_lock
+			// lets it steal work instead.
+			mutable concurrency::reader_writer_lock textureArrayLock;
 			core::array<SSurface> Textures;
 
 			struct SOccQuery

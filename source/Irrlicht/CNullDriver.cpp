@@ -18,6 +18,7 @@
 #include "CVertexDescriptor.h"
 #include <iostream>
 #include <shared_mutex>
+#include <atomic>
 
 namespace irr
 {
@@ -324,7 +325,7 @@ namespace irr
 			// last set material member. Could be optimized to reduce state changes.
 			setMaterial(SMaterial());
 
-			std::lock_guard<std::shared_mutex> texturelock(textureArrayLock);
+			concurrency::reader_writer_lock::scoped_lock texturelock(textureArrayLock);
 			for (u32 i = 0; i < Textures.size(); ++i)
 				Textures[i].Surface->drop();
 
@@ -391,7 +392,7 @@ namespace irr
 			if (!texture)
 				return;
 
-			std::lock_guard<std::shared_mutex> texturelock(textureArrayLock);
+			concurrency::reader_writer_lock::scoped_lock texturelock(textureArrayLock);
 			for (u32 i = 0; i < Textures.size(); ++i)
 			{
 				if (Textures[i].Surface == texture)
@@ -413,7 +414,7 @@ namespace irr
 		//! Returns a texture by index
 		ITexture* CNullDriver::getTextureByIndex(u32 i)
 		{
-			std::shared_lock<std::shared_mutex> textLock(textureArrayLock);
+			concurrency::reader_writer_lock::scoped_lock_read textLock(textureArrayLock);
 			if (i < Textures.size())
 				return Textures[i].Surface;
 
@@ -423,7 +424,7 @@ namespace irr
 		//! Returns amount of textures currently loaded
 		u32 CNullDriver::getTextureCount() const
 		{
-			std::shared_lock<std::shared_mutex> textLock(textureArrayLock);
+			concurrency::reader_writer_lock::scoped_lock_read textLock(textureArrayLock);
 			return Textures.size();
 		}
 
@@ -437,7 +438,7 @@ namespace irr
 			io::SNamedPath& name = const_cast<io::SNamedPath&>(texture->getName());
 			name.setPath(newName);
 
-			std::lock_guard<std::shared_mutex> texturelock(textureArrayLock);
+			concurrency::reader_writer_lock::scoped_lock texturelock(textureArrayLock);
 			Textures.sort();
 		}
 
@@ -546,11 +547,24 @@ namespace irr
 
 			core::stringc name = "array_";
 			bool failed = false;
+
+			os::Printer::log("getTexture[array]: begin, slices", core::stringc(nfiles), ELL_DEBUG);
+
 			// Load the individual slices
 			//for (int i = 0; i < nfiles; i++)
 			concurrency::parallel_for(0u, nfiles, [&](u32 i)
 			{
-				slices[i] = getTexture(files[i]);
+				try
+				{
+					slices[i] = getTexture(files[i]);
+				}
+				catch (const std::exception& e)
+				{
+					core::stringc m = "slice threw ["; m += typeid(e).name(); m += "] ";
+					m += e.what(); m += " on "; m += files[i];
+					os::Printer::log(m.c_str(), ELL_ERROR);
+					throw;
+				}
 
 				if (!slices[i])
 					failed = true;
@@ -558,6 +572,9 @@ namespace irr
 			}
 			);
 			u32 i;
+
+			os::Printer::log("getTexture[array]: all slices loaded", ELL_DEBUG);
+
 			if (failed)
 			{
 				os::Printer::log("Failed to load texture array", ELL_ERROR);
@@ -579,12 +596,30 @@ namespace irr
 			{
 				if (slices[i]->getSize() != base)
 				{
-					os::Printer::log("Array textures must be the same size", ELL_ERROR);
+					// Name the offending slice: this returns 0 and the caller usually stores
+					// that null without checking, so the failure otherwise surfaces much later.
+					core::stringc msg = "Array textures must be the same size. Slice ";
+					msg += core::stringc(i);
+					msg += " (";
+					msg += files[i];
+					msg += ") is ";
+					msg += core::stringc(slices[i]->getSize().Width);
+					msg += "x";
+					msg += core::stringc(slices[i]->getSize().Height);
+					msg += " but slice 0 (";
+					msg += files[0];
+					msg += ") is ";
+					msg += core::stringc(base.Width);
+					msg += "x";
+					msg += core::stringc(base.Height);
+					os::Printer::log(msg.c_str(), ELL_ERROR);
 					return 0;
 				}
 			}
 
+			os::Printer::log("getTexture[array]: creating device texture", ELL_DEBUG);
 			ITexture* tex = createDeviceDependentTexture(slices, Type, name);
+			os::Printer::log("getTexture[array]: device texture created", ELL_DEBUG);
 			if (tex)
 			{
 				addTexture(tex);
@@ -621,7 +656,7 @@ namespace irr
 				s.Surface = texture;
 				texture->grab();
 
-				std::lock_guard<std::shared_mutex> texturelock(textureArrayLock);
+				concurrency::reader_writer_lock::scoped_lock texturelock(textureArrayLock);
 				Textures.push_back(s);
 
 				// the new texture is now at the end of the texture list. when searching for
@@ -640,7 +675,7 @@ namespace irr
 			SDummyTexture dummy(filename);
 			s.Surface = &dummy;
 
-			std::shared_lock<std::shared_mutex> texturelock(textureArrayLock);
+			concurrency::reader_writer_lock::scoped_lock_read texturelock(textureArrayLock);
 			s32 index = Textures.binary_search(s);
 			if (index != -1)
 				return Textures[index].Surface;

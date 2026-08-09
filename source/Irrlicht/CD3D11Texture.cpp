@@ -92,6 +92,13 @@ namespace irr
 					0
 				);
 
+				// CreateDDSTextureFromMemory leaves Texture untouched on failure.
+				if (!Texture)
+				{
+					os::Printer::log("Could not load .dds texture", name, ELL_ERROR);
+					return;
+				}
+
 				D3D11_TEXTURE2D_DESC desc;
 				((ID3D11Texture2D*)Texture)->GetDesc(&desc);
 				NumberOfMipLevels = desc.MipLevels;
@@ -102,6 +109,9 @@ namespace irr
 
 				// get color format
 				ColorFormat = Driver->getColorFormatFromD3DFormat(desc.Format);
+
+				// This path bypasses createTexture(), which is what normally sets Pitch.
+				setPitch(desc.Format);
 			}
 			else if (image)
 			{
@@ -154,8 +164,16 @@ namespace irr
 			if (surfaces)
 			{
 				Size = surfaces->operator[](0)->getSize();
+				{
+					core::stringc m = "CD3D11Texture[array]: begin ";
+					m += core::stringc(Size.Width); m += "x"; m += core::stringc(Size.Height);
+					m += " slices="; m += core::stringc((u32)surfaces->size());
+					m += " mips="; m += core::stringc(NumberOfMipLevels);
+					os::Printer::log(m.c_str(), ELL_DEBUG);
+				}
 				if (createTexture(flags, 0))
 				{
+					os::Printer::log("CD3D11Texture[array]: main texture created", ELL_DEBUG);
 					D3D11_TEXTURE2D_DESC desc;
 					((ID3D11Texture2D*)Texture)->GetDesc(&desc);
 					desc.BindFlags = 0;
@@ -171,11 +189,17 @@ namespace irr
 						return;
 					}
 
+					os::Printer::log("CD3D11Texture[array]: staging buffer created", ELL_DEBUG);
+
 					// sync main texture contents with texture buffer
 					Context->CopyResource(TextureBuffer, Texture);
 
+					os::Printer::log("CD3D11Texture[array]: staging primed, begin slice copy", ELL_DEBUG);
+
 					for (int i = 0; i < surfaces->size(); ++i)
 					{
+						if ((i % 25) == 0)
+							os::Printer::log("CD3D11Texture[array]: slice", core::stringc(i), ELL_DEBUG);
 						//copyTexture(surfaces->operator[](i), i);
 
 						HRESULT hr = S_OK;
@@ -208,11 +232,14 @@ namespace irr
 
 						// copy texture buffer to main texture ONLY if buffer was write
 					}
+					os::Printer::log("CD3D11Texture[array]: slice copy done, copying back", ELL_DEBUG);
 					Context->CopyResource(Texture, TextureBuffer);
 					TextureBuffer->Release();
 					TextureBuffer = NULL;
 
+					os::Printer::log("CD3D11Texture[array]: regenerating mipmaps", ELL_DEBUG);
 					regenerateMipMapLevels(mipmapData);
+					os::Printer::log("CD3D11Texture[array]: done", ELL_DEBUG);
 				}
 				else
 					os::Printer::log("Could not create Direct3D11 Texture.", ELL_WARNING);
@@ -781,9 +808,50 @@ namespace irr
 			return true;
 		}
 
+		//! Bytes per 4x4 block, or 0 if the format is not block compressed.
+		static u32 getBlockBytes(DXGI_FORMAT format)
+		{
+			switch (format)
+			{
+			case DXGI_FORMAT_BC1_TYPELESS:
+			case DXGI_FORMAT_BC1_UNORM:
+			case DXGI_FORMAT_BC1_UNORM_SRGB:
+			case DXGI_FORMAT_BC4_TYPELESS:
+			case DXGI_FORMAT_BC4_UNORM:
+			case DXGI_FORMAT_BC4_SNORM:
+				return 8;
+
+			case DXGI_FORMAT_BC2_TYPELESS:
+			case DXGI_FORMAT_BC2_UNORM:
+			case DXGI_FORMAT_BC2_UNORM_SRGB:
+			case DXGI_FORMAT_BC3_TYPELESS:
+			case DXGI_FORMAT_BC3_UNORM:
+			case DXGI_FORMAT_BC3_UNORM_SRGB:
+			case DXGI_FORMAT_BC5_TYPELESS:
+			case DXGI_FORMAT_BC5_UNORM:
+			case DXGI_FORMAT_BC5_SNORM:
+			case DXGI_FORMAT_BC6H_TYPELESS:
+			case DXGI_FORMAT_BC6H_UF16:
+			case DXGI_FORMAT_BC6H_SF16:
+			case DXGI_FORMAT_BC7_TYPELESS:
+			case DXGI_FORMAT_BC7_UNORM:
+			case DXGI_FORMAT_BC7_UNORM_SRGB:
+				return 16;
+
+			default:
+				return 0;
+			}
+		}
+
 		void CD3D11Texture::setPitch(DXGI_FORMAT d3dformat)
 		{
-			Pitch = Driver->getBitsPerPixel(d3dformat) * Size.Width;
+			// getBitsPerPixel returns BITS; a pitch is bytes per row. Block-compressed
+			// formats are one pitch per 4-row block, not per pixel row.
+			const u32 blockBytes = getBlockBytes(d3dformat);
+			if (blockBytes)
+				Pitch = ((Size.Width + 3) / 4) * blockBytes;
+			else
+				Pitch = (Driver->getBitsPerPixel(d3dformat) * Size.Width) / 8;
 		}
 
 		bool CD3D11Texture::createTextureBuffer()

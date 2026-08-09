@@ -21,8 +21,13 @@
 #include <algorithm>
 #include "DDSTextureLoader.h"
 #include "irrlicht.h"
+#include "os.h"
 
 typedef irr::u32 uint32;
+
+// These loaders return void, so a validation failure logs the reason, breaks for an
+// attached debugger, then bails leaving the caller's out-params null.
+#define DDS_FAIL(msg) do { irr::os::Printer::log("DDSTextureLoader: " msg, irr::ELL_ERROR); __debugbreak(); return; } while(0)
 
 
 //--------------------------------------------------------------------------------------
@@ -649,7 +654,7 @@ static void FillInitData(
 {
     if (!bitData || !initData)
     {
-        __debugbreak();
+        DDS_FAIL("FillInitData: null bit data");
     }
 
     skipMip = 0;
@@ -694,7 +699,7 @@ static void FillInitData(
 
             if (pSrcBits + (NumBytes*d) > pEndBits)
             {
-                __debugbreak();
+                DDS_FAIL("mip data runs past end of file");
             }
 
             pSrcBits += NumBytes * d;
@@ -719,7 +724,7 @@ static void FillInitData(
 
     if (!index)
     {
-        __debugbreak();
+        DDS_FAIL("no subresources filled");
     }
 }
 
@@ -968,12 +973,12 @@ static void CreateTextureFromDDS(
         arraySize = d3d10ext->arraySize;
         if (arraySize == 0)
         {
-            __debugbreak();
+            DDS_FAIL("DX10 header declares arraySize 0");
         }
 
         if (BitsPerPixel(d3d10ext->dxgiFormat) == 0)
         {
-            __debugbreak();
+            DDS_FAIL("unsupported DXGI format in DX10 header");
         }
 
         format = d3d10ext->dxgiFormat;
@@ -984,7 +989,7 @@ static void CreateTextureFromDDS(
             // D3DX writes 1D textures with a fixed Height of 1.
             if ((header->flags & DDS_HEIGHT) && height != 1)
             {
-                __debugbreak();
+                DDS_FAIL("1D texture with height != 1");
             }
             height = depth = 1;
             break;
@@ -1001,17 +1006,17 @@ static void CreateTextureFromDDS(
         case D3D11_RESOURCE_DIMENSION_TEXTURE3D:
             if (!(header->flags & DDS_HEADER_FLAGS_VOLUME))
             {
-                __debugbreak();
+                DDS_FAIL("3D texture without volume flag");
             }
 
             if (arraySize > 1)
             {
-                __debugbreak();
+                DDS_FAIL("3D texture arrays are not supported");
             }
             break;
 
         default:
-            return __debugbreak();
+            DDS_FAIL("unsupported resource dimension");
         }
 
         resDim = d3d10ext->resourceDimension;
@@ -1022,7 +1027,7 @@ static void CreateTextureFromDDS(
 
         if (format == DXGI_FORMAT_UNKNOWN)
         {
-            return __debugbreak();
+            DDS_FAIL("unrecognised legacy pixel format");
         }
 
         if (header->flags & DDS_HEADER_FLAGS_VOLUME)
@@ -1036,7 +1041,7 @@ static void CreateTextureFromDDS(
                 // We require all six faces to be defined.
                 if ((header->caps2 & DDS_CUBEMAP_ALLFACES) != DDS_CUBEMAP_ALLFACES)
                 {
-                    return __debugbreak();
+                    DDS_FAIL("cubemap is missing faces");
                 }
 
                 arraySize = 6;
@@ -1055,7 +1060,7 @@ static void CreateTextureFromDDS(
     // Bound sizes (For security purposes, we don't trust DDS file metadata larger than the D3D 11.x hardware requirements.)
     if (mipCount > D3D11_REQ_MIP_LEVELS)
     {
-        return __debugbreak();
+        DDS_FAIL("mip count exceeds D3D11 limit");
     }
 
     switch (resDim)
@@ -1064,7 +1069,7 @@ static void CreateTextureFromDDS(
             if ((arraySize > D3D11_REQ_TEXTURE1D_ARRAY_AXIS_DIMENSION) ||
                 (width > D3D11_REQ_TEXTURE1D_U_DIMENSION))
             {
-                return __debugbreak();
+                DDS_FAIL("1D texture exceeds D3D11 limits");
             }
             break;
 
@@ -1076,14 +1081,14 @@ static void CreateTextureFromDDS(
                     (width > D3D11_REQ_TEXTURECUBE_DIMENSION) ||
                     (height > D3D11_REQ_TEXTURECUBE_DIMENSION))
                 {
-                    return __debugbreak();
+                    DDS_FAIL("cubemap exceeds D3D11 limits");
                 }
             }
             else if ((arraySize > D3D11_REQ_TEXTURE2D_ARRAY_AXIS_DIMENSION) ||
                     (width > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION) ||
                     (height > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION))
             {
-                return __debugbreak();
+                DDS_FAIL("2D texture exceeds D3D11 limits");
             }
             break;
 
@@ -1093,7 +1098,7 @@ static void CreateTextureFromDDS(
                 (height > D3D11_REQ_TEXTURE3D_U_V_OR_W_DIMENSION) ||
                 (depth > D3D11_REQ_TEXTURE3D_U_V_OR_W_DIMENSION))
             {
-                return __debugbreak();
+                DDS_FAIL("3D texture exceeds D3D11 limits");
             }
             break;
     }
@@ -1161,19 +1166,19 @@ void CreateDDSTextureFromMemory(
 {
     if (!d3dDevice || !ddsData || (!texture && !textureView))
     {
-        __debugbreak();
+        DDS_FAIL("null device or data");
     }
 
     // Validate DDS file in memory.
     if (ddsDataSize < (sizeof(uint32) + sizeof(DDS_HEADER)))
     {
-        __debugbreak();
+        DDS_FAIL("file too small for a DDS header");
     }
 
     uint32 dwMagicNumber = *(const uint32*)(ddsData);
     if (dwMagicNumber != DDS_MAGIC)
     {
-        __debugbreak();
+        DDS_FAIL("bad magic number");
     }
 
     const DDS_HEADER* header = reinterpret_cast<const DDS_HEADER*>(ddsData + sizeof(uint32));
@@ -1182,7 +1187,7 @@ void CreateDDSTextureFromMemory(
     if (header->size != sizeof(DDS_HEADER) ||
         header->ddspf.size != sizeof(DDS_PIXELFORMAT))
     {
-        __debugbreak();
+        DDS_FAIL("bad header size");
     }
 
     // Check for the DX10 extension.
@@ -1193,7 +1198,7 @@ void CreateDDSTextureFromMemory(
         // Must be long enough for both headers and magic value
         if (ddsDataSize < (sizeof(DDS_HEADER) + sizeof(uint32) + sizeof(DDS_HEADER_DXT10)))
         {
-            __debugbreak();
+            DDS_FAIL("file too small for a DX10 header");
         }
 
         bDXT10Header = true;
