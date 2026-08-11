@@ -47,6 +47,49 @@ namespace irr
 			// constructing something half-working.
 			virtual IVideoDriver* createDeferredContext() override;
 
+			// Same reasoning as getRendererFor() below -- this object's own table is never populated.
+			virtual IVertexDescriptor* getVertexDescriptor(u32 id) const override
+			{
+				return ImmediateDriver->getVertexDescriptor(id);
+			}
+			virtual IVertexDescriptor* getVertexDescriptor(const core::stringc& pName) const override
+			{
+				return ImmediateDriver->getVertexDescriptor(pName);
+			}
+			virtual u32 getVertexDescriptorCount() const override
+			{
+				return ImmediateDriver->getVertexDescriptorCount();
+			}
+			virtual IVertexDescriptor* addVertexDescriptor(const core::stringc& pName) override
+			{
+				return ImmediateDriver->addVertexDescriptor(pName);
+			}
+
+			// Same table as getRendererFor() below -- this object's own count is always 0.
+			virtual u32 getMaterialRendererCount() const override
+			{
+				return ImmediateDriver->getMaterialRendererCount();
+			}
+			virtual IMaterialRenderer* getMaterialRenderer(u32 idx) override
+			{
+				return ImmediateDriver->getMaterialRenderer(idx);
+			}
+			virtual const char* getMaterialRendererName(u32 idx) const override
+			{
+				return ImmediateDriver->getMaterialRendererName(idx);
+			}
+
+			// Registration must land in the SAME table getRendererFor() reads, or a material created
+			// while recording gets an index only valid here and resolves to a different renderer.
+			virtual s32 addMaterialRenderer(IMaterialRenderer* renderer, const char* name = 0) override
+			{
+				return ImmediateDriver->addMaterialRenderer(renderer, name);
+			}
+			virtual IGPUProgrammingServices* getGPUProgrammingServices() override
+			{
+				return ImmediateDriver->getGPUProgrammingServices();
+			}
+
 		protected:
 			// Redirect to the immediate driver's authoritative table
 			// instead of this object's own (never populated) one.

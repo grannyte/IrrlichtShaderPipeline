@@ -124,7 +124,7 @@ namespace irr
 			{
 				CD3D11FixedPipelineRenderer::OnSetMaterial(material);
 				services->setBasicRenderStates(material, lastMaterial, resetAllRenderstates);
-				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(Driver)->getBlendDesc();
+				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(services->getVideoDriver())->getBlendDesc();
 
 				blendDesc.RenderTarget[0].BlendEnable = false;
 				
@@ -142,7 +142,7 @@ namespace irr
 			{
 				CD3D11FixedPipelineRenderer::OnSetMaterial(material);
 				services->setBasicRenderStates(material, lastMaterial, resetAllRenderstates);
-				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(Driver)->getBlendDesc();
+				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(services->getVideoDriver())->getBlendDesc();
 
 				blendDesc.RenderTarget[0].BlendEnable = FALSE;
 				
@@ -160,7 +160,7 @@ namespace irr
 			{
 				CD3D11FixedPipelineRenderer::OnSetMaterial(material);
 				services->setBasicRenderStates(material, lastMaterial, resetAllRenderstates);
-				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(Driver)->getBlendDesc();
+				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(services->getVideoDriver())->getBlendDesc();
 
 				blendDesc.RenderTarget[0].BlendEnable = FALSE;
 				
@@ -178,8 +178,8 @@ namespace irr
 			{
 				CD3D11FixedPipelineRenderer::OnSetMaterial(material);
 				services->setBasicRenderStates(material, lastMaterial, resetAllRenderstates);
-				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(Driver)->getBlendDesc();
-				D3D11_SAMPLER_DESC* samplerDescs = static_cast<CD3D11Driver*>(Driver)->getSamplerDescs();
+				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(services->getVideoDriver())->getBlendDesc();
+				D3D11_SAMPLER_DESC* samplerDescs = static_cast<CD3D11Driver*>(services->getVideoDriver())->getSamplerDescs();
 
 				blendDesc.RenderTarget[0].BlendEnable = FALSE;
 				
@@ -197,7 +197,7 @@ namespace irr
 			{
 				CD3D11FixedPipelineRenderer::OnSetMaterial(material);
 				services->setBasicRenderStates(material, lastMaterial, resetAllRenderstates);
-				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(Driver)->getBlendDesc();
+				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(services->getVideoDriver())->getBlendDesc();
 
 				blendDesc.RenderTarget[0].BlendEnable = FALSE;
 
@@ -225,7 +225,7 @@ namespace irr
 			{
 				CD3D11FixedPipelineRenderer::OnSetMaterial(material);
 				services->setBasicRenderStates(material, lastMaterial, resetAllRenderstates);
-				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(Driver)->getBlendDesc();
+				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(services->getVideoDriver())->getBlendDesc();
 
 				blendDesc.RenderTarget[0].BlendEnable = false;
 
@@ -253,7 +253,7 @@ namespace irr
 			{
 				CD3D11FixedPipelineRenderer::OnSetMaterial(material);
 				services->setBasicRenderStates(material, lastMaterial, resetAllRenderstates);
-				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(Driver)->getBlendDesc();
+				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(services->getVideoDriver())->getBlendDesc();
 
 				blendDesc.RenderTarget[0].BlendEnable = TRUE;
 				blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
@@ -282,7 +282,7 @@ namespace irr
 			{
 				CD3D11FixedPipelineRenderer::OnSetMaterial(material);
 				services->setBasicRenderStates(material, lastMaterial, resetAllRenderstates);
-				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(Driver)->getBlendDesc();
+				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(services->getVideoDriver())->getBlendDesc();
 
 				blendDesc.RenderTarget[0].BlendEnable = TRUE;
 				blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
@@ -312,7 +312,7 @@ namespace irr
 			{
 				CD3D11FixedPipelineRenderer::OnSetMaterial(material);
 				services->setBasicRenderStates(material, lastMaterial, resetAllRenderstates);
-				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(Driver)->getBlendDesc();
+				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(services->getVideoDriver())->getBlendDesc();
 
 				blendDesc.RenderTarget[0].BlendEnable = true;
 				
@@ -337,7 +337,7 @@ namespace irr
 			{
 				CD3D11FixedPipelineRenderer::OnSetMaterial(material);
 				services->setBasicRenderStates(material, lastMaterial, resetAllRenderstates);
-				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(Driver)->getBlendDesc();
+				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(services->getVideoDriver())->getBlendDesc();
 
 				blendDesc.RenderTarget[0].BlendEnable = TRUE;
 				blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
@@ -366,7 +366,7 @@ namespace irr
 			{
 				CD3D11FixedPipelineRenderer::OnSetMaterial(material);
 				services->setBasicRenderStates(material, lastMaterial, resetAllRenderstates);
-				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(Driver)->getBlendDesc();
+				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(services->getVideoDriver())->getBlendDesc();
 
 				blendDesc.RenderTarget[0].BlendEnable = TRUE;
 				blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
@@ -402,7 +402,7 @@ namespace irr
 					services->setBasicRenderStates(material, lastMaterial, resetAllRenderstates);
 				}
 
-				SD3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(Driver)->getBlendDesc();
+				SD3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(services->getVideoDriver())->getBlendDesc();
 				E_BLEND_FACTOR srcFact, dstFact;
 				E_MODULATE_FUNC modulate;
 				u32 alphaSource;

@@ -509,16 +509,19 @@ namespace irr
 			return true;
 		}
 
-		bool CD3D11MaterialRenderer::setConstantBuffer(s32 id, const void* data, E_SHADER_TYPE type)
+		bool CD3D11MaterialRenderer::setConstantBuffer(s32 id, const void* data, E_SHADER_TYPE type, ID3D11DeviceContext* context)
 		{
 			SShaderBuffer* buff = getBuffer(type, id);
 
 			if (!buff)
 				return false;
 
+			if (!context)
+				context = Context;
+
 			D3D11_MAPPED_SUBRESOURCE mappedData;
 
-			HRESULT hr = Context->Map(buff->data, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedData);
+			HRESULT hr = context->Map(buff->data, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedData);
 
 			if (FAILED(hr))
 			{
@@ -528,7 +531,7 @@ namespace irr
 
 			memcpy(mappedData.pData, data, buff->size);
 
-			Context->Unmap(buff->data, 0);
+			context->Unmap(buff->data, 0);
 
 			return false;
 		}
@@ -585,7 +588,14 @@ namespace irr
 
 		bool CD3D11MaterialRenderer::OnRender(IMaterialRendererServices* service, IVertexDescriptor* vtxtype)
 		{
-			if (!Context)
+			// Resolve from `service` (the driver actually drawing, possibly a deferred recording
+			// context), never the members captured at createMaterialRenderers() time -- those are
+			// permanently the immediate context. See ID3D11MaterialRendererServices.
+			ID3D11MaterialRendererServices* d3dService = static_cast<ID3D11MaterialRendererServices*>(service);
+			ID3D11DeviceContext* context = d3dService ? d3dService->getContext() : Context;
+			CD3D11CallBridge* bridge = d3dService ? d3dService->getBridgeCalls() : BridgeCalls;
+
+			if (!context || !bridge)
 				return false;
 
 			//	if(BaseRenderer && (vtxtype == EVT_STANDARD || vtxtype == EVT_2TCOORDS || vtxtype == EVT_TANGENTS))
@@ -596,43 +606,61 @@ namespace irr
 			if (BaseRenderer)
 			{
 				if (shaders[EST_VERTEX_SHADER])
-					shaders[EST_VERTEX_SHADER]->UnMapAll(Context);
+					shaders[EST_VERTEX_SHADER]->UnMapAll(context);
 
 				if (shaders[EST_PIXEL_SHADER])
-					shaders[EST_PIXEL_SHADER]->UnMapAll(Context);
+					shaders[EST_PIXEL_SHADER]->UnMapAll(context);
 
 				if (shaders[EST_GEOMETRY_SHADER])
-					shaders[EST_GEOMETRY_SHADER]->UnMapAll(Context);
+					shaders[EST_GEOMETRY_SHADER]->UnMapAll(context);
 				else if (shaders[EST_STREAM_OUTPUT_SHADER])
-					shaders[EST_STREAM_OUTPUT_SHADER]->UnMapAll(Context);
+					shaders[EST_STREAM_OUTPUT_SHADER]->UnMapAll(context);
 
 				if (shaders[EST_HULL_SHADER])
-					shaders[EST_HULL_SHADER]->UnMapAll(Context);
+					shaders[EST_HULL_SHADER]->UnMapAll(context);
 
 				if (shaders[EST_DOMAIN_SHADER])
-					shaders[EST_DOMAIN_SHADER]->UnMapAll(Context);
+					shaders[EST_DOMAIN_SHADER]->UnMapAll(context);
 
 				if (shaders[EST_COMPUTE_SHADER])
-					shaders[EST_COMPUTE_SHADER]->UnMapAll(Context);
+					shaders[EST_COMPUTE_SHADER]->UnMapAll(context);
 			}
 
-			BridgeCalls->setVertexShader(shaders[EST_VERTEX_SHADER]);
-			BridgeCalls->setPixelShader(shaders[EST_PIXEL_SHADER]);
-			if (shaders[EST_GEOMETRY_SHADER])
-				BridgeCalls->setGeometryShader(shaders[EST_GEOMETRY_SHADER]);
-			else
-				BridgeCalls->setGeometryShader(shaders[EST_STREAM_OUTPUT_SHADER]);
+			// Binding a null VS is what the debug layer reports as DEVICE_DRAW_VERTEX_SHADER_NOT_SET
+			// one draw later -- name the offender here instead, where we still know what it is.
+			if (!shaders[EST_VERTEX_SHADER])
+			{
+				core::stringc msg = "OnRender: NO VERTEX SHADER, vtx=";
+				msg += (vtxtype && vtxtype->getName().size()) ? vtxtype->getName().c_str() : "?";
+				msg += " renderer="; msg += (s32)(size_t)this;
+				msg += " base="; msg += (s32)(BaseRenderer != 0);
+				msg += " cb="; msg += (s32)(CallBack != 0);
+				msg += " ps="; msg += (s32)(shaders[EST_PIXEL_SHADER] != 0);
+				os::Printer::log(msg.c_str(), ELL_ERROR);
+			}
 
-			BridgeCalls->setHullShader(shaders[EST_HULL_SHADER]);
-			BridgeCalls->setDomainShader(shaders[EST_DOMAIN_SHADER]);
-			BridgeCalls->setComputeShader(shaders[EST_COMPUTE_SHADER]);
+			bridge->setVertexShader(shaders[EST_VERTEX_SHADER]);
+			bridge->setPixelShader(shaders[EST_PIXEL_SHADER]);
+			if (shaders[EST_GEOMETRY_SHADER])
+				bridge->setGeometryShader(shaders[EST_GEOMETRY_SHADER]);
+			else
+				bridge->setGeometryShader(shaders[EST_STREAM_OUTPUT_SHADER]);
+
+			bridge->setHullShader(shaders[EST_HULL_SHADER]);
+			bridge->setDomainShader(shaders[EST_DOMAIN_SHADER]);
+			bridge->setComputeShader(shaders[EST_COMPUTE_SHADER]);
 
 			return true;
 		}
 
 		bool CD3D11MaterialRenderer::OnCompute(IMaterialRendererServices* service)
 		{
-			if (!Context)
+			// Same per-call resolution as OnRender above.
+			ID3D11MaterialRendererServices* d3dService = static_cast<ID3D11MaterialRendererServices*>(service);
+			ID3D11DeviceContext* context = d3dService ? d3dService->getContext() : Context;
+			CD3D11CallBridge* bridge = d3dService ? d3dService->getBridgeCalls() : BridgeCalls;
+
+			if (!context || !bridge)
 				return false;
 
 			//	if(BaseRenderer && (vtxtype == EVT_STANDARD || vtxtype == EVT_2TCOORDS || vtxtype == EVT_TANGENTS))
@@ -643,9 +671,9 @@ namespace irr
 			if (BaseRenderer)
 			{
 				if (shaders[EST_COMPUTE_SHADER])
-					shaders[EST_COMPUTE_SHADER]->UnMapAll(Context);
+					shaders[EST_COMPUTE_SHADER]->UnMapAll(context);
 			}
-			BridgeCalls->setComputeShader(shaders[EST_COMPUTE_SHADER]);
+			bridge->setComputeShader(shaders[EST_COMPUTE_SHADER]);
 
 			return true;
 		}

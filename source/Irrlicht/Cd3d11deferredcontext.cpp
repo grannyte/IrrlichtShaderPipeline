@@ -29,6 +29,10 @@ CD3D11DeferredContext::CD3D11DeferredContext(CD3D11Driver* immediate)
 	Device = immediate->Device;
 	Device->AddRef();
 
+	// initDriver()'s swapchain setup (skipped here) is the only other place this gets set; anything
+	// reading it off a deferred context (e.g. CD3D11HardwareBuffer's device pointer) needs it too.
+	ExposedData.D3D11.D3DDev11 = Device;
+
 	HRESULT hr = Device->CreateDeferredContext(0, &Context);
 	if (FAILED(hr))
 	{
@@ -59,6 +63,10 @@ CD3D11DeferredContext::CD3D11DeferredContext(CD3D11Driver* immediate)
 	MaxTextureUnits = immediate->MaxTextureUnits;
 	MaxActiveLights = immediate->MaxActiveLights;
 	AlphaToCoverageSupport = immediate->AlphaToCoverageSupport;
+
+	// The base ctor derived this from Params.WindowSize, which OnResize never updates on this
+	// object -- callers scaling by getScreenSize() (e.g. scissor rects) would drift after a resize.
+	ScreenSize = immediate->getScreenSize();
 
 	// Deliberately NOT called: initDriver(), BuildDriverInternal(),
 	// createMaterialRenderers(). No swapchain, no backbuffer, no adapter
@@ -120,6 +128,11 @@ void CD3D11DeferredContext::execute(IVideoDriver* driver)
 
 	target->getContext()->ExecuteCommandList(commandList, FALSE);
 	commandList->Release();
+
+	// FinishCommandList reset THIS context to default state, and ExecuteCommandList left the target
+	// holding whatever the list ended with -- neither went through a bridge, so both caches now lie.
+	BridgeCalls->invalidateCache();
+	target->getBridgeCalls()->invalidateCache();
 
 	createCompletionQuery();
 	if (CompletionQuery)

@@ -211,9 +211,20 @@ namespace irr
 			void setPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY top);
 			void setInputLayout(IVertexDescriptor* vtxDescriptor, IMaterialRenderer* r);
 
+			//! True if a vertex shader is currently bound. Diagnostic seam: a draw with none is what
+			//! the debug layer reports as DEVICE_DRAW_VERTEX_SHADER_NOT_SET, a call too late to trace.
+			bool hasVertexShader() const { return shaders[EST_VERTEX_SHADER] != 0; }
+
 			ID3D11SamplerState* getSamplerState(u32 idx);
 
 			void setViewPort(const core::rect<s32>& vp);
+
+			//! Drop every cached binding so the next setter re-issues its D3D call. Use after
+			//! FinishCommandList/ExecuteCommandList, which reset real state behind this cache's back.
+			void invalidateCache();
+
+			//! Force depth-stencil/blend/rasterizer/viewport/topology/input-layout back onto the device from this bridge's own cache -- needed after ExecuteCommandList, which changes real state without going through these setters. Deliberately excludes shaders/textures/samplers -- see the .cpp.
+			void forceReapplyAll();
 
 		private:
 			//! Synchronise le cache d'etat avec le device au demarrage (voir le .cpp : sans cela le

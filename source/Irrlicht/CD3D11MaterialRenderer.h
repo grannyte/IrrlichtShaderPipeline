@@ -14,6 +14,7 @@
 #include "IGPUProgrammingServices.h"
 
 #include "IMaterialRenderer.h"
+#include "ID3D11MaterialRendererServices.h"
 
 #include <d3d11.h>
 #include "CD3D11VertexDescriptor.h"
@@ -269,7 +270,8 @@ namespace irr
 			//! \param id: Id of the constant buffer
 			//! \param data: Pointer to a structure that represents the buffer
 			//! \param type: Shader type.
-			virtual bool setConstantBuffer(s32 id, const void* data, E_SHADER_TYPE type);
+			//! \param context: Context to map on; null uses the immediate one captured at construction. Pass the caller's own (see ID3D11MaterialRendererServices) when recording.
+			virtual bool setConstantBuffer(s32 id, const void* data, E_SHADER_TYPE type, ID3D11DeviceContext* context = nullptr);
 
 			virtual bool OnRender(IMaterialRendererServices* service, IVertexDescriptor* vtxtype)_IRR_OVERRIDE_;
 

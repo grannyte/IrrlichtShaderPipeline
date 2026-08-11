@@ -826,6 +826,10 @@ bool CD3D11FixedPipelineRenderer::OnRender(IMaterialRendererServices* service, I
 
 void CD3D11FixedPipelineRenderer::OnSetConstants( IMaterialRendererServices* service, s32 userData )
 {
+	// Read state from the caller, not the immediate driver captured at construction -- a deferred
+	// recording context carries its own transforms/fog/lights. See ID3D11MaterialRendererServices.
+	video::IVideoDriver* driver = service ? service->getVideoDriver() : Driver;
+
 	// set fog
 	SColor fogColor;
 	video::E_FOG_TYPE fogMode;
@@ -835,7 +839,7 @@ void CD3D11FixedPipelineRenderer::OnSetConstants( IMaterialRendererServices* ser
 	bool pixelFog = true;
 	bool rangeFog = true;
 
-	Driver->getFog( fogColor, fogMode, fogStart, fogEnd, fogDensity, pixelFog, rangeFog );
+	driver->getFog( fogColor, fogMode, fogStart, fogEnd, fogDensity, pixelFog, rangeFog );
 
 	cbPerTechnique.enableFog = CurrentMaterial.FogEnable;
 	cbPerTechnique.fogColor = fogColor;
@@ -864,7 +868,7 @@ void CD3D11FixedPipelineRenderer::OnSetConstants( IMaterialRendererServices* ser
 
 	if(CurrentMaterial.Lighting)
 	{
-		const u32 count = Driver->getDynamicLightCount();
+		const u32 count = driver->getDynamicLightCount();
 
 		cbLights.lightCount = count;
 
@@ -873,7 +877,7 @@ void CD3D11FixedPipelineRenderer::OnSetConstants( IMaterialRendererServices* ser
 			for(u32 i = 0; i < count && i < 8; ++i)
 			{
 				SShaderLight l;
-				SLight dl = Driver->getDynamicLight(i);
+				SLight dl = driver->getDynamicLight(i);
 
 				dl.Position.getAs4Values(&l.position.r);
 				l.ambient = dl.AmbientColor;
@@ -887,18 +891,21 @@ void CD3D11FixedPipelineRenderer::OnSetConstants( IMaterialRendererServices* ser
 	}
 
 	// apply transformations
-	core::matrix4 mat = Driver->getTransform( video::ETS_PROJECTION );
+	core::matrix4 mat = driver->getTransform( video::ETS_PROJECTION );
 	cbPerFrame.mProj = mat.getTransposed();
 
-	mat = Driver->getTransform( video::ETS_VIEW );
+	mat = driver->getTransform( video::ETS_VIEW );
 	cbPerFrame.mView = mat.getTransposed();
 
-	mat = Driver->getTransform( video::ETS_WORLD );
+	mat = driver->getTransform( video::ETS_WORLD );
 	cbPerFrame.mWorld = mat.getTransposed();
 
-	setConstantBuffer(cbPerFrameId, &cbPerFrame, EST_VERTEX_SHADER);
-	setConstantBuffer(cbPerTechniqueId, &cbPerTechnique, EST_VERTEX_SHADER);
-	setConstantBuffer(cbLightsId, &cbLights, EST_VERTEX_SHADER);
+	ID3D11MaterialRendererServices* d3dService = static_cast<ID3D11MaterialRendererServices*>(service);
+	ID3D11DeviceContext* context = d3dService ? d3dService->getContext() : nullptr;
+
+	setConstantBuffer(cbPerFrameId, &cbPerFrame, EST_VERTEX_SHADER, context);
+	setConstantBuffer(cbPerTechniqueId, &cbPerTechnique, EST_VERTEX_SHADER, context);
+	setConstantBuffer(cbLightsId, &cbLights, EST_VERTEX_SHADER, context);
 }
 
 void CD3D11FixedPipelineRenderer::OnSetMaterial( const SMaterial& material )

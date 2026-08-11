@@ -703,6 +703,79 @@ namespace irr
 				ViewPort = vp;
 			}
 		}
+
+		void CD3D11CallBridge::invalidateCache()
+		{
+			// Forget everything, so the next setter for each category actually issues its D3D call.
+			// Required after FinishCommandList/ExecuteCommandList, which change the real context
+			// state without going through any setter here -- a cache that still claims those values
+			// makes the next set a no-op and the draw runs with nothing bound.
+			for (int i = 0; i < EST_COUNT; ++i)
+				shaders[i] = NULL;
+
+			memset(&DepthStencilDesc, 0xFF, sizeof(DepthStencilDesc));
+			memset(&BlendDesc, 0xFF, sizeof(BlendDesc));
+			memset(&RasterizerDesc, 0xFF, sizeof(RasterizerDesc));
+			memset(&SamplerDesc, 0xFF, sizeof(SamplerDesc));
+
+			ZeroMemory(CurrentTextures, sizeof(CurrentTextures[0]) * MATERIAL_MAX_TEXTURES);
+			ZeroMemory(SamplerStates, sizeof(SamplerStates[0]) * MATERIAL_MAX_TEXTURES);
+			texturesChanged = 0;
+			samplersChanged = 0;
+
+			InputLayout = NULL;
+			VtxDescriptor = NULL;
+			ShaderByteCode = NULL;
+			ShaderByteCodeSize = 0;
+			Topology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
+			ViewPort = core::rect<s32>(0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF);
+		}
+
+		void CD3D11CallBridge::forceReapplyAll()
+		{
+			if (!Device || !Context)
+				return;
+
+			// Same invalidate-then-set trick as applyInitialStates(), reapplying our own cache instead of defaults.
+			{
+				const SD3D11_DEPTH_STENCIL_DESC depthStencil = DepthStencilDesc;
+				const SD3D11_BLEND_DESC blend = BlendDesc;
+				const SD3D11_RASTERIZER_DESC rasterizer = RasterizerDesc;
+
+				memset(&DepthStencilDesc, 0xFF, sizeof(DepthStencilDesc));
+				memset(&BlendDesc, 0xFF, sizeof(BlendDesc));
+				memset(&RasterizerDesc, 0xFF, sizeof(RasterizerDesc));
+
+				setDepthStencilState(depthStencil);
+				setBlendState(blend);
+				setRasterizerState(rasterizer);
+			}
+
+			// Same trick via an out-of-range sentinel -- ViewPort has no bit pattern guaranteed invalid.
+			{
+				const core::rect<s32> vp = ViewPort;
+				ViewPort = core::rect<s32>(0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF);
+				setViewPort(vp);
+			}
+
+			// Topology -- unconditional, no cached device call to skip re-issuing.
+			Context->IASetPrimitiveTopology(Topology);
+
+			// Re-derive setInputLayout()'s signature (the bytecode pointer) -- no IMaterialRenderer* here.
+			if (ShaderByteCode)
+			{
+				size_t signature = reinterpret_cast<size_t>(ShaderByteCode);
+				core::map<size_t, ID3D11InputLayout*>::Node* layIt = LayoutMap.find(signature);
+				if (layIt)
+					Context->IASetInputLayout(layIt->getValue());
+			}
+
+			// Shaders/textures/samplers deliberately NOT force-reapplied here (tried, reverted --
+			// caused a real device-removal regression, root cause not yet pinned down). Every real
+			// draw already calls setXShader(theShaderItWants) explicitly, and the existing cache
+			// check only wrongly skips when a NEW draw wants the exact same pointer already
+			// cached -- a much narrower, non-crashing gap than what force-reapplying introduced.
+		}
 	}
 }
 

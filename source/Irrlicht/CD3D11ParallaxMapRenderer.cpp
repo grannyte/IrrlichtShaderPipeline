@@ -241,13 +241,16 @@ s32 CD3D11ParallaxMapRenderer::getRenderCapability() const
 
 void CD3D11ParallaxMapRenderer::OnSetConstants( IMaterialRendererServices* services, s32 userData )
 {
+	// Read from the caller, not the captured immediate driver -- see ID3D11MaterialRendererServices.
+	video::IVideoDriver* driver = services ? services->getVideoDriver() : Driver;
+
 	// Set matrices
-	cbPerFrame.g_mWorld = Driver->getTransform(video::ETS_WORLD).getTransposed();
+	cbPerFrame.g_mWorld = driver->getTransform(video::ETS_WORLD).getTransposed();
 
 	core::matrix4 minv;
-	core::matrix4 mat = Driver->getTransform(video::ETS_PROJECTION);
-	mat *=  minv = Driver->getTransform(video::ETS_VIEW);
-	mat *= Driver->getTransform(video::ETS_WORLD);
+	core::matrix4 mat = driver->getTransform(video::ETS_PROJECTION);
+	mat *=  minv = driver->getTransform(video::ETS_VIEW);
+	mat *= driver->getTransform(video::ETS_WORLD);
 	cbPerFrame.g_mWorldViewProj = mat.getTransposed();
 
 	f32 floats[4] = {0,0,0,1};
@@ -258,12 +261,12 @@ void CD3D11ParallaxMapRenderer::OnSetConstants( IMaterialRendererServices* servi
 
 	// here we've got to fetch the fixed function lights from the
 	// driver and set them as constants
-	u32 cnt = Driver->getDynamicLightCount();
+	u32 cnt = driver->getDynamicLightCount();
 
 	SLight light;
 
 	if(cnt >= 1)
-		light = Driver->getDynamicLight(0);	
+		light = driver->getDynamicLight(0);
 	else
 	{
 		light.DiffuseColor.set(0,0,0); // make light dark
@@ -276,7 +279,7 @@ void CD3D11ParallaxMapRenderer::OnSetConstants( IMaterialRendererServices* servi
 	cbPerFrame.g_lightColor1 = light.DiffuseColor;
 
 	if(cnt >= 2)
-		light = Driver->getDynamicLight(1);
+		light = driver->getDynamicLight(1);
 	else
 	{
 		light = SLight();
@@ -296,7 +299,8 @@ void CD3D11ParallaxMapRenderer::OnSetConstants( IMaterialRendererServices* servi
 
 	cbPerFrame.g_scaleFactor = factor;
 
-	setConstantBuffer(cbPerFrameId, &cbPerFrame, EST_VERTEX_SHADER);
+	ID3D11MaterialRendererServices* d3dServices = static_cast<ID3D11MaterialRendererServices*>(services);
+	setConstantBuffer(cbPerFrameId, &cbPerFrame, EST_VERTEX_SHADER, d3dServices ? d3dServices->getContext() : nullptr);
 }
 
 void CD3D11ParallaxMapRenderer::OnSetMaterial( const SMaterial& material )

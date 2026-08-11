@@ -218,22 +218,25 @@ s32 CD3D11NormalMapRenderer::getRenderCapability() const
 
 void CD3D11NormalMapRenderer::OnSetConstants( IMaterialRendererServices* services, s32 userData )
 {
-	// Set matrices
-	cbPerFrame.g_mWorld = Driver->getTransform(video::ETS_WORLD).getTransposed();
+	// Read from the caller, not the captured immediate driver -- see ID3D11MaterialRendererServices.
+	video::IVideoDriver* driver = services ? services->getVideoDriver() : Driver;
 
-	core::matrix4 mat = Driver->getTransform(video::ETS_PROJECTION);
-	mat *= Driver->getTransform(video::ETS_VIEW);
-	mat *= Driver->getTransform(video::ETS_WORLD);
+	// Set matrices
+	cbPerFrame.g_mWorld = driver->getTransform(video::ETS_WORLD).getTransposed();
+
+	core::matrix4 mat = driver->getTransform(video::ETS_PROJECTION);
+	mat *= driver->getTransform(video::ETS_VIEW);
+	mat *= driver->getTransform(video::ETS_WORLD);
 	cbPerFrame.g_mWorldViewProj = mat.getTransposed();
 
 	// here we've got to fetch the fixed function lights from the
 	// driver and set them as constants
-	u32 cnt = Driver->getDynamicLightCount();
+	u32 cnt = driver->getDynamicLightCount();
 
 	SLight light;
 
 	if(cnt >= 1)
-		light = Driver->getDynamicLight(0);	
+		light = driver->getDynamicLight(0);
 	else
 	{
 		light.DiffuseColor.set(0,0,0); // make light dark
@@ -246,7 +249,7 @@ void CD3D11NormalMapRenderer::OnSetConstants( IMaterialRendererServices* service
 	cbPerFrame.g_lightColor1 = light.DiffuseColor;
 
 	if(cnt >= 2)
-		light = Driver->getDynamicLight(1);	
+		light = driver->getDynamicLight(1);
 	else
 	{
 		light = SLight();
@@ -259,7 +262,8 @@ void CD3D11NormalMapRenderer::OnSetConstants( IMaterialRendererServices* service
 	cbPerFrame.g_lightPos2 = light.Position;
 	cbPerFrame.g_lightColor2 = light.DiffuseColor;
 
-	setConstantBuffer(cbPerFrameId, &cbPerFrame, EST_VERTEX_SHADER);
+	ID3D11MaterialRendererServices* d3dServices = static_cast<ID3D11MaterialRendererServices*>(services);
+	setConstantBuffer(cbPerFrameId, &cbPerFrame, EST_VERTEX_SHADER, d3dServices ? d3dServices->getContext() : nullptr);
 }
 
 void CD3D11NormalMapRenderer::OnSetMaterial( const SMaterial& material )

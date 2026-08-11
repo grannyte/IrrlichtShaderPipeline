@@ -415,6 +415,21 @@ namespace irr
 		{
 			HRESULT hr = 0;
 
+			// Report rather than fault in CreateBuffer below: a null Device or a zero/absurd Size
+			// is a caller bug, and the AV it used to produce named this function instead of them.
+			if (!Device || !Size)
+			{
+				core::stringc msg = "createInternalBuffer: bad state, Device=";
+				msg += (s32)(Device != NULL);
+				msg += " Size="; msg += (s32)Size;
+				msg += " Stride="; msg += (s32)Stride;
+				msg += " Type="; msg += (s32)Type;
+				msg += " Mapping="; msg += (s32)Mapping;
+				msg += " initialData="; msg += (s32)(initialData != NULL);
+				os::Printer::log(msg.c_str(), ELL_ERROR);
+				return false;
+			}
+
 			D3D11_BUFFER_DESC desc;
 				desc.ByteWidth = Size;
 				desc.StructureByteStride = 0;   // only set for structured (EHBT_COMPUTE) buffers below

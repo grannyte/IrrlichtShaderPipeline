@@ -972,7 +972,7 @@ namespace irr
 			if (Material.MaterialType < 0)
 				return;
 
-			BridgeCalls->setInputLayout(mb->getVertexDescriptor(), MaterialRenderers[Material.MaterialType].Renderer);
+			BridgeCalls->setInputLayout(mb->getVertexDescriptor(), getRendererFor(Material.MaterialType));
 			// draw
 			renderArray(drawVertexCount, indexBuff->getIndexCount(), mb->getPrimitiveType(), instanceVertexCount);
 
@@ -1017,7 +1017,7 @@ namespace irr
 			BridgeCalls->setRasterizerState(RasterizerDesc);
 
 			// Bind input layout
-			BridgeCalls->setInputLayout(VertexDescriptor[vType], MaterialRenderers[Material.MaterialType].Renderer);
+			BridgeCalls->setInputLayout(getVertexDescriptor(vType), getRendererFor(Material.MaterialType));
 
 			BridgeCalls->setPrimitiveTopology(getTopology(pType));
 
@@ -1409,6 +1409,11 @@ namespace irr
 			// don't forget to set viewport
 			setViewPort(core::rect<s32>(0, 0, size.Width, size.Height));
 
+			// BlendDesc was just overwritten from the targets' own blend settings, so the current
+			// material's blend state is gone. Force the next draw to re-apply it -- otherwise a
+			// material unchanged since the last frame skips OnSetMaterial and draws unblended.
+			ResetRenderStates = true;
+
 			return true;
 		}
 
@@ -1449,6 +1454,16 @@ namespace irr
 			// copy vertices to dynamic buffers, if needed
 
 			BridgeCalls->setPrimitiveTopology(getTopology(pType));
+
+#ifdef _DEBUG
+			// Break HERE rather than reading DEVICE_DRAW_VERTEX_SHADER_NOT_SET from the debug layer
+			// afterwards: this stack still names the caller that set the material up wrong.
+			if (!BridgeCalls->hasVertexShader())
+			{
+				os::Printer::log("renderArray: drawing with NO vertex shader bound", ELL_ERROR);
+				__debugbreak();
+			}
+#endif
 
 			// finally, draw
 			if (!numInstances)
@@ -1958,7 +1973,7 @@ namespace irr
 			setTransform(video::ETS_VIEW, view);
 			//draw2DVertexPrimitiveList(vtx, 2, 0, 1, EVT_STANDARD, scene::EPT_LINES, EIT_16BIT);
 			uploadVertexData(v, 2, 0, 1, EVT_STANDARD, EIT_16BIT);
-			BridgeCalls->setInputLayout(VertexDescriptor[EVT_STANDARD], MaterialRenderers[Material.MaterialType].Renderer);
+			BridgeCalls->setInputLayout(getVertexDescriptor(EVT_STANDARD), getRendererFor(Material.MaterialType));
 
 			renderArray(2, 0, irr::scene::E_PRIMITIVE_TYPE::EPT_LINES);
 		}
@@ -2088,9 +2103,9 @@ namespace irr
 			{
 				// unset last 3d material
 				if (CurrentRenderMode == ERM_3D &&
-					static_cast<u32>(Material.MaterialType) < MaterialRenderers.size())
+					static_cast<u32>(Material.MaterialType) < getMaterialRendererCount())
 				{
-					MaterialRenderers[Material.MaterialType].Renderer->OnUnsetMaterial();
+					getRendererFor(Material.MaterialType)->OnUnsetMaterial();
 					ResetRenderStates = true;
 				}
 
@@ -2133,7 +2148,7 @@ namespace irr
 
 			BridgeCalls->setShaderResources(SamplerDesc, CurrentTexture);
 
-			MaterialRenderers[Material.MaterialType].Renderer->OnRender(this, VertexDescriptor[EVT_STANDARD]);
+			getRendererFor(Material.MaterialType)->OnRender(this, getVertexDescriptor(EVT_STANDARD));
 		}
 
 		//! sets the needed renderstates
@@ -2225,20 +2240,20 @@ namespace irr
 				// unset old material
 				if (CurrentRenderMode == ERM_COMPUTE &&
 					LastMaterial.MaterialType != Material.MaterialType &&
-					LastMaterial.MaterialType >= 0 && LastMaterial.MaterialType < (s32)MaterialRenderers.size())
-					MaterialRenderers[LastMaterial.MaterialType].Renderer->OnUnsetMaterial();
+					LastMaterial.MaterialType >= 0 && LastMaterial.MaterialType < (s32)getMaterialRendererCount())
+					getRendererFor(LastMaterial.MaterialType)->OnUnsetMaterial();
 
 				// set new material.
-				if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
-					MaterialRenderers[Material.MaterialType].Renderer->OnSetMaterial(
+				if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+					getRendererFor(Material.MaterialType)->OnSetMaterial(
 						Material, LastMaterial, ResetRenderStates, this);
 			}
 
 			BridgeCalls->setShaderResources(SamplerDesc, CurrentTexture);
 
 			bool shaderOK = true;
-			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
-				shaderOK = MaterialRenderers[Material.MaterialType].Renderer->OnCompute(this);
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+				shaderOK = getRendererFor(Material.MaterialType)->OnCompute(this);
 
 			ResetRenderStates = false;
 
@@ -2270,12 +2285,12 @@ namespace irr
 				// unset old material
 				if (CurrentRenderMode == ERM_3D &&
 					LastMaterial.MaterialType != Material.MaterialType &&
-					LastMaterial.MaterialType >= 0 && LastMaterial.MaterialType < (s32)MaterialRenderers.size())
-					MaterialRenderers[LastMaterial.MaterialType].Renderer->OnUnsetMaterial();
+					LastMaterial.MaterialType >= 0 && LastMaterial.MaterialType < (s32)getMaterialRendererCount())
+					getRendererFor(LastMaterial.MaterialType)->OnUnsetMaterial();
 
 				// set new material.
-				if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
-					MaterialRenderers[Material.MaterialType].Renderer->OnSetMaterial(
+				if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+					getRendererFor(Material.MaterialType)->OnSetMaterial(
 						Material, LastMaterial, ResetRenderStates, this);
 				LastMaterial = Material;
 			}
@@ -2283,8 +2298,8 @@ namespace irr
 			BridgeCalls->setShaderResources(SamplerDesc, CurrentTexture);
 
 			bool shaderOK = true;
-			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
-				shaderOK = MaterialRenderers[Material.MaterialType].Renderer->OnRender(this, vType);
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+				shaderOK = getRendererFor(Material.MaterialType)->OnRender(this, vType);
 
 			ResetRenderStates = false;
 
@@ -2303,8 +2318,8 @@ namespace irr
 				// unset last 3d material
 				if (CurrentRenderMode == ERM_3D)
 				{
-					if (static_cast<u32>(LastMaterial.MaterialType) < MaterialRenderers.size())
-						MaterialRenderers[LastMaterial.MaterialType].Renderer->OnUnsetMaterial();
+					if (static_cast<u32>(LastMaterial.MaterialType) < getMaterialRendererCount())
+						getRendererFor(LastMaterial.MaterialType)->OnUnsetMaterial();
 				}
 
 				if (!OverrideMaterial2DEnabled)
@@ -2315,7 +2330,7 @@ namespace irr
 					OverrideMaterial2D.ZWriteEnable = false;
 					OverrideMaterial2D.ZBuffer = false;
 
-					MaterialRenderers[OverrideMaterial2D.MaterialType].Renderer->OnSetMaterial(
+					getRendererFor(OverrideMaterial2D.MaterialType)->OnSetMaterial(
 						Material, LastMaterial, true, this);
 					LastMaterial = OverrideMaterial2D;
 					DepthStencilDesc.StencilEnable = FALSE;
@@ -2346,7 +2361,7 @@ namespace irr
 				OverrideMaterial2D.Lighting = false;
 
 				Material = OverrideMaterial2D;
-				MaterialRenderers[OverrideMaterial2D.MaterialType].Renderer->OnSetMaterial(
+				getRendererFor(OverrideMaterial2D.MaterialType)->OnSetMaterial(
 					Material, LastMaterial, false, this);
 				LastMaterial = OverrideMaterial2D;
 			}
@@ -2374,7 +2389,7 @@ namespace irr
 			}
 
 			BridgeCalls->setShaderResources(SamplerDesc, CurrentTexture);
-			MaterialRenderers[OverrideMaterial2D.MaterialType].Renderer->OnRender(this, VertexDescriptor[video::EVT_STANDARD]);
+			getRendererFor(OverrideMaterial2D.MaterialType)->OnRender(this, getVertexDescriptor(video::EVT_STANDARD));
 			DepthStencilDesc.DepthEnable = FALSE;
 			DepthStencilDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
 
@@ -2418,7 +2433,7 @@ namespace irr
 			DepthStencilDesc.DepthFunc = getDepthFunction((E_COMPARISON_FUNC)material.ZBuffer);
 
 			// zwrite
-			if (material.ZWriteEnable && (AllowZWriteOnTransparent || (!material.isTransparent() && !MaterialRenderers[material.MaterialType].Renderer->isTransparent())))
+			if (material.ZWriteEnable && (AllowZWriteOnTransparent || (!material.isTransparent() && !getRendererFor(material.MaterialType)->isTransparent())))
 			{
 				DepthStencilDesc.DepthWriteMask = material.ZWriteEnable ? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO;
 			}
@@ -3596,9 +3611,9 @@ namespace irr
 		//! Get a vertex shader constant index.
 		s32 CD3D11Driver::getVertexShaderConstantID(const c8* name)
 		{
-			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
 			{
-				CD3D11FixedPipelineRenderer* r = (CD3D11FixedPipelineRenderer*)MaterialRenderers[Material.MaterialType].Renderer;
+				CD3D11FixedPipelineRenderer* r = (CD3D11FixedPipelineRenderer*)getRendererFor(Material.MaterialType);
 				return r->getVariableID(name, EST_VERTEX_SHADER);
 			}
 
@@ -3607,9 +3622,9 @@ namespace irr
 		//! Get a pixel shader constant index.
 		s32 CD3D11Driver::getPixelShaderConstantID(const c8* name)
 		{
-			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
 			{
-				CD3D11FixedPipelineRenderer* r = (CD3D11FixedPipelineRenderer*)MaterialRenderers[Material.MaterialType].Renderer;
+				CD3D11FixedPipelineRenderer* r = (CD3D11FixedPipelineRenderer*)getRendererFor(Material.MaterialType);
 				return r->getVariableID(name, EST_PIXEL_SHADER);
 			}
 
@@ -3617,9 +3632,9 @@ namespace irr
 		}
 		s32 CD3D11Driver::getGeometryShaderConstantID(const c8* name)
 		{
-			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
 			{
-				CD3D11FixedPipelineRenderer* r = (CD3D11FixedPipelineRenderer*)MaterialRenderers[Material.MaterialType].Renderer;
+				CD3D11FixedPipelineRenderer* r = (CD3D11FixedPipelineRenderer*)getRendererFor(Material.MaterialType);
 				return r->getVariableID(name, EST_GEOMETRY_SHADER);
 			}
 
@@ -3627,9 +3642,9 @@ namespace irr
 		}
 		s32 CD3D11Driver::getHullShaderConstantID(const c8* name)
 		{
-			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
 			{
-				CD3D11FixedPipelineRenderer* r = (CD3D11FixedPipelineRenderer*)MaterialRenderers[Material.MaterialType].Renderer;
+				CD3D11FixedPipelineRenderer* r = (CD3D11FixedPipelineRenderer*)getRendererFor(Material.MaterialType);
 				return r->getVariableID(name, EST_HULL_SHADER);
 			}
 
@@ -3637,9 +3652,9 @@ namespace irr
 		}
 		s32 CD3D11Driver::getDomainShaderConstantID(const c8* name)
 		{
-			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
 			{
-				CD3D11FixedPipelineRenderer* r = (CD3D11FixedPipelineRenderer*)MaterialRenderers[Material.MaterialType].Renderer;
+				CD3D11FixedPipelineRenderer* r = (CD3D11FixedPipelineRenderer*)getRendererFor(Material.MaterialType);
 				return r->getVariableID(name, EST_DOMAIN_SHADER);
 			}
 
@@ -3647,9 +3662,9 @@ namespace irr
 		}
 		s32 CD3D11Driver::getComputeShaderConstantID(const c8* name)
 		{
-			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
 			{
-				CD3D11FixedPipelineRenderer* r = (CD3D11FixedPipelineRenderer*)MaterialRenderers[Material.MaterialType].Renderer;
+				CD3D11FixedPipelineRenderer* r = (CD3D11FixedPipelineRenderer*)getRendererFor(Material.MaterialType);
 				return r->getVariableID(name, EST_COMPUTE_SHADER);
 			}
 			return -1;
@@ -3680,9 +3695,9 @@ namespace irr
 
 		bool CD3D11Driver::setVertexShaderConstant(s32 index, const f32* floats, int count)
 		{
-			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
 			{
-				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)MaterialRenderers[Material.MaterialType].Renderer;
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
 				return r->setVariable(index, floats, count, EST_VERTEX_SHADER);
 			}
 
@@ -3691,9 +3706,9 @@ namespace irr
 
 		bool CD3D11Driver::setPixelShaderConstant(s32 index, const f32* floats, int count)
 		{
-			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
 			{
-				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)MaterialRenderers[Material.MaterialType].Renderer;
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
 				return r->setVariable(index, floats, count, EST_PIXEL_SHADER);
 			}
 
@@ -3702,9 +3717,9 @@ namespace irr
 
 		bool CD3D11Driver::setGeometryShaderConstant(s32 index, const f32* floats, int count)
 		{
-			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
 			{
-				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)MaterialRenderers[Material.MaterialType].Renderer;
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
 				return r->setVariable(index, floats, count, EST_GEOMETRY_SHADER);
 			}
 
@@ -3713,9 +3728,9 @@ namespace irr
 
 		bool CD3D11Driver::setHullShaderConstant(s32 index, const f32* floats, int count)
 		{
-			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
 			{
-				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)MaterialRenderers[Material.MaterialType].Renderer;
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
 				return r->setVariable(index, floats, count, EST_HULL_SHADER);
 			}
 
@@ -3723,9 +3738,9 @@ namespace irr
 		}
 		bool CD3D11Driver::setDomainShaderConstant(s32 index, const f32* floats, int count)
 		{
-			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
 			{
-				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)MaterialRenderers[Material.MaterialType].Renderer;
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
 				return r->setVariable(index, floats, count, EST_DOMAIN_SHADER);
 			}
 
@@ -3733,9 +3748,9 @@ namespace irr
 		}
 		bool CD3D11Driver::setComputeShaderConstant(s32 index, const f32* floats, int count)
 		{
-			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
 			{
-				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)MaterialRenderers[Material.MaterialType].Renderer;
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
 				return r->setVariable(index, floats, count, EST_COMPUTE_SHADER);
 			}
 			return false;
@@ -3743,9 +3758,9 @@ namespace irr
 
 		bool CD3D11Driver::setVertexShaderConstant(s32 index, const s32* ints, int count)
 		{
-			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
 			{
-				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)MaterialRenderers[Material.MaterialType].Renderer;
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
 				return r->setVariable(index, ints, count, EST_VERTEX_SHADER);
 			}
 
@@ -3754,9 +3769,9 @@ namespace irr
 		//! Int interface for the above.
 		bool CD3D11Driver::setPixelShaderConstant(s32 index, const s32* ints, int count)
 		{
-			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)MaterialRenderers.size())
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
 			{
-				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)MaterialRenderers[Material.MaterialType].Renderer;
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
 				return r->setVariable(index, ints, count, EST_PIXEL_SHADER);
 			}
 
@@ -3961,6 +3976,9 @@ namespace irr
 			CD3D11Driver* target = driver ? static_cast<CD3D11Driver*>(driver) : this;
 			target->Context->ExecuteCommandList(commandList, FALSE);
 			commandList->Release();
+
+			// ExecuteCommandList changes target's real state without going through target's own cache.
+			target->getBridgeCalls()->invalidateCache();
 
 			createCompletionQuery();
 			if (CompletionQuery)
