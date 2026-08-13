@@ -1046,6 +1046,54 @@ void CCommandBufferDriver::dispatchComputeShader(const core::vector3d<u32>& grou
 		});
 }
 
+void CCommandBufferDriver::bindComputeBuffer(u32 slot, scene::IComputeBuffer* buffer, E_HARDWARE_BUFFER_TYPE binding)
+{
+	std::lock_guard<std::mutex> lock(QueueMutex);
+	deferedcalls.push([slot, buffer, binding](IVideoDriver* driver) {
+		driver->bindComputeBuffer(slot, buffer, binding);
+		});
+}
+
+void CCommandBufferDriver::bindComputeTexture(u32 slot, ITexture* texture, bool asUAV)
+{
+	std::lock_guard<std::mutex> lock(QueueMutex);
+	deferedcalls.push([slot, texture, asUAV](IVideoDriver* driver) {
+		driver->bindComputeTexture(slot, texture, asUAV);
+		});
+}
+
+void CCommandBufferDriver::dispatchComputeShaderBound(const core::vector3d<u32>& groupCount)
+{
+	std::lock_guard<std::mutex> lock(QueueMutex);
+	deferedcalls.push([groupCount](IVideoDriver* driver) {
+		driver->dispatchComputeShaderBound(groupCount);
+		});
+}
+
+void CCommandBufferDriver::unbindComputeResources()
+{
+	std::lock_guard<std::mutex> lock(QueueMutex);
+	deferedcalls.push([](IVideoDriver* driver) {
+		driver->unbindComputeResources();
+		});
+}
+
+void CCommandBufferDriver::computeBarrier(scene::IComputeBuffer* buffer)
+{
+	std::lock_guard<std::mutex> lock(QueueMutex);
+	deferedcalls.push([buffer](IVideoDriver* driver) {
+		driver->computeBarrier(buffer);
+		});
+}
+
+void CCommandBufferDriver::computeBarrierAll()
+{
+	std::lock_guard<std::mutex> lock(QueueMutex);
+	deferedcalls.push([](IVideoDriver* driver) {
+		driver->computeBarrierAll();
+		});
+}
+
 // --- Newly added: methods only defaulted in CNullDriver, not CNullDriverCommon ---
 
 void CCommandBufferDriver::batchDraw2DRectangles(const irr::core::array<core::rect<s32>>& pos,

@@ -45,6 +45,8 @@ namespace irr
 			if (Device)
 			{
 				Device->AddRef();
+				// Stays the IMMEDIATE context: lock() can Map for READ, which is only legal there.
+				// Uploads pick their own context -- see copyFromMemory().
 				Device->GetImmediateContext(&Context);
 			}
 
@@ -69,6 +71,8 @@ namespace irr
 			if (Device)
 			{
 				Device->AddRef();
+				// Stays the IMMEDIATE context: lock() can Map for READ, which is only legal there.
+				// Uploads pick their own context -- see copyFromMemory().
 				Device->GetImmediateContext(&Context);
 			}
 
@@ -97,6 +101,8 @@ namespace irr
 			if (Device)
 			{
 				Device->AddRef();
+				// Stays the IMMEDIATE context: lock() can Map for READ, which is only legal there.
+				// Uploads pick their own context -- see copyFromMemory().
 				Device->GetImmediateContext(&Context);
 			}
 
@@ -115,7 +121,7 @@ namespace irr
 		}
 
 		CD3D11HardwareBuffer::CD3D11HardwareBuffer(scene::IComputeBuffer* computeBuffer, CD3D11Driver* driver) :
-			IHardwareBuffer(scene::EHM_NEVER, 0, 0, EHBT_COMPUTE, EDT_DIRECT3D11), Device(driver->getExposedVideoData().D3D11.D3DDev11), Context(NULL),
+			IHardwareBuffer(scene::EHM_NEVER, computeBuffer ? computeBuffer->getBufferFlags() : 0, 0, EHBT_COMPUTE, EDT_DIRECT3D11), Device(driver->getExposedVideoData().D3D11.D3DDev11), Context(NULL),
 			Buffer(NULL), UAView(NULL), SRView(NULL), Driver(driver),
 			LastMapDirection((D3D11_MAP)0),  LinkedBuffer(0)
 		{
@@ -126,6 +132,8 @@ namespace irr
 			if (Device)
 			{
 				Device->AddRef();
+				// Stays the IMMEDIATE context: lock() can Map for READ, which is only legal there.
+				// Uploads pick their own context -- see copyFromMemory().
 				Device->GetImmediateContext(&Context);
 			}
 
@@ -311,6 +319,13 @@ namespace irr
 		//! Copy data from system memory
 		void CD3D11HardwareBuffer::copyFromMemory(const void* sysData, u32 offset, u32 length)
 		{
+			// Uploads on the creating driver's context -- the recording context while recording.
+			// Both branches below are legal there (UpdateSubresource always; Map only because this
+			// is WRITE_DISCARD on a non-static, i.e. dynamic, buffer).
+			ID3D11DeviceContext* uploadContext = Driver ? Driver->getContext() : Context;
+			if (!uploadContext)
+				uploadContext = Context;
+
 			if (Buffer && Mapping == scene::EHM_DYNAMIC)
 			{
 				D3D11_BOX box;
@@ -320,19 +335,19 @@ namespace irr
 				box.right = length;
 				box.bottom = 1;
 				box.back = 1;
-				Context->UpdateSubresource(Buffer, 0, &box, sysData, 0, 0);
+				uploadContext->UpdateSubresource(Buffer, 0, &box, sysData, 0, 0);
 			}
 			else if (Buffer && Mapping != scene::EHM_STATIC)
 			{
 				D3D11_MAPPED_SUBRESOURCE mappedData;
-				HRESULT hr = Context->Map(Buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedData);
+				HRESULT hr = uploadContext->Map(Buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedData);
 				if (FAILED(hr))
 				{
 					os::Printer::log("Error Could not map dynamic buffr", ELL_ERROR);
 					return;
 				}
 				memcpy(mappedData.pData, sysData, length);
-				Context->Unmap(Buffer, 0);
+				uploadContext->Unmap(Buffer, 0);
 			}
 			else
 			{
@@ -476,6 +491,16 @@ namespace irr
 					desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
 					desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 					desc.StructureByteStride = Stride;
+					// An args buffer for DispatchIndirect is raw, not structured - those two misc
+					// flags are mutually exclusive. ALLOW_RAW_VIEWS is required as well, or the
+					// raw UAV built below fails to create on every such buffer.
+					if (Flags & EHBF_DRAW_INDIRECT_ARGS)
+					{
+						desc.MiscFlags = D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS
+									   | D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
+						desc.StructureByteStride = 0;
+						desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+					}
 					break;
 			case EHBT_SHADER_RESOURCE:
 				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
@@ -544,7 +569,19 @@ namespace irr
 				UAVDesc.Buffer.FirstElement = 0;
 				UAVDesc.Buffer.Flags = 0;
 
-				if (Driver->queryFeature(EVDF_COMPUTING_SHADER_5_0))
+				// Only an APPEND/COUNTER view owns a hidden counter, which is what
+				// copyStructureCount() reads to feed an indirect dispatch.
+				if (Flags & (EHBF_COMPUTE_APPEND | EHBF_COMPUTE_CONSUME))
+					UAVDesc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_APPEND;
+
+				if (Flags & EHBF_DRAW_INDIRECT_ARGS)
+				{
+					// Raw args buffer: no structure stride to divide by.
+					UAVDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+					UAVDesc.Buffer.Flags |= D3D11_BUFFER_UAV_FLAG_RAW;
+					UAVDesc.Buffer.NumElements = desc.ByteWidth / 4;
+				}
+				else if (Driver->queryFeature(EVDF_COMPUTING_SHADER_5_0))
 				{
 					UAVDesc.Format = DXGI_FORMAT_UNKNOWN;
 					UAVDesc.Buffer.NumElements = desc.ByteWidth / desc.StructureByteStride;	// size in floats
@@ -562,6 +599,13 @@ namespace irr
 					return false;
 				}
 
+				// An args buffer has no SRV bind flag and no structure stride, so stop here
+				// rather than falling into the divide-by-stride below.
+				if (Flags & EHBF_DRAW_INDIRECT_ARGS)
+					return true;
+
+				// Deliberate fallthrough: a compute buffer also gets an SRV, so it can be bound
+				// read-only to a later dispatch. bindComputeBuffer() relies on this.
 			}
 			case EHBT_SHADER_RESOURCE:
 			{

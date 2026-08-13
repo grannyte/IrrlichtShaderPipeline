@@ -7,6 +7,7 @@
 
 #include "SMaterial.h"
 #include "S3DVertex.h"
+#include "EShaderTypes.h"
 
 namespace irr
 {
@@ -95,14 +96,55 @@ namespace irr
 			//! Sets a constant for the geometry shader based on a name.
 			virtual bool setGeometryShaderConstant(s32 index, const f32* floats, int count) { return false; };
 
+			//! Int interface for the above.
+			virtual bool setGeometryShaderConstant(s32 index, const s32* ints, int count) { return false; };
+
 			//! Sets a constant for the hull shader based on a name.
 			virtual bool setHullShaderConstant(s32 index, const f32* floats, int count) { return false; };
+
+			//! Int interface for the above.
+			virtual bool setHullShaderConstant(s32 index, const s32* ints, int count) { return false; };
 
 			//! Sets a constant for the domain shader based on a name.
 			virtual bool setDomainShaderConstant(s32 index, const f32* floats, int count) { return false; };
 
+			//! Int interface for the above.
+			virtual bool setDomainShaderConstant(s32 index, const s32* ints, int count) { return false; };
+
 			//! Sets a constant for the compute shader based on a name.
 			virtual bool setComputeShaderConstant(s32 index, const f32* floats, int count) { return false; };
+
+			//! Int interface for the above.
+			virtual bool setComputeShaderConstant(s32 index, const s32* ints, int count) { return false; };
+
+
+
+			//! Every scalar type a constant buffer can hold, for every stage. The limit is the
+			//! shader model, not the API: f64 needs the doubles feature, 64-bit ints need SM6.0.
+			virtual bool setVertexShaderConstant(s32 index, const u32* uints, int count) { return false; };
+			virtual bool setVertexShaderConstant(s32 index, const f64* doubles, int count) { return false; };
+			virtual bool setVertexShaderConstant(s32 index, const s64* longs, int count) { return false; };
+			virtual bool setVertexShaderConstant(s32 index, const u64* ulongs, int count) { return false; };
+			virtual bool setPixelShaderConstant(s32 index, const u32* uints, int count) { return false; };
+			virtual bool setPixelShaderConstant(s32 index, const f64* doubles, int count) { return false; };
+			virtual bool setPixelShaderConstant(s32 index, const s64* longs, int count) { return false; };
+			virtual bool setPixelShaderConstant(s32 index, const u64* ulongs, int count) { return false; };
+			virtual bool setGeometryShaderConstant(s32 index, const u32* uints, int count) { return false; };
+			virtual bool setGeometryShaderConstant(s32 index, const f64* doubles, int count) { return false; };
+			virtual bool setGeometryShaderConstant(s32 index, const s64* longs, int count) { return false; };
+			virtual bool setGeometryShaderConstant(s32 index, const u64* ulongs, int count) { return false; };
+			virtual bool setHullShaderConstant(s32 index, const u32* uints, int count) { return false; };
+			virtual bool setHullShaderConstant(s32 index, const f64* doubles, int count) { return false; };
+			virtual bool setHullShaderConstant(s32 index, const s64* longs, int count) { return false; };
+			virtual bool setHullShaderConstant(s32 index, const u64* ulongs, int count) { return false; };
+			virtual bool setDomainShaderConstant(s32 index, const u32* uints, int count) { return false; };
+			virtual bool setDomainShaderConstant(s32 index, const f64* doubles, int count) { return false; };
+			virtual bool setDomainShaderConstant(s32 index, const s64* longs, int count) { return false; };
+			virtual bool setDomainShaderConstant(s32 index, const u64* ulongs, int count) { return false; };
+			virtual bool setComputeShaderConstant(s32 index, const u32* uints, int count) { return false; };
+			virtual bool setComputeShaderConstant(s32 index, const f64* doubles, int count) { return false; };
+			virtual bool setComputeShaderConstant(s32 index, const s64* longs, int count) { return false; };
+			virtual bool setComputeShaderConstant(s32 index, const u64* ulongs, int count) { return false; };
 
 			//! Return an index constant for the pixel shader based on a name.
 			virtual s32 getPixelShaderConstantID(const c8* name) = 0;
@@ -178,6 +220,22 @@ namespace irr
 			_IRR_DEPRECATED_ bool setComputeShaderConstant(const c8* name, const f32* floats, int count)
 			{
 				return setComputeShaderConstant(getComputeShaderConstantID(name), floats, count);
+			}
+			_IRR_DEPRECATED_ bool setComputeShaderConstant(const c8* name, const s32* ints, int count)
+			{
+				return setComputeShaderConstant(getComputeShaderConstantID(name), ints, count);
+			}
+			_IRR_DEPRECATED_ bool setGeometryShaderConstant(const c8* name, const s32* ints, int count)
+			{
+				return setGeometryShaderConstant(getGeometryShaderConstantID(name), ints, count);
+			}
+			_IRR_DEPRECATED_ bool setHullShaderConstant(const c8* name, const s32* ints, int count)
+			{
+				return setHullShaderConstant(getHullShaderConstantID(name), ints, count);
+			}
+			_IRR_DEPRECATED_ bool setDomainShaderConstant(const c8* name, const s32* ints, int count)
+			{
+				return setDomainShaderConstant(getDomainShaderConstantID(name), ints, count);
 			}
 			//! Get pointer to the IVideoDriver interface
 			/** \return Pointer to the IVideoDriver interface */

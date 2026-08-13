@@ -1104,6 +1104,60 @@ namespace irr
 			virtual void dispatchComputeShaderToTexture(const core::vector3d<u32>& groupCount,
 				scene::IComputeBuffer* Src, ITexture* Dst) {};
 
+			//! Max slots the multi-bind compute path below accepts. Sized from the Bullet3 GPU
+			//! pipeline's worst kernel (17 buffers: 12 read + 9 written).
+			enum
+			{
+				EMCS_MAX_COMPUTE_SRV_SLOTS = 16,
+				EMCS_MAX_COMPUTE_UAV_SLOTS = 16
+			};
+
+			//! Bind a compute buffer to a shader slot for the next dispatchComputeShaderBound().
+			/** Bindings persist until unbindComputeResources(); a null buffer clears the slot.
+			* \param slot Register index (t# for EHBT_SHADER_RESOURCE, u# for EHBT_COMPUTE)
+			* \param buffer Buffer to bind, or 0 to clear the slot
+			* \param binding EHBT_SHADER_RESOURCE for a read-only SRV, EHBT_COMPUTE for a UAV
+			*/
+			virtual void bindComputeBuffer(u32 slot, scene::IComputeBuffer* buffer,
+				E_HARDWARE_BUFFER_TYPE binding) {};
+
+			//! Bind a texture to a compute shader slot. asUAV requires an addUAVTexture() texture.
+			virtual void bindComputeTexture(u32 slot, ITexture* texture, bool asUAV) {};
+
+			//! Dispatch using whatever bindComputeBuffer()/bindComputeTexture() last bound.
+			virtual void dispatchComputeShaderBound(const core::vector3d<u32>& groupCount) {};
+
+			//! Clear every compute binding. Must be called before the slots are reused for
+			//! a different resource set, and before any draw call.
+			virtual void unbindComputeResources() {};
+
+			//! Make a dispatch's writes to buffer visible to the next dispatch that reads it.
+			/** D3D11 issues a UAV barrier; D3D12 a resource-state transition - not the same
+			* primitive, which is why chaining dispatches must go through this and not raw calls. */
+			virtual void computeBarrier(scene::IComputeBuffer* buffer) {};
+
+			//! computeBarrier() across every currently bound compute resource.
+			virtual void computeBarrierAll() {};
+
+			//! Dispatch with the group counts read from a buffer the GPU itself wrote.
+			/** Avoids a readback stall when the work size is only known GPU-side (e.g. a
+			* broadphase pair count). argBuffer needs EHBF_DRAW_INDIRECT_ARGS, and the 12 bytes at
+			* byteOffset are three u32 group counts.
+			*/
+			virtual void dispatchComputeShaderIndirect(scene::IComputeBuffer* argBuffer, u32 byteOffset) {};
+
+			//! Copy an append/consume buffer's hidden UAV counter into dst.
+			/** This is the counter maintained by Append()/Consume(), NOT
+			* IComputeBuffer::getStructureCount(), which is the CPU-side element count and knows
+			* nothing about what the GPU appended. Feeds dispatchComputeShaderIndirect() without a
+			* readback. appendBuffer must have been created with EHBF_COMPUTE_APPEND/CONSUME.
+			*/
+			virtual void copyStructureCount(scene::IComputeBuffer* dst, u32 dstByteOffset,
+				scene::IComputeBuffer* appendBuffer) {};
+
+			//! Reset an append/consume buffer's hidden counter. Applied on the next bind.
+			virtual void resetStructureCount(scene::IComputeBuffer* appendBuffer, u32 value = 0) {};
+
 
 			//! Draws normals of a mesh buffer
 			/** \param mb Buffer to draw the normals of

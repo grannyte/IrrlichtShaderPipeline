@@ -63,7 +63,7 @@ class IHardwareBuffer : public std::enable_shared_from_this<IHardwareBuffer>
 {
 public:
 	IHardwareBuffer(const scene::E_HARDWARE_MAPPING mapping, const u32 flags, const u32 size, const E_HARDWARE_BUFFER_TYPE type, const E_DRIVER_TYPE driverType) :
-		Mapping(mapping), Flags(flags), Size(size), Type(type), DriverType(driverType), RequiredUpdate(true)
+		Mapping(mapping), Flags(flags), Size(size), Stride(0), Type(type), DriverType(driverType), RequiredUpdate(true)
 	{
 	}
 

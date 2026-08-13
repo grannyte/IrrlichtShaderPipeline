@@ -6141,6 +6141,31 @@ namespace irr
 			//! SD3D12UserShaderVariable::TransposeOnSet) -- meme regle que
 			//! CD3D11MaterialRenderer::setVariable(), dont dependent tous les shaders du moteur.
 			//! Factorise les six setters (VS/PS/GS/HS/DS/CS), qui n'avaient que ce corps en commun.
+			//! Width-aware sibling of writeUserShaderConstant: the typed one assumes 4-byte elements,
+			//! so a 64-bit type set through it would copy only half its bytes.
+			bool writeUserShaderConstantRaw(std::vector<SD3D12UserShaderCBuffer>& buffers,
+				const std::vector<SD3D12UserShaderVariable>& vars, s32 index, const void* data, u32 byteCount)
+			{
+				if (!data || byteCount == 0)
+					return false;
+				if (index < 0 || static_cast<size_t>(index) >= vars.size())
+					return false;
+				const SD3D12UserShaderVariable& var = vars[index];
+				if (var.Buffer < 0 || static_cast<size_t>(var.Buffer) >= buffers.size())
+					return false;
+				std::vector<u8>& scratch = buffers[var.Buffer].Scratch;
+				if (var.Offset >= scratch.size())
+					return false;
+
+				size_t bytes = byteCount;
+				const size_t avail = scratch.size() - var.Offset;
+				if (bytes > avail)
+					bytes = avail;
+
+				memcpy(scratch.data() + var.Offset, data, bytes);
+				return true;
+			}
+
 			bool writeUserShaderConstant(std::vector<SD3D12UserShaderCBuffer>& buffers,
 				const std::vector<SD3D12UserShaderVariable>& vars, s32 index, const f32* floats, int count)
 			{
@@ -6257,6 +6282,266 @@ namespace irr
 			if (!renderer)
 				return false;
 			return writeUserShaderConstant(renderer->CSBuffers, renderer->CSVariables, index, floats, count);
+		}
+
+		bool CD3D12Driver::setVertexShaderConstant(s32 index, const u32* uints, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->VSBuffers, renderer->VSVariables, index, uints, (u32)(count * sizeof(u32)));
+		}
+
+		bool CD3D12Driver::setVertexShaderConstant(s32 index, const f64* doubles, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->VSBuffers, renderer->VSVariables, index, doubles, (u32)(count * sizeof(f64)));
+		}
+
+		bool CD3D12Driver::setVertexShaderConstant(s32 index, const s64* longs, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->VSBuffers, renderer->VSVariables, index, longs, (u32)(count * sizeof(s64)));
+		}
+
+		bool CD3D12Driver::setVertexShaderConstant(s32 index, const u64* ulongs, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->VSBuffers, renderer->VSVariables, index, ulongs, (u32)(count * sizeof(u64)));
+		}
+
+		bool CD3D12Driver::setPixelShaderConstant(s32 index, const u32* uints, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->PSBuffers, renderer->PSVariables, index, uints, (u32)(count * sizeof(u32)));
+		}
+
+		bool CD3D12Driver::setPixelShaderConstant(s32 index, const f64* doubles, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->PSBuffers, renderer->PSVariables, index, doubles, (u32)(count * sizeof(f64)));
+		}
+
+		bool CD3D12Driver::setPixelShaderConstant(s32 index, const s64* longs, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->PSBuffers, renderer->PSVariables, index, longs, (u32)(count * sizeof(s64)));
+		}
+
+		bool CD3D12Driver::setPixelShaderConstant(s32 index, const u64* ulongs, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->PSBuffers, renderer->PSVariables, index, ulongs, (u32)(count * sizeof(u64)));
+		}
+
+		bool CD3D12Driver::setGeometryShaderConstant(s32 index, const u32* uints, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->GSBuffers, renderer->GSVariables, index, uints, (u32)(count * sizeof(u32)));
+		}
+
+		bool CD3D12Driver::setGeometryShaderConstant(s32 index, const f64* doubles, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->GSBuffers, renderer->GSVariables, index, doubles, (u32)(count * sizeof(f64)));
+		}
+
+		bool CD3D12Driver::setGeometryShaderConstant(s32 index, const s64* longs, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->GSBuffers, renderer->GSVariables, index, longs, (u32)(count * sizeof(s64)));
+		}
+
+		bool CD3D12Driver::setGeometryShaderConstant(s32 index, const u64* ulongs, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->GSBuffers, renderer->GSVariables, index, ulongs, (u32)(count * sizeof(u64)));
+		}
+
+		bool CD3D12Driver::setHullShaderConstant(s32 index, const u32* uints, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->HSBuffers, renderer->HSVariables, index, uints, (u32)(count * sizeof(u32)));
+		}
+
+		bool CD3D12Driver::setHullShaderConstant(s32 index, const f64* doubles, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->HSBuffers, renderer->HSVariables, index, doubles, (u32)(count * sizeof(f64)));
+		}
+
+		bool CD3D12Driver::setHullShaderConstant(s32 index, const s64* longs, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->HSBuffers, renderer->HSVariables, index, longs, (u32)(count * sizeof(s64)));
+		}
+
+		bool CD3D12Driver::setHullShaderConstant(s32 index, const u64* ulongs, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->HSBuffers, renderer->HSVariables, index, ulongs, (u32)(count * sizeof(u64)));
+		}
+
+		bool CD3D12Driver::setDomainShaderConstant(s32 index, const u32* uints, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->DSBuffers, renderer->DSVariables, index, uints, (u32)(count * sizeof(u32)));
+		}
+
+		bool CD3D12Driver::setDomainShaderConstant(s32 index, const f64* doubles, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->DSBuffers, renderer->DSVariables, index, doubles, (u32)(count * sizeof(f64)));
+		}
+
+		bool CD3D12Driver::setDomainShaderConstant(s32 index, const s64* longs, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->DSBuffers, renderer->DSVariables, index, longs, (u32)(count * sizeof(s64)));
+		}
+
+		bool CD3D12Driver::setDomainShaderConstant(s32 index, const u64* ulongs, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->DSBuffers, renderer->DSVariables, index, ulongs, (u32)(count * sizeof(u64)));
+		}
+
+		bool CD3D12Driver::setComputeShaderConstant(s32 index, const u32* uints, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->CSBuffers, renderer->CSVariables, index, uints, (u32)(count * sizeof(u32)));
+		}
+
+		bool CD3D12Driver::setComputeShaderConstant(s32 index, const f64* doubles, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->CSBuffers, renderer->CSVariables, index, doubles, (u32)(count * sizeof(f64)));
+		}
+
+		bool CD3D12Driver::setComputeShaderConstant(s32 index, const s64* longs, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->CSBuffers, renderer->CSVariables, index, longs, (u32)(count * sizeof(s64)));
+		}
+
+		bool CD3D12Driver::setComputeShaderConstant(s32 index, const u64* ulongs, int count)
+		{
+			if (ActiveMaterialRendererIndex < 0)
+				return false;
+			CD3D12MaterialRenderer* renderer = getNativeRenderer(ActiveMaterialRendererIndex);
+			if (!renderer)
+				return false;
+			return writeUserShaderConstantRaw(renderer->CSBuffers, renderer->CSVariables, index, ulongs, (u32)(count * sizeof(u64)));
+		}
+
+		bool CD3D12Driver::setComputeShaderConstant(s32 index, const s32* ints, int count)
+		{
+			return setComputeShaderConstant(index, reinterpret_cast<const f32*>(ints), count);
+		}
+
+		bool CD3D12Driver::setGeometryShaderConstant(s32 index, const s32* ints, int count)
+		{
+			return setGeometryShaderConstant(index, reinterpret_cast<const f32*>(ints), count);
+		}
+
+		bool CD3D12Driver::setHullShaderConstant(s32 index, const s32* ints, int count)
+		{
+			return setHullShaderConstant(index, reinterpret_cast<const f32*>(ints), count);
+		}
+
+		bool CD3D12Driver::setDomainShaderConstant(s32 index, const s32* ints, int count)
+		{
+			return setDomainShaderConstant(index, reinterpret_cast<const f32*>(ints), count);
 		}
 
 		// Note : les implementations ci-dessous tronquent silencieusement (au lieu de deborder)

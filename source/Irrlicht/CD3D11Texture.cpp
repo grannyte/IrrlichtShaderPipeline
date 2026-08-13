@@ -47,6 +47,8 @@ namespace irr
 			if (Device)
 			{
 				Device->AddRef();
+				// Stays the IMMEDIATE context: lock() maps a staging copy, which is only legal
+				// there. The initial upload picks its own context -- see copyTexture().
 				Device->GetImmediateContext(&Context);
 			}
 
@@ -77,6 +79,8 @@ namespace irr
 			if (Device)
 			{
 				Device->AddRef();
+				// Stays the IMMEDIATE context: lock() maps a staging copy, which is only legal
+				// there. The initial upload picks its own context -- see copyTexture().
 				Device->GetImmediateContext(&Context);
 			}
 
@@ -153,6 +157,8 @@ namespace irr
 			if (Device)
 			{
 				Device->AddRef();
+				// Stays the IMMEDIATE context: lock() maps a staging copy, which is only legal
+				// there. The initial upload picks its own context -- see copyTexture().
 				Device->GetImmediateContext(&Context);
 			}
 
@@ -417,8 +423,12 @@ namespace irr
 		//! modifying the texture
 		void CD3D11Texture::regenerateMipMapLevels(void* mipmapData)
 		{
-			if (SRView && HardwareMipMaps)
-				Context->GenerateMips(SRView);
+			// Runs straight after the upload, so it follows the same rule: the creating driver's
+			// context, not the immediate one. GenerateMips is legal on a deferred context, and
+			// using the immediate one here would race it from the recording thread.
+			ID3D11DeviceContext* mipContext = Driver ? Driver->getContext() : Context;
+			if (SRView && HardwareMipMaps && mipContext)
+				mipContext->GenerateMips(SRView);
 		}
 
 		void CD3D11Texture::createRenderTarget(const ECOLOR_FORMAT format)
@@ -626,7 +636,9 @@ namespace irr
 				{
 					desc.MipLevels = NumberOfMipLevels;
 				}
-				else if (Driver->querySupportForColorFormat(format, D3D11_FORMAT_SUPPORT_MIP_AUTOGEN))
+				// Honour the creation flag: without it this auto-mipped every texture, forcing
+				// MipLevels 0, which forbids initial data and puts the upload back on a context.
+				else if (MipMaps && Driver->querySupportForColorFormat(format, D3D11_FORMAT_SUPPORT_MIP_AUTOGEN))
 				{
 					desc.BindFlags |= D3D11_BIND_RENDER_TARGET;
 					desc.MiscFlags |= D3D11_RESOURCE_MISC_GENERATE_MIPS;
@@ -650,8 +662,34 @@ namespace irr
 					desc.MipLevels = 1;
 				}
 
+				// Hand the pixels to CreateTexture2D when we can: it is a DEVICE call, free-threaded
+				// and context-free, so a texture created while recording never touches the immediate
+				// context. Only possible with an explicit mip count -- MipLevels 0 (auto-gen) forbids
+				// initial data -- so anything auto-mipped still falls through to copyTexture().
+				core::array<u8> initialPixels;
+				D3D11_SUBRESOURCE_DATA initialData;
+				D3D11_SUBRESOURCE_DATA* initialDataPtr = NULL;
+				if (image && desc.MipLevels == 1 && !image->isCompressedFormat(image->getColorFormat()))
+				{
+					const ECOLOR_FORMAT dstFormat = Driver->getColorFormatFromD3DFormat(format);
+					const u32 bpp = IImage::getBitsPerPixelFromFormat(dstFormat) / 8;
+					if (bpp)
+					{
+						const u32 rowPitch = desc.Width * bpp;
+						initialPixels.reallocate(rowPitch * desc.Height);
+						initialPixels.set_used(rowPitch * desc.Height);
+						image->copyToScaling(initialPixels.pointer(), desc.Width, desc.Height, dstFormat, rowPitch);
+
+						initialData.pSysMem = initialPixels.pointer();
+						initialData.SysMemPitch = rowPitch;
+						initialData.SysMemSlicePitch = 0;
+						initialDataPtr = &initialData;
+						UploadedAtCreation = true;
+					}
+				}
+
 				// create texture
-				hr = Device->CreateTexture2D(&desc, NULL, (ID3D11Texture2D**)&Texture);
+				hr = Device->CreateTexture2D(&desc, initialDataPtr, (ID3D11Texture2D**)&Texture);
 				if (FAILED(hr))
 				{
 					logFormatError(hr, "Could not create texture");
@@ -734,6 +772,18 @@ namespace irr
 		//! copies the image to the texture
 		bool CD3D11Texture::copyTexture(IImage* image)
 		{
+			// Uncompressed uploads go through UpdateSubresource instead of the staging round-trip
+			// below. lock() maps a STAGING copy, which a deferred context is not allowed to do (it
+			// may only Map DYNAMIC resources), so the old path could never be recorded into a
+			// command list. This texture is USAGE_DEFAULT, which UpdateSubresource accepts on the
+			// immediate and deferred context alike -- letting a texture be uploaded while recording.
+			// Already uploaded by CreateTexture2D, which needs no context at all.
+			if (UploadedAtCreation)
+				return true;
+
+			// An UpdateSubresource path on the creating driver's context was tried here and
+			// REVERTED: it recorded the upload into the command list, so pixels a caller wrote
+			// straight afterwards via lock() were overwritten when the list replayed.
 			void* ptr = lock();
 			if (ptr && !image->isCompressedFormat(image->getColorFormat()))
 				image->copyToScaling(ptr, Size.Width, Size.Height, ColorFormat, Pitch);

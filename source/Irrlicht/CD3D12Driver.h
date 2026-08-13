@@ -875,17 +875,56 @@ namespace irr
 			//! GS-side counterparts of VS/PS above.
 			virtual s32 getGeometryShaderConstantID(const c8* name) _IRR_OVERRIDE_;
 			virtual bool setGeometryShaderConstant(s32 index, const f32* floats, int count) _IRR_OVERRIDE_;
+
+			//! Int interface for the above.
+			virtual bool setGeometryShaderConstant(s32 index, const s32* ints, int count) _IRR_OVERRIDE_;
 			//! Same, for HS/DS (same -1/false defaults as IMaterialRendererServices.h for CS, not yet
 			//! overridden below).
 			virtual s32 getHullShaderConstantID(const c8* name) _IRR_OVERRIDE_;
 			virtual bool setHullShaderConstant(s32 index, const f32* floats, int count) _IRR_OVERRIDE_;
+
+			//! Int interface for the above.
+			virtual bool setHullShaderConstant(s32 index, const s32* ints, int count) _IRR_OVERRIDE_;
 			virtual s32 getDomainShaderConstantID(const c8* name) _IRR_OVERRIDE_;
 			virtual bool setDomainShaderConstant(s32 index, const f32* floats, int count) _IRR_OVERRIDE_;
+
+			//! Int interface for the above.
+			virtual bool setDomainShaderConstant(s32 index, const s32* ints, int count) _IRR_OVERRIDE_;
 			//! Same, for CS. ActiveMaterialRendererIndex (see dispatchComputeShader()) is updated
 			//! before calling CallBack->OnSetConstants(), same convention as bindDrawState() for the
 			//! graphics stages.
 			virtual s32 getComputeShaderConstantID(const c8* name) _IRR_OVERRIDE_;
 			virtual bool setComputeShaderConstant(s32 index, const f32* floats, int count) _IRR_OVERRIDE_;
+
+			//! Int interface for the above.
+			virtual bool setComputeShaderConstant(s32 index, const s32* ints, int count) _IRR_OVERRIDE_;
+
+			//! Wider scalar types, every stage. Shader model decides what is usable, not the API.
+			virtual bool setVertexShaderConstant(s32 index, const u32* uints, int count) _IRR_OVERRIDE_;
+			virtual bool setVertexShaderConstant(s32 index, const f64* doubles, int count) _IRR_OVERRIDE_;
+			virtual bool setVertexShaderConstant(s32 index, const s64* longs, int count) _IRR_OVERRIDE_;
+			virtual bool setVertexShaderConstant(s32 index, const u64* ulongs, int count) _IRR_OVERRIDE_;
+			virtual bool setPixelShaderConstant(s32 index, const u32* uints, int count) _IRR_OVERRIDE_;
+			virtual bool setPixelShaderConstant(s32 index, const f64* doubles, int count) _IRR_OVERRIDE_;
+			virtual bool setPixelShaderConstant(s32 index, const s64* longs, int count) _IRR_OVERRIDE_;
+			virtual bool setPixelShaderConstant(s32 index, const u64* ulongs, int count) _IRR_OVERRIDE_;
+			virtual bool setGeometryShaderConstant(s32 index, const u32* uints, int count) _IRR_OVERRIDE_;
+			virtual bool setGeometryShaderConstant(s32 index, const f64* doubles, int count) _IRR_OVERRIDE_;
+			virtual bool setGeometryShaderConstant(s32 index, const s64* longs, int count) _IRR_OVERRIDE_;
+			virtual bool setGeometryShaderConstant(s32 index, const u64* ulongs, int count) _IRR_OVERRIDE_;
+			virtual bool setHullShaderConstant(s32 index, const u32* uints, int count) _IRR_OVERRIDE_;
+			virtual bool setHullShaderConstant(s32 index, const f64* doubles, int count) _IRR_OVERRIDE_;
+			virtual bool setHullShaderConstant(s32 index, const s64* longs, int count) _IRR_OVERRIDE_;
+			virtual bool setHullShaderConstant(s32 index, const u64* ulongs, int count) _IRR_OVERRIDE_;
+			virtual bool setDomainShaderConstant(s32 index, const u32* uints, int count) _IRR_OVERRIDE_;
+			virtual bool setDomainShaderConstant(s32 index, const f64* doubles, int count) _IRR_OVERRIDE_;
+			virtual bool setDomainShaderConstant(s32 index, const s64* longs, int count) _IRR_OVERRIDE_;
+			virtual bool setDomainShaderConstant(s32 index, const u64* ulongs, int count) _IRR_OVERRIDE_;
+			virtual bool setComputeShaderConstant(s32 index, const u32* uints, int count) _IRR_OVERRIDE_;
+			virtual bool setComputeShaderConstant(s32 index, const f64* doubles, int count) _IRR_OVERRIDE_;
+			virtual bool setComputeShaderConstant(s32 index, const s64* longs, int count) _IRR_OVERRIDE_;
+			virtual bool setComputeShaderConstant(s32 index, const u64* ulongs, int count) _IRR_OVERRIDE_;
+
 			//! Register-based path (assembly shaders): not applicable here, see addShaderMaterial().
 			virtual void setVertexShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) _IRR_OVERRIDE_;
 			virtual void setPixelShaderConstant(const f32* data, s32 startRegister, s32 constantAmount = 1) _IRR_OVERRIDE_;

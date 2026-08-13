@@ -301,6 +301,41 @@ namespace irr
 			}
 		};
 
+		//! Like TRANSPARENT_ALPHA_CHANNEL, but also blends the ALPHA channel (DestBlendAlpha =
+		//! INV_SRC_ALPHA) so drawing into a target cleared to (0,0,0,0) accumulates a correct
+		//! premultiplied result that can be composited later with ONE/INV_SRC_ALPHA -- no double
+		//! blend. Separate class rather than a tweak to TRANSPARENT_ALPHA_CHANNEL, whose alpha
+		//! behaviour every other material of that type depends on. Not in E_MATERIAL_TYPE: it is
+		//! appended after the built-ins and found by name, so no existing type index shifts.
+		class CD3D11MaterialRenderer_TRANSPARENT_PREMULTIPLIED : public CD3D11FixedPipelineRenderer
+		{
+		public:
+			CD3D11MaterialRenderer_TRANSPARENT_PREMULTIPLIED(ID3D11Device* device, IVideoDriver* driver, CD3D11CallBridge* bridgeCalls)
+				: CD3D11FixedPipelineRenderer(device, driver, bridgeCalls) {}
+
+			virtual void OnSetMaterial(const SMaterial& material, const SMaterial& lastMaterial,
+				bool resetAllRenderstates, IMaterialRendererServices* services)
+			{
+				CD3D11FixedPipelineRenderer::OnSetMaterial(material);
+				services->setBasicRenderStates(material, lastMaterial, resetAllRenderstates);
+				D3D11_BLEND_DESC& blendDesc = static_cast<CD3D11Driver*>(services->getVideoDriver())->getBlendDesc();
+
+				blendDesc.RenderTarget[0].BlendEnable = TRUE;
+				blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+				blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+				blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+				blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+				blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+				blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+				blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+			}
+
+			virtual bool isTransparent() const _IRR_OVERRIDE_
+			{
+				return true;
+			}
+		};
+
 		class CD3D11MaterialRenderer_TRANSPARENT_ALPHA_CHANNEL_REF : public CD3D11FixedPipelineRenderer
 		{
 		public:

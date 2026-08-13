@@ -44,7 +44,9 @@ namespace irr
 				return Data.capacity();
 			}
 
-			virtual s32 linear_reverse_search(const T& element) const
+			// Not virtual: a virtual body instantiates with the class, forcing operator== on
+			// every T. Non-virtual defers it to first use, so element types without == work.
+			s32 linear_reverse_search(const T& element) const
 			{
 				for (s32 i = Data.size() - 1; i >= 0; --i)
 				{

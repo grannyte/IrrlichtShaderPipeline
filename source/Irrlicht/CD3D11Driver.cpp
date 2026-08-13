@@ -281,6 +281,13 @@ namespace irr
 
 			// The following shall be changed to one blend in future
 			addAndDropMaterialRenderer(new CD3D11MaterialRenderer_ONETEXTURE_BLEND(Device, this, BridgeCalls));
+
+			// Appended past the built-ins so no E_MATERIAL_TYPE index moves; found by name.
+			{
+				IMaterialRenderer* r = new CD3D11MaterialRenderer_TRANSPARENT_PREMULTIPLIED(Device, this, BridgeCalls);
+				addMaterialRenderer(r, "TransparentPremultiplied");
+				r->drop();
+			}
 		}
 
 		//! initialises the Direct3D API
@@ -1172,6 +1179,217 @@ namespace irr
 			BridgeCalls->invalidateTextureBinding(Dst);
 		}
 
+		CD3D11HardwareBuffer* CD3D11Driver::prepareComputeBuffer(scene::IComputeBuffer* buffer)
+		{
+			if (!buffer || buffer->getStructureCount() == 0)
+				return NULL;
+
+			if (!buffer->getHardwareBuffer())
+				createHardwareBuffer(buffer);
+			else if (buffer->getHardwareBuffer()->isRequiredUpdate())
+				buffer->getHardwareBuffer()->update(buffer->getHardwareMappingHint(),
+					buffer->getStructureCount() * buffer->getStructureStride(), buffer->getBufferPointer());
+
+			return std::static_pointer_cast<CD3D11HardwareBuffer>(buffer->getHardwareBuffer()).get();
+		}
+
+		void CD3D11Driver::bindComputeBuffer(u32 slot, scene::IComputeBuffer* buffer, E_HARDWARE_BUFFER_TYPE binding)
+		{
+			const bool asUAV = (binding == EHBT_COMPUTE);
+			const u32 maxSlot = asUAV ? EMCS_MAX_COMPUTE_UAV_SLOTS : EMCS_MAX_COMPUTE_SRV_SLOTS;
+			if (slot >= maxSlot)
+			{
+				os::Printer::log("CD3D11Driver::bindComputeBuffer: slot out of range", ELL_ERROR);
+				return;
+			}
+
+			CD3D11HardwareBuffer* hw = prepareComputeBuffer(buffer);
+
+			if (asUAV)
+			{
+				ComputeUAV[slot] = hw ? hw->getUnorderedAccessView() : NULL;
+				ComputeUAVSource[slot] = hw ? buffer : NULL;
+				// Default to "keep the current counter"; resetStructureCount() overrides after bind.
+				ComputeUAVInitialCounts[slot] = (u32)-1;
+				if (hw && slot >= ComputeUAVCount)
+					ComputeUAVCount = slot + 1;
+			}
+			else
+			{
+				ComputeSRV[slot] = hw ? hw->getShaderResourceView() : NULL;
+				if (hw && slot >= ComputeSRVCount)
+					ComputeSRVCount = slot + 1;
+			}
+		}
+
+		void CD3D11Driver::bindComputeTexture(u32 slot, ITexture* texture, bool asUAV)
+		{
+			const u32 maxSlot = asUAV ? EMCS_MAX_COMPUTE_UAV_SLOTS : EMCS_MAX_COMPUTE_SRV_SLOTS;
+			if (slot >= maxSlot)
+			{
+				os::Printer::log("CD3D11Driver::bindComputeTexture: slot out of range", ELL_ERROR);
+				return;
+			}
+
+			CD3D11Texture* tex = static_cast<CD3D11Texture*>(texture);
+			if (asUAV)
+			{
+				if (tex && !texture->isUnorderedAccess())
+				{
+					os::Printer::log("CD3D11Driver::bindComputeTexture: texture has no UAV - use addUAVTexture()", ELL_ERROR);
+					return;
+				}
+				ComputeUAV[slot] = tex ? tex->getUnorderedAccessView() : NULL;
+				ComputeUAVSource[slot] = NULL;
+				if (tex && slot >= ComputeUAVCount)
+					ComputeUAVCount = slot + 1;
+			}
+			else
+			{
+				ComputeSRV[slot] = tex ? tex->getShaderResourceView() : NULL;
+				if (tex && slot >= ComputeSRVCount)
+					ComputeSRVCount = slot + 1;
+			}
+
+			// A UAV bind kicks the texture out of every SRV slot, so the cached binding must go
+			// too or the next material set sees no change and never rebinds it.
+			if (asUAV && texture)
+				BridgeCalls->invalidateTextureBinding(texture);
+		}
+
+		void CD3D11Driver::dispatchComputeShaderBound(const core::vector3d<u32>& groupCount)
+		{
+			if (!setComputeState())
+				return;
+
+			if (ComputeSRVCount)
+				Context->CSSetShaderResources(0, ComputeSRVCount, ComputeSRV);
+			if (ComputeUAVCount)
+				Context->CSSetUnorderedAccessViews(0, ComputeUAVCount, ComputeUAV, ComputeUAVInitialCounts);
+
+			Context->Dispatch(groupCount.X, groupCount.Y, groupCount.Z);
+
+			// Counter resets are one-shot: a later dispatch must not silently re-zero.
+			for (u32 i = 0; i < ComputeUAVCount; ++i)
+				ComputeUAVInitialCounts[i] = (u32)-1;
+		}
+
+		void CD3D11Driver::dispatchComputeShaderIndirect(scene::IComputeBuffer* argBuffer, u32 byteOffset)
+		{
+			if (!argBuffer)
+				return;
+
+			CD3D11HardwareBuffer* args = prepareComputeBuffer(argBuffer);
+			if (!args || !args->getBuffer())
+			{
+				os::Printer::log("CD3D11Driver::dispatchComputeShaderIndirect: args buffer has no D3D buffer", ELL_ERROR);
+				return;
+			}
+
+			if (!setComputeState())
+				return;
+
+			if (ComputeSRVCount)
+				Context->CSSetShaderResources(0, ComputeSRVCount, ComputeSRV);
+			if (ComputeUAVCount)
+				Context->CSSetUnorderedAccessViews(0, ComputeUAVCount, ComputeUAV, ComputeUAVInitialCounts);
+
+			Context->DispatchIndirect(args->getBuffer(), byteOffset);
+
+			for (u32 i = 0; i < ComputeUAVCount; ++i)
+				ComputeUAVInitialCounts[i] = (u32)-1;
+		}
+
+		void CD3D11Driver::copyStructureCount(scene::IComputeBuffer* dst, u32 dstByteOffset, scene::IComputeBuffer* appendBuffer)
+		{
+			if (!dst || !appendBuffer)
+				return;
+
+			CD3D11HardwareBuffer* dstHw = prepareComputeBuffer(dst);
+			CD3D11HardwareBuffer* srcHw = prepareComputeBuffer(appendBuffer);
+			if (!dstHw || !srcHw || !dstHw->getBuffer() || !srcHw->getUnorderedAccessView())
+			{
+				os::Printer::log("CD3D11Driver::copyStructureCount: needs a UAV source and a real destination buffer", ELL_ERROR);
+				return;
+			}
+
+			if (!(appendBuffer->getHardwareBuffer()->getFlags() & (EHBF_COMPUTE_APPEND | EHBF_COMPUTE_CONSUME)))
+			{
+				os::Printer::log("CD3D11Driver::copyStructureCount: source has no hidden counter - create it with EHBF_COMPUTE_APPEND/CONSUME", ELL_ERROR);
+				return;
+			}
+
+			Context->CopyStructureCount(dstHw->getBuffer(), dstByteOffset, srcHw->getUnorderedAccessView());
+		}
+
+		void CD3D11Driver::resetStructureCount(scene::IComputeBuffer* appendBuffer, u32 value)
+		{
+			if (!appendBuffer)
+				return;
+
+			for (u32 i = 0; i < ComputeUAVCount; ++i)
+			{
+				if (ComputeUAVSource[i] == appendBuffer)
+				{
+					ComputeUAVInitialCounts[i] = value;
+					return;
+				}
+			}
+
+			os::Printer::log("CD3D11Driver::resetStructureCount: buffer is not bound - bind it as a UAV first", ELL_WARNING);
+		}
+
+		void CD3D11Driver::unbindComputeResources()
+		{
+			if (ComputeUAVCount)
+			{
+				ID3D11UnorderedAccessView* nullUAV[EMCS_MAX_COMPUTE_UAV_SLOTS] = {};
+				Context->CSSetUnorderedAccessViews(0, ComputeUAVCount, nullUAV, NULL);
+			}
+			if (ComputeSRVCount)
+			{
+				ID3D11ShaderResourceView* nullSRV[EMCS_MAX_COMPUTE_SRV_SLOTS] = {};
+				Context->CSSetShaderResources(0, ComputeSRVCount, nullSRV);
+			}
+
+			memset(ComputeSRV, 0, sizeof(ComputeSRV));
+			memset(ComputeUAV, 0, sizeof(ComputeUAV));
+			memset(ComputeUAVSource, 0, sizeof(ComputeUAVSource));
+			ComputeSRVCount = 0;
+			ComputeUAVCount = 0;
+		}
+
+		void CD3D11Driver::computeBarrier(scene::IComputeBuffer* buffer)
+		{
+			// D3D11 orders UAV writes between dispatches on one context by itself, so the only
+			// real hazard is a buffer still bound as UAV when the next dispatch reads it as SRV.
+			if (!buffer)
+				return;
+
+			for (u32 i = 0; i < ComputeUAVCount; ++i)
+			{
+				if (ComputeUAVSource[i] != buffer)
+					continue;
+
+				ID3D11UnorderedAccessView* nullUAV[1] = { NULL };
+				Context->CSSetUnorderedAccessViews(i, 1, nullUAV, NULL);
+				ComputeUAV[i] = NULL;
+				ComputeUAVSource[i] = NULL;
+			}
+		}
+
+		void CD3D11Driver::computeBarrierAll()
+		{
+			if (!ComputeUAVCount)
+				return;
+
+			ID3D11UnorderedAccessView* nullUAV[EMCS_MAX_COMPUTE_UAV_SLOTS] = {};
+			Context->CSSetUnorderedAccessViews(0, ComputeUAVCount, nullUAV, NULL);
+			memset(ComputeUAV, 0, sizeof(ComputeUAV));
+			memset(ComputeUAVSource, 0, sizeof(ComputeUAVSource));
+			ComputeUAVCount = 0;
+		}
+
 		void CD3D11Driver::removeAllHardwareBuffers()
 		{
 			HardwareBuffer.clear();
@@ -1329,8 +1547,10 @@ namespace irr
 				tex == NULL ? fCol.b : fCol.r,
 				fCol.a };
 
-			// zero blend description
-			::ZeroMemory(&BlendDesc, sizeof(BlendDesc));
+			// reset(), not ZeroMemory: 0 is not a valid D3D11_BLEND (ZERO is 1), and with
+			// IndependentBlendEnable all 8 RenderTarget entries are validated -- zeroing the slots
+			// this call does not refill makes CreateBlendState fail and the blend state never apply.
+			BlendDesc.reset();
 			BlendDesc.IndependentBlendEnable = TRUE;
 
 			// set blend based on render target configuration
@@ -1456,13 +1676,10 @@ namespace irr
 			BridgeCalls->setPrimitiveTopology(getTopology(pType));
 
 #ifdef _DEBUG
-			// Break HERE rather than reading DEVICE_DRAW_VERTEX_SHADER_NOT_SET from the debug layer
-			// afterwards: this stack still names the caller that set the material up wrong.
+			// Catches what the debug layer would only report as DEVICE_DRAW_VERTEX_SHADER_NOT_SET a
+			// call later. Log, don't __debugbreak -- a leftover break here would halt every caller.
 			if (!BridgeCalls->hasVertexShader())
-			{
 				os::Printer::log("renderArray: drawing with NO vertex shader bound", ELL_ERROR);
-				__debugbreak();
-			}
 #endif
 
 			// finally, draw
@@ -3752,6 +3969,286 @@ namespace irr
 			{
 				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
 				return r->setVariable(index, floats, count, EST_COMPUTE_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setVertexShaderConstant(s32 index, const u32* uints, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, uints, (u32)(count * sizeof(u32)), EST_VERTEX_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setVertexShaderConstant(s32 index, const f64* doubles, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, doubles, (u32)(count * sizeof(f64)), EST_VERTEX_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setVertexShaderConstant(s32 index, const s64* longs, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, longs, (u32)(count * sizeof(s64)), EST_VERTEX_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setVertexShaderConstant(s32 index, const u64* ulongs, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, ulongs, (u32)(count * sizeof(u64)), EST_VERTEX_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setPixelShaderConstant(s32 index, const u32* uints, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, uints, (u32)(count * sizeof(u32)), EST_PIXEL_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setPixelShaderConstant(s32 index, const f64* doubles, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, doubles, (u32)(count * sizeof(f64)), EST_PIXEL_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setPixelShaderConstant(s32 index, const s64* longs, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, longs, (u32)(count * sizeof(s64)), EST_PIXEL_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setPixelShaderConstant(s32 index, const u64* ulongs, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, ulongs, (u32)(count * sizeof(u64)), EST_PIXEL_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setGeometryShaderConstant(s32 index, const u32* uints, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, uints, (u32)(count * sizeof(u32)), EST_GEOMETRY_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setGeometryShaderConstant(s32 index, const f64* doubles, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, doubles, (u32)(count * sizeof(f64)), EST_GEOMETRY_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setGeometryShaderConstant(s32 index, const s64* longs, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, longs, (u32)(count * sizeof(s64)), EST_GEOMETRY_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setGeometryShaderConstant(s32 index, const u64* ulongs, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, ulongs, (u32)(count * sizeof(u64)), EST_GEOMETRY_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setHullShaderConstant(s32 index, const u32* uints, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, uints, (u32)(count * sizeof(u32)), EST_HULL_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setHullShaderConstant(s32 index, const f64* doubles, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, doubles, (u32)(count * sizeof(f64)), EST_HULL_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setHullShaderConstant(s32 index, const s64* longs, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, longs, (u32)(count * sizeof(s64)), EST_HULL_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setHullShaderConstant(s32 index, const u64* ulongs, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, ulongs, (u32)(count * sizeof(u64)), EST_HULL_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setDomainShaderConstant(s32 index, const u32* uints, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, uints, (u32)(count * sizeof(u32)), EST_DOMAIN_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setDomainShaderConstant(s32 index, const f64* doubles, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, doubles, (u32)(count * sizeof(f64)), EST_DOMAIN_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setDomainShaderConstant(s32 index, const s64* longs, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, longs, (u32)(count * sizeof(s64)), EST_DOMAIN_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setDomainShaderConstant(s32 index, const u64* ulongs, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, ulongs, (u32)(count * sizeof(u64)), EST_DOMAIN_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setComputeShaderConstant(s32 index, const u32* uints, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, uints, (u32)(count * sizeof(u32)), EST_COMPUTE_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setComputeShaderConstant(s32 index, const f64* doubles, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, doubles, (u32)(count * sizeof(f64)), EST_COMPUTE_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setComputeShaderConstant(s32 index, const s64* longs, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, longs, (u32)(count * sizeof(s64)), EST_COMPUTE_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setComputeShaderConstant(s32 index, const u64* ulongs, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariableRaw(index, ulongs, (u32)(count * sizeof(u64)), EST_COMPUTE_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setComputeShaderConstant(s32 index, const s32* ints, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariable(index, ints, count, EST_COMPUTE_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setGeometryShaderConstant(s32 index, const s32* ints, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariable(index, ints, count, EST_GEOMETRY_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setHullShaderConstant(s32 index, const s32* ints, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariable(index, ints, count, EST_HULL_SHADER);
+			}
+			return false;
+		}
+
+		bool CD3D11Driver::setDomainShaderConstant(s32 index, const s32* ints, int count)
+		{
+			if (Material.MaterialType >= 0 && Material.MaterialType < (s32)getMaterialRendererCount())
+			{
+				CD3D11MaterialRenderer* r = (CD3D11MaterialRenderer*)getRendererFor(Material.MaterialType);
+				return r->setVariable(index, ints, count, EST_DOMAIN_SHADER);
 			}
 			return false;
 		}

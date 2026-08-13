@@ -1511,10 +1511,12 @@ namespace irr
 				if (ActiveCamera)
 					camWorldPos = ActiveCamera->getAbsolutePosition();
 
+				// push_back, not set_used: DistanceNodeEntry holds a shared_ptr, and set_used
+				// leaves it unconstructed, so assigning to it decrefs garbage.
 				core::array<DistanceNodeEntry> SortedLights;
-				SortedLights.set_used(LightList.size());
-				for (s32 light = (s32)LightList.size() - 1; light >= 0; --light)
-					SortedLights[light].setNodeAndDistanceFromPosition(LightList[light], camWorldPos);
+				SortedLights.reallocate(LightList.size());
+				for (u32 light = 0; light < LightList.size(); ++light)
+					SortedLights.push_back(DistanceNodeEntry(LightList[light], camWorldPos));
 
 				SortedLights.set_sorted(false);
 				SortedLights.sort();

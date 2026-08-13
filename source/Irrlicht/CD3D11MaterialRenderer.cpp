@@ -447,6 +447,32 @@ namespace irr
 			return sh->bufferArray[id];
 		}
 
+		bool CD3D11MaterialRenderer::setVariableRaw(s32 id, const void* data, u32 byteCount, E_SHADER_TYPE type)
+		{
+			SShader* sh = shaders[type];
+
+			if (!sh || !data)
+				return false;
+
+			SShaderVariable* var = getVariable(sh, id);
+
+			if (!var)
+				return false;
+
+			SShaderBuffer* buff = getBuffer(type, var->buffer);
+			if (buff == NULL)
+				return false;
+
+			if (byteCount > buff->size - var->offset)
+			{
+				os::Printer::log((irr::core::stringw(L"Failed to set shader constant ") + irr::core::stringw(var->name) + L" entity to large").c_str());
+				return false;
+			}
+
+			memcpy((c8*)buff->cData + var->offset, data, byteCount);
+			return true;
+		}
+
 		bool CD3D11MaterialRenderer::setVariable(s32 id, const f32* floats, int count, E_SHADER_TYPE type)
 		{
 			SShader* sh = shaders[type];
@@ -668,11 +694,9 @@ namespace irr
 
 			if (CallBack)
 				CallBack->OnSetConstants(service, UserData);
-			if (BaseRenderer)
-			{
-				if (shaders[EST_COMPUTE_SHADER])
-					shaders[EST_COMPUTE_SHADER]->UnMapAll(context);
-			}
+			// A compute material has no BaseRenderer, so gating this left its cbuffers never uploaded.
+			if (shaders[EST_COMPUTE_SHADER])
+				shaders[EST_COMPUTE_SHADER]->UnMapAll(context);
 			bridge->setComputeShader(shaders[EST_COMPUTE_SHADER]);
 
 			return true;
@@ -806,6 +830,7 @@ namespace irr
 			// an include - D3DCompile resolves those later. pixelNoiseMain predates the marker.
 			const bool preferFlowControl =
 				(pixelShaderProgram && strstr(pixelShaderProgram, "PREFER_FLOW_CONTROL") != NULL) ||
+				(computeShaderProgram && strstr(computeShaderProgram, "PREFER_FLOW_CONTROL") != NULL) ||
 				(pixelShaderEntryPointName && strstr(pixelShaderEntryPointName, "pixelNoiseMain") != NULL);
 			if (Lang != EGSL_PCMP && !preferFlowControl)
 			{

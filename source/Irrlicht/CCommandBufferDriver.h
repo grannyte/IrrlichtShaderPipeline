@@ -408,6 +408,18 @@ namespace irr
 			std::shared_ptr<IHardwareBuffer> createHardwareBuffer(scene::IComputeBuffer* computeBuffer) override;
 			void dispatchComputeShader(const core::vector3d<u32>& groupCount, scene::IComputeBuffer* Src, scene::IComputeBuffer* Dst) override;
 
+			void bindComputeBuffer(u32 slot, scene::IComputeBuffer* buffer, E_HARDWARE_BUFFER_TYPE binding) override;
+
+			void bindComputeTexture(u32 slot, ITexture* texture, bool asUAV) override;
+
+			void dispatchComputeShaderBound(const core::vector3d<u32>& groupCount) override;
+
+			void unbindComputeResources() override;
+
+			void computeBarrier(scene::IComputeBuffer* buffer) override;
+
+			void computeBarrierAll() override;
+
 		protected:
 			irr::video::ITexture* CurrentRenderTarget;
 			core::matrix4 Matrices[ETS_COUNT];

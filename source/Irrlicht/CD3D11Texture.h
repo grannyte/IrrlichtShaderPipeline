@@ -94,6 +94,8 @@ namespace irr
 			u32 ArraySliceLocked;
 
 			bool HardwareMipMaps;
+			//! Pixels went to CreateTexture2D as initial data, so copyTexture() has nothing to do.
+			bool UploadedAtCreation = false;
 
 			//! creates hardware render target
 			void createRenderTarget(const ECOLOR_FORMAT format);

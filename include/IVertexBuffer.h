@@ -43,6 +43,12 @@ namespace scene
 
 		//! Reserve capacity without changing the used count, so repeated addVertex() calls don't reallocate.
 		virtual void reallocate(u32 size) = 0;
+
+		//! Set the used count, keeping capacity. set_used(0) resets without freeing, unlike clear().
+		virtual void set_used(u32 used) = 0;
+
+		//! Currently reserved capacity, which may exceed getVertexCount().
+		virtual u32 allocated_size() const = 0;
 	};
 }
 }

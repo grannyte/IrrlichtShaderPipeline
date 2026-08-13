@@ -261,6 +261,9 @@ namespace irr
 
 			virtual bool setVariable(s32 id, const s32* ints, int count, E_SHADER_TYPE type);
 
+			//! Width-aware write, so a 64-bit type does not copy only half its bytes.
+			virtual bool setVariableRaw(s32 id, const void* data, u32 byteCount, E_SHADER_TYPE type);
+
 			virtual s32 getVariableID(const c8* name, E_SHADER_TYPE type);
 
 			virtual s32 getConstantBufferID(const c8* name, E_SHADER_TYPE type);

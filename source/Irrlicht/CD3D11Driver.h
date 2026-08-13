@@ -199,6 +199,25 @@ namespace irr
 			//! Dispatch compute shader, writing into a UAV-bindable texture instead of a buffer
 			virtual void dispatchComputeShaderToTexture(const core::vector3d<u32>& groupCount, scene::IComputeBuffer* Src, ITexture* Dst) override;
 
+			//! Multi-slot compute binding - see IVideoDriver for the contract.
+			virtual void bindComputeBuffer(u32 slot, scene::IComputeBuffer* buffer, E_HARDWARE_BUFFER_TYPE binding) override;
+
+			virtual void bindComputeTexture(u32 slot, ITexture* texture, bool asUAV) override;
+
+			virtual void dispatchComputeShaderBound(const core::vector3d<u32>& groupCount) override;
+
+			virtual void unbindComputeResources() override;
+
+			virtual void computeBarrier(scene::IComputeBuffer* buffer) override;
+
+			virtual void computeBarrierAll() override;
+
+			virtual void dispatchComputeShaderIndirect(scene::IComputeBuffer* argBuffer, u32 byteOffset) override;
+
+			virtual void copyStructureCount(scene::IComputeBuffer* dst, u32 dstByteOffset, scene::IComputeBuffer* appendBuffer) override;
+
+			virtual void resetStructureCount(scene::IComputeBuffer* appendBuffer, u32 value = 0) override;
+
 			virtual void draw2DVertexPrimitiveList(const void* vertices, u32 vertexCount, const void* indices,
 				u32 primitiveCount, E_VERTEX_TYPE vType, scene::E_PRIMITIVE_TYPE pType, E_INDEX_TYPE iType) _IRR_OVERRIDE_;
 
@@ -396,14 +415,53 @@ namespace irr
 			//! Sets a constant for the geometry shader based on a name.
 			virtual bool setGeometryShaderConstant(s32 index, const f32* floats, int count) _IRR_OVERRIDE_;
 
+			//! Int interface for the above.
+			virtual bool setGeometryShaderConstant(s32 index, const s32* ints, int count) _IRR_OVERRIDE_;
+
 			//! Sets a constant for the hull shader based on a name.
 			virtual bool setHullShaderConstant(s32 index, const f32* floats, int count) _IRR_OVERRIDE_;
+
+			//! Int interface for the above.
+			virtual bool setHullShaderConstant(s32 index, const s32* ints, int count) _IRR_OVERRIDE_;
 
 			//! Sets a constant for the domain shader based on a name.
 			virtual bool setDomainShaderConstant(s32 index, const f32* floats, int count) _IRR_OVERRIDE_;
 
+			//! Int interface for the above.
+			virtual bool setDomainShaderConstant(s32 index, const s32* ints, int count) _IRR_OVERRIDE_;
+
 			//! Sets a constant for the compute shader based on a name.
 			virtual bool setComputeShaderConstant(s32 index, const f32* floats, int count) _IRR_OVERRIDE_;
+
+			//! Int interface for the above.
+			virtual bool setComputeShaderConstant(s32 index, const s32* ints, int count) _IRR_OVERRIDE_;
+
+			//! Wider scalar types, every stage. Shader model decides what is usable, not the API.
+			virtual bool setVertexShaderConstant(s32 index, const u32* uints, int count) _IRR_OVERRIDE_;
+			virtual bool setVertexShaderConstant(s32 index, const f64* doubles, int count) _IRR_OVERRIDE_;
+			virtual bool setVertexShaderConstant(s32 index, const s64* longs, int count) _IRR_OVERRIDE_;
+			virtual bool setVertexShaderConstant(s32 index, const u64* ulongs, int count) _IRR_OVERRIDE_;
+			virtual bool setPixelShaderConstant(s32 index, const u32* uints, int count) _IRR_OVERRIDE_;
+			virtual bool setPixelShaderConstant(s32 index, const f64* doubles, int count) _IRR_OVERRIDE_;
+			virtual bool setPixelShaderConstant(s32 index, const s64* longs, int count) _IRR_OVERRIDE_;
+			virtual bool setPixelShaderConstant(s32 index, const u64* ulongs, int count) _IRR_OVERRIDE_;
+			virtual bool setGeometryShaderConstant(s32 index, const u32* uints, int count) _IRR_OVERRIDE_;
+			virtual bool setGeometryShaderConstant(s32 index, const f64* doubles, int count) _IRR_OVERRIDE_;
+			virtual bool setGeometryShaderConstant(s32 index, const s64* longs, int count) _IRR_OVERRIDE_;
+			virtual bool setGeometryShaderConstant(s32 index, const u64* ulongs, int count) _IRR_OVERRIDE_;
+			virtual bool setHullShaderConstant(s32 index, const u32* uints, int count) _IRR_OVERRIDE_;
+			virtual bool setHullShaderConstant(s32 index, const f64* doubles, int count) _IRR_OVERRIDE_;
+			virtual bool setHullShaderConstant(s32 index, const s64* longs, int count) _IRR_OVERRIDE_;
+			virtual bool setHullShaderConstant(s32 index, const u64* ulongs, int count) _IRR_OVERRIDE_;
+			virtual bool setDomainShaderConstant(s32 index, const u32* uints, int count) _IRR_OVERRIDE_;
+			virtual bool setDomainShaderConstant(s32 index, const f64* doubles, int count) _IRR_OVERRIDE_;
+			virtual bool setDomainShaderConstant(s32 index, const s64* longs, int count) _IRR_OVERRIDE_;
+			virtual bool setDomainShaderConstant(s32 index, const u64* ulongs, int count) _IRR_OVERRIDE_;
+			virtual bool setComputeShaderConstant(s32 index, const u32* uints, int count) _IRR_OVERRIDE_;
+			virtual bool setComputeShaderConstant(s32 index, const f64* doubles, int count) _IRR_OVERRIDE_;
+			virtual bool setComputeShaderConstant(s32 index, const s64* longs, int count) _IRR_OVERRIDE_;
+			virtual bool setComputeShaderConstant(s32 index, const u64* ulongs, int count) _IRR_OVERRIDE_;
+
 
 			//! Int interface for the above.
 			virtual bool setVertexShaderConstant(s32 index, const s32* ints, int count) _IRR_OVERRIDE_;
@@ -718,6 +776,19 @@ namespace irr
 			bool setRenderStates3DMode(CD3D11VertexDescriptor* vType);
 
 			bool setComputeState();
+
+			//! Uploads/refreshes buffer's hardware buffer, then returns it. 0 on failure.
+			CD3D11HardwareBuffer* prepareComputeBuffer(scene::IComputeBuffer* buffer);
+
+			// Multi-slot compute bindings, valid until unbindComputeResources().
+			ID3D11ShaderResourceView* ComputeSRV[EMCS_MAX_COMPUTE_SRV_SLOTS] = {};
+			ID3D11UnorderedAccessView* ComputeUAV[EMCS_MAX_COMPUTE_UAV_SLOTS] = {};
+			scene::IComputeBuffer* ComputeUAVSource[EMCS_MAX_COMPUTE_UAV_SLOTS] = {};
+			// -1 keeps an append buffer's current counter; resetStructureCount() overrides it,
+			// since D3D11 only applies initial counts at CSSetUnorderedAccessViews time.
+			u32 ComputeUAVInitialCounts[EMCS_MAX_COMPUTE_UAV_SLOTS] = {};
+			u32 ComputeSRVCount = 0;
+			u32 ComputeUAVCount = 0;
 
 			//! sets the needed renderstates
 			void setRenderStates2DMode(bool alpha, bool texture, bool alphaChannel);

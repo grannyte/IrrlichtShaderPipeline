@@ -2215,7 +2215,7 @@ namespace irr
 			__m128 M0 = _mm_load_ps(&M[0]);
 			__m128 M4 = _mm_load_ps(&M[4]);
 			__m128 M8 = _mm_load_ps(&M[8]);
-			__m128 result = _mm_add_ps(_mm_mul_ps(tempX, M0), _mm_add_ps(_mm_mul_ps(tempY, M4), _mm_mul_ps(tempZ, M8)));
+			__m128 result = _mm_add_ps(_mm_add_ps(_mm_mul_ps(tempX, M0), _mm_mul_ps(tempY, M4)), _mm_mul_ps(tempZ, M8));
 			/*vector3df tmp = vect;
 			vect.X = tmp.X*M[0] + tmp.Y*M[4] + tmp.Z*M[8];
 			vect.Y = tmp.X*M[1] + tmp.Y*M[5] + tmp.Z*M[9];
@@ -2234,7 +2234,7 @@ namespace irr
 			__m128 M0 = _mm_load_ps(&M[0]);
 			__m128 M4 = _mm_load_ps(&M[4]);
 			__m128 M8 = _mm_load_ps(&M[8]);
-			__m128 result = _mm_add_ps(_mm_mul_ps(tempX, M0), _mm_add_ps(_mm_mul_ps(tempY, M4), _mm_mul_ps(tempZ, M8)));
+			__m128 result = _mm_add_ps(_mm_add_ps(_mm_mul_ps(tempX, M0), _mm_mul_ps(tempY, M4)), _mm_mul_ps(tempZ, M8));
 			/*vector3df tmp = vect;
 			vect.X = tmp.X*M[0] + tmp.Y*M[4] + tmp.Z*M[8];
 			vect.Y = tmp.X*M[1] + tmp.Y*M[5] + tmp.Z*M[9];
@@ -2256,7 +2256,7 @@ namespace irr
 			__m128 M0 = _mm_load_ps(&M[0]);
 			__m128 M4 = _mm_load_ps(&M[4]);
 			__m128 M8 = _mm_load_ps(&M[8]);
-			__m128 result = _mm_add_ps(_mm_mul_ps(tempX, M0), _mm_add_ps(_mm_mul_ps(tempY, M4), _mm_mul_ps(tempZ, M8)));
+			__m128 result = _mm_add_ps(_mm_add_ps(_mm_mul_ps(tempX, M0), _mm_mul_ps(tempY, M4)), _mm_mul_ps(tempZ, M8));
 			/*vector3df tmp = vect;
 			vect.X = tmp.X*M[0] + tmp.Y*M[4] + tmp.Z*M[8];
 			vect.Y = tmp.X*M[1] + tmp.Y*M[5] + tmp.Z*M[9];
@@ -2506,18 +2506,13 @@ namespace irr
 			__m128 row3 = _mm_loadu_ps(m1 + 8);
 			__m128 row4 = _mm_loadu_ps(m1 + 12);
 
+			// Accumulate left to right, matching the scalar operator*'s rounding
+			// exactly. Pairwise addition here made a*b and a*=b disagree.
 			for (int i = 0; i < 4; i++) {
-				__m128 brod1 = _mm_set1_ps(m2[4 * i + 0]);
-				__m128 brod2 = _mm_set1_ps(m2[4 * i + 1]);
-				__m128 brod3 = _mm_set1_ps(m2[4 * i + 2]);
-				__m128 brod4 = _mm_set1_ps(m2[4 * i + 3]);
-				__m128 row = _mm_add_ps(
-					_mm_add_ps(
-						_mm_mul_ps(brod1, row1),
-						_mm_mul_ps(brod2, row2)),
-					_mm_add_ps(
-						_mm_mul_ps(brod3, row3),
-						_mm_mul_ps(brod4, row4)));
+				__m128 row = _mm_mul_ps(_mm_set1_ps(m2[4 * i + 0]), row1);
+				row = _mm_add_ps(row, _mm_mul_ps(_mm_set1_ps(m2[4 * i + 1]), row2));
+				row = _mm_add_ps(row, _mm_mul_ps(_mm_set1_ps(m2[4 * i + 2]), row3));
+				row = _mm_add_ps(row, _mm_mul_ps(_mm_set1_ps(m2[4 * i + 3]), row4));
 				_mm_store_ps(&M[4 * i], row);
 			}
 
@@ -2525,6 +2520,21 @@ namespace irr
 			definitelyIdentityMatrix = false;
 #endif
 			return *this;
+		}
+
+		//! multiply by another matrix
+		template <>
+		inline CMatrix4<f32> CMatrix4<f32>::operator*(const CMatrix4<f32>& m2) const
+		{
+#if defined ( USE_MATRIX_TEST )
+			if (this->isIdentity())
+				return m2;
+			if (m2.isIdentity())
+				return *this;
+#endif
+			CMatrix4<f32> m3(EM4CONST_NOTHING);
+			m3.setbyproduct_nocheck(*this, m2);
+			return m3;
 		}
 
 		static inline void invert4x4(const float* src, float* dst)
