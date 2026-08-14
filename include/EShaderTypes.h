@@ -16,6 +16,7 @@ enum E_SHADER_TYPE
 	EST_HULL_SHADER,
 	EST_DOMAIN_SHADER,
 	EST_COMPUTE_SHADER,
+	EST_STREAM_OUTPUT_SHADER,
 
 	EST_COUNT
 };
@@ -30,6 +31,8 @@ enum E_VERTEX_SHADER_TYPE
 	EVST_VS_4_0,
 	EVST_VS_4_1,
 	EVST_VS_5_0,
+	EVST_VS_5_1,
+	EVST_VS_6_0,
 
 	//! This is not a type, but a value indicating how much types there are.
 	EVST_COUNT
@@ -44,6 +47,8 @@ const c8* const VERTEX_SHADER_TYPE_NAMES[] = {
 	"vs_4_0",
 	"vs_4_1",
 	"vs_5_0",
+	"vs_5_1",
+	"vs_6_0",
 	0 };
 
 //! Compile target enumeration for the addHighLevelShaderMaterial() method.
@@ -60,6 +65,7 @@ enum E_PIXEL_SHADER_TYPE
 	EPST_PS_4_0,
 	EPST_PS_4_1,
 	EPST_PS_5_0,
+	EPST_PS_6_0,
 
 	//! This is not a type, but a value indicating how much types there are.
 	EPST_COUNT
@@ -78,6 +84,7 @@ const c8* const PIXEL_SHADER_TYPE_NAMES[] = {
 	"ps_4_0",
 	"ps_4_1",
 	"ps_5_0",
+	"ps_6_0",
 	0 };
 
 //! Enum for supported geometry shader types
@@ -86,6 +93,7 @@ enum E_GEOMETRY_SHADER_TYPE
 	EGST_GS_4_0 = 0,
 	EGST_GS_4_1,
 	EGST_GS_5_0,
+	EGST_GS_6_0,
 
 	//! This is not a type, but a value indicating how much types there are.
 	EGST_COUNT
@@ -96,12 +104,14 @@ const c8* const GEOMETRY_SHADER_TYPE_NAMES[] = {
 	"gs_4_0",
 	"gs_4_1",
 	"gs_5_0",
+	"gs_6_0",
 	0 };
 
 //! Enum for supported domain shader types
 enum E_DOMAIN_SHADER_TYPE
 {
 	EDST_DS_5_0 = 0,
+	EDST_DS_6_0,
 
 	//! This is not a type, but a value indicating how much types there are.
 	EDST_COUNT
@@ -110,12 +120,14 @@ enum E_DOMAIN_SHADER_TYPE
 //! String names for supported domain shader types
 const c8* const DOMAIN_SHADER_TYPE_NAMES[] = {
 	"ds_5_0",
+	"ds_6_0",
 	0 };
 
 //! Enum for supported hull shader types
 enum E_HULL_SHADER_TYPE
 {
 	EHST_HS_5_0 = 0,
+	EHST_HS_6_0,
 
 	//! This is not a type, but a value indicating how much types there are.
 	EHST_COUNT
@@ -124,6 +136,7 @@ enum E_HULL_SHADER_TYPE
 //! String names for supported hull shader types
 const c8* const HULL_SHADER_TYPE_NAMES[] = {
 	"hs_5_0",
+	"hs_6_0",
 	0 };
 
 //! Enum for supported compute shader types
@@ -132,6 +145,7 @@ enum E_COMPUTE_SHADER_TYPE
 	ECST_CS_4_0 = 0,
 	ECST_CS_4_1,
 	ECST_CS_5_0,
+	ECST_CS_6_0,
 
 	//! This is not a type, but a value indicating how much types there are.
 	ECST_COUNT
@@ -142,6 +156,7 @@ const c8* const COMPUTE_SHADER_TYPE_NAMES[] = {
 	"cs_4_0",
 	"cs_4_1",
 	"cs_5_0",
+	"cs_6_0",
 	0 };
 
 }// end namespace video

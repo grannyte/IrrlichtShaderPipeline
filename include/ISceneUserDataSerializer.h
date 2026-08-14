@@ -28,12 +28,12 @@ public:
 	virtual ~ISceneUserDataSerializer() {}
 
 	//! Called when the scene manager create a scene node while loading a file.
-	virtual void OnCreateNode(ISceneNode* node) = 0;
+	virtual void OnCreateNode(std::shared_ptr<ISceneNode> node) = 0;
 
 	//! Called when the scene manager read a scene node while loading a file.
 	/** The userData pointer contains a list of attributes with userData which
 	were attached to the scene node in the read scene file.*/
-	virtual void OnReadUserData(ISceneNode* forSceneNode, io::IAttributes* userData) = 0;
+	virtual void OnReadUserData(std::shared_ptr<ISceneNode> forSceneNode, io::IAttributes* userData) = 0;
 
 	//! Called when the scene manager is writing a scene node to an xml file for example.
 	/** Implement this method and return a list of attributes containing the user data
@@ -41,7 +41,7 @@ public:
 	be added. Please note that the scene manager will call drop() to the returned pointer
 	after it no longer needs it, so if you didn't create a new object for the return value
 	and returning a longer existing IAttributes object, simply call grab() before returning it. */
-	virtual io::IAttributes* createUserData(ISceneNode* forSceneNode) = 0;
+	virtual io::IAttributes* createUserData(std::shared_ptr<ISceneNode> forSceneNode) = 0;
 };
 
 } // end namespace scene

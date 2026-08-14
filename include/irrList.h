@@ -8,6 +8,7 @@
 #include "irrTypes.h"
 #include "irrAllocator.h"
 #include "irrMath.h"
+#include <xutility>
 
 namespace irr
 {
@@ -39,6 +40,14 @@ public:
 	{
 	public:
 		Iterator() : Current(0) {}
+
+
+		using value_type = T;
+		using difference_type = int;
+		using pointer = T*;
+		using reference = T&;
+		using iterator_category = std::bidirectional_iterator_tag;
+
 
 		Iterator& operator ++()    { Current = Current->Next; return *this; }
 		Iterator& operator --()    { Current = Current->Prev; return *this; }

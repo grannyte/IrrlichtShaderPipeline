@@ -9,6 +9,7 @@
 #include "ICursorControl.h"
 #include "ICameraSceneNode.h"
 #include "ISceneNodeAnimatorCollisionResponse.h"
+#include "os.h"
 
 namespace irr
 {
@@ -94,175 +95,238 @@ bool CSceneNodeAnimatorCameraFPS::OnEvent(const SEvent& evt)
 	return false;
 }
 
+#pragma float_control( precise,on , push )
 
-void CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node, u32 timeMs)
+
+void irr::scene::CSceneNodeAnimatorCameraFPS::animateNode(ISceneNode* node,
+    u32 timeMs)
 {
-	if (!node || node->getType() != ESNT_CAMERA)
-		return;
+    if (!node || node->getType() != ESNT_CAMERA)
+        return;
 
-	ICameraSceneNode* camera = static_cast<ICameraSceneNode*>(node);
+    auto camera = static_cast<ICameraSceneNode*>(node);
 
-	if (firstUpdate)
-	{
-		camera->updateAbsolutePosition();
-		if (CursorControl )
-		{
-			CursorControl->setPosition(0.5f, 0.5f);
-			CursorPos = CenterCursor = CursorControl->getRelativePosition();
-		}
+    // The animator runs in the camera's PARENT space, because that is the space its position
+    // lives in. Up vector and target are world-space, so they get converted on the way in and
+    // back out. Doing the yaw/movement math in world space instead drags the camera off-heading
+    // as soon as the parent rotates (a planet the camera is orbit-attached to).
+    core::matrix4 parentToWorld;
+    core::matrix4 worldToParent;
+    if (ISceneNode* parent = camera->getRawParent())
+    {
+        parentToWorld = parent->getAbsoluteTransformation();
+        parentToWorld.setTranslation(core::vector3df(0.f, 0.f, 0.f));
+        worldToParent = parentToWorld;
+        worldToParent.makeInverse();
+    }
 
-		LastAnimationTime = timeMs;
+    if (firstUpdate)
+    {
+        // Initialize yaw/pitch from current orientation. Target and absolute position are both
+        // world-space; the result is converted to parent space like everything else here.
+        core::vector3df dir = camera->getTarget() - camera->getAbsolutePosition();
+        worldToParent.rotateVect(dir);
+        dir.normalize();
+        auto ha = dir.getHorizontalAngle();
+        YawAngle = ha.Y;
+        PitchAngle = ha.X;
 
-		firstUpdate = false;
-	}
+        LastUp = camera->getUpVector();
+        worldToParent.rotateVect(LastUp);
+        LastUp.normalize();
+        LastForward = dir;
 
-	// If the camera isn't the active camera, and receiving input, then don't process it.
-	if(!camera->isInputReceiverEnabled())
-	{
-		firstInput = true;
-		return;
-	}
+        // Center cursor
+        if (CursorControl)
+        {
+            CursorControl->setPosition(0.5f, 0.5f);
+            CenterCursor = CursorControl->getRelativePosition();
+        }
 
-	if ( firstInput )
-	{
-		allKeysUp();
-		firstInput = false;
-	}
+        LastAnimationTime = timeMs;
+        firstUpdate = false;
+    }
 
-	scene::ISceneManager * smgr = camera->getSceneManager();
-	if(smgr && smgr->getActiveCamera() != camera)
-		return;
+    // Only animate if this camera is active & receiving input
+    if (!camera->isInputReceiverEnabled() ||
+        (camera->getSceneManager() &&
+            camera->getSceneManager()->getActiveCamera().get() != camera))
+    {
+        firstInput = true;
+        return;
+    }
 
-	// get time
-	f32 timeDiff = (f32) ( timeMs - LastAnimationTime );
-	LastAnimationTime = timeMs;
+    if (firstInput)
+    {
+        allKeysUp();
+        firstInput = false;
+    }
 
-	// update position
-	core::vector3df pos = camera->getPosition();
+    // Delta time
+    f32 dt = (f32)(timeMs - LastAnimationTime);
+    LastAnimationTime = timeMs;
 
-	// Update rotation
-	core::vector3df target = (camera->getTarget() - camera->getAbsolutePosition());
-	core::vector3df relativeRotation = target.getHorizontalAngle();
+    // Up vector may be reassigned externally between ticks (e.g. orbit-attach); rebase to preserve look direction.
+    // Rebase on any real change, not past a coarse threshold: an orbiting body turns the up vector by far less
+    // than a degree per tick, so a threshold large enough to be worth having never fires and the stored angles
+    // get silently reinterpreted instead. Rebasing also hides yawBase's reference flip, since the rebase and the
+    // reconstruction below share the same yawBase(up).
+    core::vector3df up = camera->getUpVector();
+    worldToParent.rotateVect(up);
+    up.normalize();
+    if (up != LastUp)
+        rebaseYawPitchToUp(up, LastForward);
+    LastUp = up;
 
-	if (CursorControl)
-	{
-		if (CursorPos != CenterCursor)
-		{
-			relativeRotation.Y -= (0.5f - CursorPos.X) * RotateSpeed;
-			relativeRotation.X -= (0.5f - CursorPos.Y) * RotateSpeed * MouseYDirection;
+    //
+    // --- MOUSE LOOK (inverted X/Y) ---
+    //
+    if (CursorControl)
+    {
+        core::vector2df cur = CursorControl->getRelativePosition();
+        core::vector2df delta = cur - CenterCursor;
 
-			// X < MaxVerticalAngle or X > 360-MaxVerticalAngle
+        if (delta.X != 0.f || delta.Y != 0.f)
+        {
+            // Store the tentative new angles
+            f32 newYaw = YawAngle + delta.X * RotateSpeed;
+            f32 newPitch = PitchAngle - delta.Y * RotateSpeed * MouseYDirection;
 
-			if (relativeRotation.X > MaxVerticalAngle*2 &&
-				relativeRotation.X < 360.0f-MaxVerticalAngle)
-			{
-				relativeRotation.X = 360.0f-MaxVerticalAngle;
-			}
-			else
-			if (relativeRotation.X > MaxVerticalAngle &&
-				relativeRotation.X < 360.0f-MaxVerticalAngle)
-			{
-				relativeRotation.X = MaxVerticalAngle;
-			}
+            // Test if the new orientation would cause gimbal lock or flip
+            core::quaternion qYaw, qPitch;
+            qYaw.fromAngleAxis(core::DEGTORAD * newYaw, up);
+            core::vector3df fwd = qYaw * yawBase(up);
+            core::vector3df right = fwd.crossProduct(up).normalize();
+            qPitch.fromAngleAxis(core::DEGTORAD * newPitch, right);
+            core::vector3df testForward = qPitch * fwd;
+            testForward.normalize();
 
-			// Do the fix as normal, special case below
-			// reset cursor position to the centre of the window.
-			CursorControl->setPosition(0.5f, 0.5f);
-			CenterCursor = CursorControl->getRelativePosition();
+            // Check angle between forward and up vector
+            // Prevent looking too close to straight up or down (leave a safety margin)
+            f32 dotProduct = testForward.dotProduct(up);
+            f32 angle = core::RADTODEG * acos(core::clamp(dotProduct, -1.0f, 1.0f));
 
-			// needed to avoid problems when the event receiver is disabled
-			CursorPos = CenterCursor;
-		}
+            // Allow looking in any direction as long as we're not within 5 degrees of straight up/down
+            const f32 safetyMargin = 5.0f;
+            if (angle > safetyMargin && angle < (180.0f - safetyMargin))
+            {
+                YawAngle = newYaw;
+                PitchAngle = newPitch;
+            }
+            // If the new angle would be too extreme, only apply the yaw (horizontal rotation)
+            else
+            {
+                YawAngle = newYaw;
+                // Keep pitch at the limit by recalculating it
+                // This allows smooth rotation along the horizon even when at pitch limits
+            }
 
-		// Special case, mouse is whipped outside of window before it can update.
-		video::IVideoDriver* driver = smgr->getVideoDriver();
-		core::vector2d<u32> mousepos(u32(CursorControl->getPosition().X), u32(CursorControl->getPosition().Y));
-		core::rect<u32> screenRect(0, 0, driver->getScreenSize().Width, driver->getScreenSize().Height);
+            // recenter cursor
+            CursorControl->setPosition(0.5f, 0.5f);
+            CenterCursor = CursorControl->getRelativePosition();
+        }
+    }
 
-		// Only if we are moving outside quickly.
-		bool reset = !screenRect.isPointInside(mousepos);
+    //
+    // --- REBUILD FORWARD FROM YAW/PITCH ---
+    //
+    core::quaternion qYaw, qPitch;
 
-		if(reset)
-		{
-			// Force a reset.
-			CursorControl->setPosition(0.5f, 0.5f);
-			CenterCursor = CursorControl->getRelativePosition();
-			CursorPos = CenterCursor;
- 		}
-	}
+    qYaw.fromAngleAxis(core::DEGTORAD * YawAngle, up);
 
-	// set target
+    // base forward = (0,0,1) projected into the horizon plane of up (see yawBase)
+    core::vector3df fwd = qYaw * yawBase(up);
+    core::vector3df right = fwd.crossProduct(up).normalize();
 
-	target.set(0,0, core::max_(1.f, pos.getLength()));
-	core::vector3df movedir = target;
+    qPitch.fromAngleAxis(core::DEGTORAD * PitchAngle, right);
+    core::vector3df finalForward = qPitch * fwd;
+    LastForward = finalForward;
 
-	core::matrix4 mat;
-	mat.setRotationDegrees(core::vector3df(relativeRotation.X, relativeRotation.Y, 0));
-	mat.transformVect(target);
+    //
+    // --- MOVEMENT (strafe signs inverted) ---
+    //
+    core::vector3df pos = camera->getPosition();
+    core::vector3df movF = finalForward;
+    core::vector3df movR = movF.crossProduct(up).normalize();
 
-	if (NoVerticalMovement)
-	{
-		mat.setRotationDegrees(core::vector3df(0, relativeRotation.Y, 0));
-		mat.transformVect(movedir);
-	}
-	else
-	{
-		movedir = target;
-	}
+    if (NoVerticalMovement)
+    {
+        movF -= up * movF.dotProduct(up);
+        movF.normalize();
+        movR -= up * movR.dotProduct(up);
+        movR.normalize();
+    }
 
-	movedir.normalize();
+    if (CursorKeys[EKA_MOVE_FORWARD])
+        pos += movF * dt * MoveSpeed;
+    if (CursorKeys[EKA_MOVE_BACKWARD])
+        pos -= movF * dt * MoveSpeed;
 
-	if (CursorKeys[EKA_MOVE_FORWARD])
-		pos += movedir * timeDiff * MoveSpeed;
+    // now inverted: pressing LEFT adds +R, pressing RIGHT subtracts R
+    if (CursorKeys[EKA_STRAFE_LEFT])
+        pos += movR * dt * MoveSpeed;
+    if (CursorKeys[EKA_STRAFE_RIGHT])
+        pos -= movR * dt * MoveSpeed;
 
-	if (CursorKeys[EKA_MOVE_BACKWARD])
-		pos -= movedir * timeDiff * MoveSpeed;
+    if (CursorKeys[EKA_JUMP_UP])
+    {
+        for (auto* anim : camera->getAnimators())
+            if (anim->getType() == ESNAT_COLLISION_RESPONSE)
+            {
+                auto* cr = static_cast<ISceneNodeAnimatorCollisionResponse*>(anim);
+                if (!cr->isFalling())
+                    cr->jump(JumpSpeed);
+            }
+    }
 
-	// strafing
-
-	core::vector3df strafevect = target;
-	strafevect = strafevect.crossProduct(camera->getUpVector());
-
-	if (NoVerticalMovement)
-		strafevect.Y = 0.0f;
-
-	strafevect.normalize();
-
-	if (CursorKeys[EKA_STRAFE_LEFT])
-		pos += strafevect * timeDiff * MoveSpeed;
-
-	if (CursorKeys[EKA_STRAFE_RIGHT])
-		pos -= strafevect * timeDiff * MoveSpeed;
-
-	// For jumping, we find the collision response animator attached to our camera
-	// and if it's not falling, we tell it to jump.
-	if (CursorKeys[EKA_JUMP_UP])
-	{
-		const ISceneNodeAnimatorList& animators = camera->getAnimators();
-		ISceneNodeAnimatorList::ConstIterator it = animators.begin();
-		while(it != animators.end())
-		{
-			if(ESNAT_COLLISION_RESPONSE == (*it)->getType())
-			{
-				ISceneNodeAnimatorCollisionResponse * collisionResponse =
-					static_cast<ISceneNodeAnimatorCollisionResponse *>(*it);
-
-				if(!collisionResponse->isFalling())
-					collisionResponse->jump(JumpSpeed);
-			}
-
-			it++;
-		}
-	}
-
-	// write translation
-	camera->setPosition(pos);
-
-	// write right target
-	target += pos;
-	camera->setTarget(target);
+    // Write position (parent-local) and target (world). Target is anchored on the absolute position
+    // because that is the space it is consumed in - every reader differences it against the camera's
+    // absolute position to recover a direction. Under a camera-centred floating origin the absolute
+    // position sits at ~0, so the distance below is normally just the 1.0 floor; that is fine, a
+    // short baseline from a near-origin camera gives the most exact direction.
+    camera->setPosition(pos);
+    camera->updateAbsolutePosition();
+    core::vector3df worldForward = finalForward;
+    parentToWorld.rotateVect(worldForward);
+    worldForward.normalize();
+    const core::vector3df absolutePosition = camera->getAbsolutePosition();
+    camera->setTarget(absolutePosition + worldForward * std::max(absolutePosition.getLength(), 1.0f));
 }
 
+#pragma float_control( pop )
+
+
+// (0,0,1) projected into the horizon plane of up. Yawing this (not raw (0,0,1)) about up is what keeps the
+// reconstruction consistent with rebaseYawPitchToUp when up is tilted; equals (0,0,1) for an untilted up.
+// The fallback branch is a discontinuity, but up only ever reaches it by changing, and any change to up
+// rebases the angles against this same reference first, so the flip cancels out.
+core::vector3df CSceneNodeAnimatorCameraFPS::yawBase(const core::vector3df& up)
+{
+	core::vector3df zHoriz = core::vector3df(0, 0, 1) - up * up.Z;
+	if (zHoriz.getLengthSQ() < 0.0001f)
+		zHoriz = core::vector3df(1, 0, 0) - up * up.X;
+	zHoriz.normalize();
+	return zHoriz;
+}
+
+// Rebuilds Yaw/PitchAngle so that reconstructing forward under `up` yields `forward`, instead of letting the
+// old angles get reinterpreted against the new up vector. Consistent with the reconstruction now that both use
+// yawBase(up) as the yaw reference.
+void CSceneNodeAnimatorCameraFPS::rebaseYawPitchToUp(const core::vector3df& up, const core::vector3df& forward)
+{
+	core::vector3df horiz = forward - up * forward.dotProduct(up);
+	if (horiz.getLengthSQ() < 0.0001f)
+		horiz = core::vector3df(1, 0, 0) - up * up.X;
+	horiz.normalize();
+
+	core::vector3df zHoriz = yawBase(up);
+
+	f32 cosYaw = core::clamp(zHoriz.dotProduct(horiz), -1.0f, 1.0f);
+	core::vector3df cross = zHoriz.crossProduct(horiz);
+	f32 sign = (cross.dotProduct(up) >= 0.0f) ? 1.0f : -1.0f;
+	YawAngle = core::RADTODEG * acosf(cosYaw) * sign;
+	PitchAngle = 90.0f - core::RADTODEG * acosf(core::clamp(forward.dotProduct(up), -1.0f, 1.0f));
+}
 
 void CSceneNodeAnimatorCameraFPS::allKeysUp()
 {
@@ -340,7 +404,18 @@ void CSceneNodeAnimatorCameraFPS::setInvertMouse(bool invert)
 }
 
 
-ISceneNodeAnimator* CSceneNodeAnimatorCameraFPS::createClone(ISceneNode* node, ISceneManager* newManager)
+// direction and up are in the camera's parent space, the frame animateNode() keeps its angles in.
+void CSceneNodeAnimatorCameraFPS::setLookDirection(const core::vector3df& direction, const core::vector3df& up)
+{
+	core::vector3df dir = direction;
+	dir.normalize();
+	rebaseYawPitchToUp(up, dir);
+	LastUp = up;
+	LastUp.normalize();
+	LastForward = dir;
+}
+
+ISceneNodeAnimator* CSceneNodeAnimatorCameraFPS::createClone(std::shared_ptr<ISceneNode> node, std::shared_ptr<ISceneManager> newManager)
 {
 	CSceneNodeAnimatorCameraFPS * newAnimator =
 		new CSceneNodeAnimatorCameraFPS(CursorControl,	RotateSpeed, MoveSpeed, JumpSpeed,

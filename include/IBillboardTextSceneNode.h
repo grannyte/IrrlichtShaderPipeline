@@ -23,9 +23,9 @@ class IBillboardTextSceneNode : public IBillboardSceneNode
 public:
 
 	//! Constructor
-	IBillboardTextSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id,
+	IBillboardTextSceneNode( std::shared_ptr<ISceneManager> mgr, s32 id,
 		const core::vector3df& position = core::vector3df(0,0,0))
-		: IBillboardSceneNode(parent, mgr, id, position) {}
+		: IBillboardSceneNode(mgr, id, position) {}
 
 	//! Sets the size of the billboard.
 	virtual void setSize(const core::dimension2d<f32>& size) = 0;

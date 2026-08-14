@@ -24,7 +24,7 @@ CSoftwareTexture::CSoftwareTexture(IImage* image, const io::path& name,
 
 	DriverType = EDT_SOFTWARE;
 	ColorFormat = ECF_A1R5G5B5;
-	HasMipMaps = false;
+	MipMaps = false;
 	HasAlpha = true;
 	IsRenderTarget = renderTarget;
 

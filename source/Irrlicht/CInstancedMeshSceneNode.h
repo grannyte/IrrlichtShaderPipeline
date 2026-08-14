@@ -19,7 +19,7 @@ namespace irr
 		public:
 
 			//! constructor
-			CInstancedMeshSceneNode(IMesh* mesh, ISceneNode* parent, ISceneManager* mgr, s32 id,
+			CInstancedMeshSceneNode(IMesh* mesh,std::shared_ptr<ISceneManager> mgr, s32 id,
 				const core::vector3df& position = core::vector3df(0, 0, 0),
 				const core::vector3df& rotation = core::vector3df(0, 0, 0),
 				const core::vector3df& scale = core::vector3df(1.0f, 1.0f, 1.0f));
@@ -54,26 +54,27 @@ namespace irr
 			//! Sets a new mesh
 			virtual void setMesh(IMesh* mesh);
 
-			virtual ISceneNode* addInstance(ISceneNode* node);
+			virtual std::shared_ptr<ISceneNode> addInstance(std::shared_ptr<ISceneNode> node);
 
-			virtual ISceneNode* addInstance(const core::vector3df& position,
+			virtual std::shared_ptr<ISceneNode> addInstance(const core::vector3df& position,
 				const core::vector3df& rotation = core::vector3df(0, 0, 0),
 				const core::vector3df& scale = core::vector3df(1.0f, 1.0f, 1.0f),
 				s32 id = -1);
 
 			virtual bool removeInstance(u32 index);
 
-			virtual bool removeInstance(ISceneNode* instance);
+			virtual bool removeInstance(std::shared_ptr<ISceneNode> instance);
 
 			virtual bool removeInstanceById(s32 id);
 
-			virtual ISceneNode* getInstance(u32 index) const;
+			virtual std::shared_ptr<ISceneNode> getInstance(u32 index) const;
 
-			virtual ISceneNode* getInstanceById(s32 id) const;
+			virtual std::shared_ptr<ISceneNode> getInstanceById(s32 id) const;
 
 			virtual u32 getInstanceCount() const;
 
-			virtual ISceneNode* clone(ISceneNode* newParent, ISceneManager* newManager);
+			virtual std::shared_ptr<ISceneNode> clone(std::shared_ptr<ISceneNode> newParent,
+			                                          std::shared_ptr<ISceneManager> newManager);
 
 			//! Get the currently defined mesh for display.
 			/** \return Pointer to mesh which is displayed by this node. */
@@ -97,7 +98,7 @@ namespace irr
 			\return Pointer to the created shadow scene node. This pointer
 			should not be dropped. See IReferenceCounted::drop() for more
 			information. */
-			virtual IShadowVolumeSceneNode* addShadowVolumeSceneNode(const IMesh* shadowMesh = 0,
+			virtual std::shared_ptr<IShadowVolumeSceneNode> addShadowVolumeSceneNode(const IMesh* shadowMesh = 0,
 				s32 id = -1, bool zfailmethod = true, f32 infinity = 1000.0f);
 
 			//! Sets if the scene node should not copy the materials of the mesh but use them in a read only style.
@@ -125,7 +126,7 @@ namespace irr
 
 			bool staticInstances;
 
-			core::array<ISceneNode*> instanceNodeArray;
+			core::array<std::shared_ptr<ISceneNode>> instanceNodeArray;
 
 			bool readOnlyMaterial;
 			video::SMaterial material;
@@ -134,7 +135,7 @@ namespace irr
 			{
 				irr::core::matrix4 transformation;
 
-				bool operator==(const StarInst &other) const
+				bool operator==(const StarInst& other) const
 				{
 					if ((this->transformation == other.transformation))
 						return true;

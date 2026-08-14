@@ -30,7 +30,7 @@ CSoftwareTexture2::CSoftwareTexture2(IImage* image, const io::path& name,
 
 	DriverType = EDT_BURNINGSVIDEO;
 	ColorFormat = BURNINGSHADER_COLOR_FORMAT;
-	HasMipMaps = (Flags & GEN_MIPMAP) != 0;
+	MipMaps = (Flags & GEN_MIPMAP) != 0;
 	HasAlpha = (Flags & HAS_ALPHA) != 0;
 	IsRenderTarget = (Flags & IS_RENDERTARGET) != 0;
 

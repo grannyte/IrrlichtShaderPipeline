@@ -4,6 +4,7 @@
 
 #include "CEmptySceneNode.h"
 #include "ISceneManager.h"
+#include "IVideoDriver.h"
 
 namespace irr
 {
@@ -11,8 +12,8 @@ namespace scene
 {
 
 //! constructor
-CEmptySceneNode::CEmptySceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id)
-: ISceneNode(parent, mgr, id)
+CEmptySceneNode::CEmptySceneNode(const std::shared_ptr<ISceneManager>& mgr, irr::s32 id)
+: ISceneNode( mgr, id)
 {
 	#ifdef _DEBUG
 	setDebugName("CEmptySceneNode");
@@ -26,7 +27,7 @@ CEmptySceneNode::CEmptySceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id)
 void CEmptySceneNode::OnRegisterSceneNode()
 {
 	if (IsVisible)
-		SceneManager->registerNodeForRendering(this);
+		SceneManager.lock()->registerNodeForRendering(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), ESNRP_AUTOMATIC);
 
 	ISceneNode::OnRegisterSceneNode();
 }
@@ -35,33 +36,48 @@ void CEmptySceneNode::OnRegisterSceneNode()
 //! render
 void CEmptySceneNode::render()
 {
+	Box.reset(0, 0, 0);
+	Box.addInternalPoint(RelativeScale);
+	Box.addInternalPoint(-RelativeScale);
+
+
+		if (DebugDataVisible & scene::EDS_BBOX)
+		{
+			video::SMaterial m;
+			m.Lighting = false;
+			auto driver = SceneManager.lock()->getVideoDriver();
+			driver->setMaterial(m);
+			driver->setTransform(video::ETS_WORLD, AbsoluteTransformation);
+			driver->draw3DBox(Box, video::SColor(255, 255, 255, 255));
+		}
+	
+
+
 	// do nothing
 }
 
 
 //! returns the axis aligned bounding box of this node
-const core::aabbox3d<f32>& CEmptySceneNode::getBoundingBox() const
+const irr::core::aabbox3d<f32>& CEmptySceneNode::getBoundingBox() const
 {
 	return Box;
 }
 
 
 //! Creates a clone of this scene node and its children.
-ISceneNode* CEmptySceneNode::clone(ISceneNode* newParent, ISceneManager* newManager)
+std::shared_ptr<ISceneNode> CEmptySceneNode::clone(std::shared_ptr<ISceneNode> newParent,
+                                                   std::shared_ptr<ISceneManager> newManager)
 {
 	if (!newParent)
-		newParent = Parent;
+		newParent = std::dynamic_pointer_cast<ISceneNode>(rawParent->shared_from_this());
 	if (!newManager)
-		newManager = SceneManager;
+		newManager = SceneManager.lock();
 
-	CEmptySceneNode* nb = new CEmptySceneNode(newParent,
+	auto  nb = std::make_shared< CEmptySceneNode>(
 		newManager, ID);
-
-	nb->cloneMembers(this, newManager);
+	newParent->addChild(nb);
+	nb->cloneMembers(std::dynamic_pointer_cast<ISceneNode>(shared_from_this()), newManager);
 	nb->Box = Box;
-
-	if ( newParent )
-		nb->drop();
 	return nb;
 }
 

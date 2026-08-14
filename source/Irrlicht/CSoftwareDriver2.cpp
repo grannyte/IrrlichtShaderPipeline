@@ -105,6 +105,14 @@ inline vec4 refract (const vec4 &I, const vec4 &N, float eta) {
 
 inline float length ( const vec3 &v ) { return sqrtf ( v.x * v.x + v.y * v.y + v.z * v.z ); }
 vec3 normalize ( const vec3 &v ) { 	float l = 1.f / length ( v ); return vec3 ( v.x * l, v.y * l, v.z * l ); }
+
+#ifdef max
+#undef max
+#endif
+#ifdef min
+#undef min
+#endif
+
 float max ( float a, float b ) { return a > b ? a : b; }
 float min ( float a, float b ) { return a < b ? a : b; }
 vec4 clamp ( const vec4 &a, f32 low, f32 high ) { return vec4 ( min (max(a.x,low), high), min (max(a.y,low), high), min (max(a.z,low), high), min (max(a.w,low), high) ); }

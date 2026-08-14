@@ -53,20 +53,34 @@ namespace video
 			: Texture(0),
 				TextureWrapU(ETC_REPEAT),
 				TextureWrapV(ETC_REPEAT),
-				BilinearFilter(true),
+				BilinearFilter(false),
 				TrilinearFilter(false),
-				AnisotropicFilter(0),
+				AnisotropicFilter(16),
 				LODBias(0),
 				TextureMatrix(0)
 			{}
 
 		//! Copy constructor
 		/** \param other Material layer to copy from. */
-		SMaterialLayer(const SMaterialLayer& other)
+		SMaterialLayer(const SMaterialLayer& other):TextureMatrix(0)
 		{
 			// This pointer is checked during assignment
-			TextureMatrix = 0;
 			*this = other;
+		}
+		//! move constructor
+		/** \param other Material layer to move from. */
+		SMaterialLayer(SMaterialLayer&& other) noexcept
+			: Texture(other.Texture),
+			TextureWrapU(other.TextureWrapU),
+			TextureWrapV(other.TextureWrapV),
+			BilinearFilter(other.BilinearFilter),
+			TrilinearFilter(other.TrilinearFilter),
+			AnisotropicFilter(other.AnisotropicFilter),
+			LODBias(other.LODBias),
+			TextureMatrix(other.TextureMatrix)
+		{
+				other.Texture = nullptr;
+				other.TextureMatrix = nullptr;
 		}
 
 		//! Destructor
@@ -86,6 +100,7 @@ namespace video
 				return *this;
 
 			Texture = other.Texture;
+
 			if (TextureMatrix)
 			{
 				if (other.TextureMatrix)
@@ -104,8 +119,6 @@ namespace video
 					TextureMatrix = MatrixAllocator.allocate(1);
 					MatrixAllocator.construct(TextureMatrix,*other.TextureMatrix);
 				}
-				else
-					TextureMatrix = 0;
 			}
 			TextureWrapU = other.TextureWrapU;
 			TextureWrapV = other.TextureWrapV;
@@ -116,6 +129,29 @@ namespace video
 
 			return *this;
 		}
+
+		//! move assignment operator
+		/** \param other Material layer to move from.*/
+		SMaterialLayer& operator=(SMaterialLayer&& other) noexcept
+		{
+			// Check for self-assignment!
+			if (this == &other)
+				return *this;
+
+			std::swap(Texture , other.Texture);
+			std::swap(TextureMatrix , other.TextureMatrix);
+
+
+			TextureWrapU = other.TextureWrapU;
+			TextureWrapV = other.TextureWrapV;
+			BilinearFilter = other.BilinearFilter;
+			TrilinearFilter = other.TrilinearFilter;
+			AnisotropicFilter = other.AnisotropicFilter;
+			LODBias = other.LODBias;
+
+			return *this;
+		}
+
 
 		//! Gets the texture transformation matrix
 		/** \return Texture matrix of this layer. */
@@ -150,6 +186,11 @@ namespace video
 			}
 			else
 				*TextureMatrix = mat;
+		}
+
+		bool hasTextureMatrix() const
+		{
+			return TextureMatrix != 0;
 		}
 
 		//! Inequality operator

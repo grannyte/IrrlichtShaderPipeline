@@ -293,6 +293,29 @@ inline quaternion& quaternion::operator=(const matrix4& m)
 // multiplication operator
 inline quaternion quaternion::operator*(const quaternion& other) const
 {
+#ifdef _IRR_SSE
+	// Lanes are X,Y,Z,W. Terms are accumulated in the same order as the scalar
+	// path below, so the result is bit-identical to it.
+	const __m128 a = _mm_loadu_ps(&X);
+	const __m128 b = _mm_loadu_ps(&other.X);
+	const __m128 flipW = _mm_castsi128_ps(_mm_setr_epi32(0, 0, 0, (int)0x80000000));
+
+	__m128 t0 = _mm_mul_ps(_mm_shuffle_ps(b, b, _MM_SHUFFLE(3,3,3,3)), a);
+	__m128 t1 = _mm_mul_ps(_mm_shuffle_ps(b, b, _MM_SHUFFLE(0,2,1,0)),
+	                       _mm_shuffle_ps(a, a, _MM_SHUFFLE(0,3,3,3)));
+	__m128 t2 = _mm_mul_ps(_mm_shuffle_ps(b, b, _MM_SHUFFLE(1,0,2,1)),
+	                       _mm_shuffle_ps(a, a, _MM_SHUFFLE(1,1,0,2)));
+	__m128 t3 = _mm_mul_ps(_mm_shuffle_ps(b, b, _MM_SHUFFLE(2,1,0,2)),
+	                       _mm_shuffle_ps(a, a, _MM_SHUFFLE(2,0,2,1)));
+
+	__m128 r = _mm_add_ps(t0, _mm_xor_ps(t1, flipW));
+	r = _mm_add_ps(r, _mm_xor_ps(t2, flipW));
+	r = _mm_sub_ps(r, t3);
+
+	quaternion tmp;
+	_mm_storeu_ps(&tmp.X, r);
+	return tmp;
+#else
 	quaternion tmp;
 
 	tmp.W = (other.W * W) - (other.X * X) - (other.Y * Y) - (other.Z * Z);
@@ -301,6 +324,7 @@ inline quaternion quaternion::operator*(const quaternion& other) const
 	tmp.Z = (other.W * Z) + (other.Z * W) + (other.X * Y) - (other.Y * X);
 
 	return tmp;
+#endif
 }
 
 

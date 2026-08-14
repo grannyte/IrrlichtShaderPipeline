@@ -40,7 +40,7 @@ namespace scene
 		/** Please note that you will have to drop
 		(IReferenceCounted::drop()) the returned pointer after calling
 		this. */
-		virtual ISceneNodeAnimator* createClone(ISceneNode* node, ISceneManager* newManager=0) _IRR_OVERRIDE_;
+		virtual ISceneNodeAnimator* createClone(std::shared_ptr<ISceneNode> node, std::shared_ptr<ISceneManager> newManager=0) _IRR_OVERRIDE_;
 
 	protected:
 

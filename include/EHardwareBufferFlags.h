@@ -22,7 +22,10 @@ namespace scene
 		EHM_DYNAMIC,
 
 		//! Always changed, cache optimizing on the GPU
-		EHM_STREAM
+		EHM_STREAM,
+
+		//! cpu access buffer
+		EHM_STAGING
 	};
 
 	enum E_BUFFER_TYPE
@@ -34,7 +37,12 @@ namespace scene
 		//! Change the index mapping
 		EBT_INDEX,
 		//! Change both vertex and index mapping to the same value
-		EBT_VERTEX_AND_INDEX
+		EBT_VERTEX_AND_INDEX,
+
+		EBT_STREAM =4,
+
+		EBT_COMPUTE = 8
+
 	};
 
 } // end namespace scene

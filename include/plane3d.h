@@ -108,7 +108,7 @@ class plane3d
 			const vector3d<T>& linePoint2) const
 		{
 			vector3d<T> vect = linePoint2 - linePoint1;
-			T t2 = (f32)Normal.dotProduct(vect);
+			T t2 = irr::core::max_<f32>((f32)Normal.dotProduct(vect),1);
 			return (f32)-((Normal.dotProduct(linePoint1) + D) / t2);
 		}
 

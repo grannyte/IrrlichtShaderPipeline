@@ -14,27 +14,28 @@ namespace scene
 	class CIndexBuffer : public IIndexBuffer
 	{
 	public:
-		CIndexBuffer(video::E_INDEX_TYPE type = video::EIT_16BIT) : Type(type), HardwareMappingHint(EHM_NEVER), ChangedID(1), Indices(0)
+		CIndexBuffer(video::E_INDEX_TYPE type = video::EIT_16BIT) :IIndexBuffer(), Type(type)
 		{
 #ifdef _DEBUG
 			setDebugName("CIndexBuffer");
 #endif
 			if(Type == video::EIT_32BIT)
-				Indices = new CIndexList<u32>();
+				Indices = std::make_unique<CIndexList<u32>>();
 			else // EIT_16BIT
-				Indices = new CIndexList<u16>();
+				Indices = std::make_unique<CIndexList<u16>>();
 		}
 
-		CIndexBuffer(const CIndexBuffer &indexBuffer) : Type(video::EIT_16BIT), HardwareMappingHint(EHM_NEVER), ChangedID(1), Indices(0)
+		CIndexBuffer(const CIndexBuffer &indexBuffer) :IIndexBuffer(), Type(video::EIT_16BIT)
 		{
 			Type = indexBuffer.Type;
 
 			HardwareMappingHint = indexBuffer.HardwareMappingHint;
 
+
 			if (Type == video::EIT_32BIT)
-				Indices = new CIndexList<u32>();
+				Indices = std::make_unique<CIndexList<u32>>();
 			else // EIT_16BIT
-				Indices = new CIndexList<u16>();
+				Indices = std::make_unique<CIndexList<u16>>();
 
 			const u32 ibCount = indexBuffer.Indices->size();
 
@@ -46,8 +47,29 @@ namespace scene
 
 		virtual ~CIndexBuffer()
 		{
-			delete Indices;
 		}
+
+		CIndexBuffer& operator=(const CIndexBuffer& other)
+		{
+			Type = other.Type;
+
+			HardwareMappingHint = other.HardwareMappingHint;
+
+
+			if (Type == video::EIT_32BIT)
+				Indices = std::make_unique<CIndexList<u32>>();
+			else // EIT_16BIT
+				Indices = std::make_unique<CIndexList<u16>>();
+
+			const u32 ibCount = other.Indices->size();
+
+			Indices->reallocate(ibCount);
+
+			for (u32 i = 0; i < ibCount; ++i)
+				addIndex(other.getIndex(i));
+			return *this;
+		}
+
 
 		virtual void clear()
 		{
@@ -91,18 +113,18 @@ namespace scene
 
 			Type = type;
 
-			IIndexList* IndicesList = 0;
+			std::unique_ptr<IIndexList> IndicesList = 0;
 
 			switch (Type)
 			{
 				case video::EIT_16BIT:
 				{
-					IndicesList = new CIndexList<u16>();
+					IndicesList = std::make_unique<CIndexList<u16>>();
 					break;
 				}
 				case video::EIT_32BIT:
 				{
-					IndicesList = new CIndexList<u32>();
+					IndicesList = std::make_unique<CIndexList<u32>>();
 					break;
 				}
 			}
@@ -113,24 +135,9 @@ namespace scene
 
 				for(u32 i = 0; i < Indices->size(); ++i)
 					IndicesList->addIndex(Indices->getIndex(i));
-
-				delete Indices;
 			}
 
-			Indices = IndicesList;
-		}
-
-		virtual E_HARDWARE_MAPPING getHardwareMappingHint() const
-		{
-			return HardwareMappingHint;
-		}
-
-		virtual void setHardwareMappingHint(E_HARDWARE_MAPPING hardwareMappingHint)
-		{
-			if (HardwareMappingHint != hardwareMappingHint)
-				setDirty();
-
-			HardwareMappingHint = hardwareMappingHint;
+			Indices = std::move(IndicesList);
 		}
 
 		virtual void addIndex(const u32& index)
@@ -165,18 +172,27 @@ namespace scene
 		{
 			Indices->setIndex(id, index);
 		}		
+		
 
-		virtual void setDirty()
+
+		virtual void downloadFromGPU() override
 		{
 			if (HardwareBuffer)
-				HardwareBuffer->requestUpdate();
+			{
+				u32 sizeOfIndex = sizeof(u16);
 
-			++ChangedID;
-		}
+				if (Type == video::EIT_32BIT)
+					sizeOfIndex = sizeof(u32);
 
-		virtual u32 getChangedID() const
-		{
-			return ChangedID;
+				void* lcked = HardwareBuffer->lock(true);
+				// resize the data if needed
+				if (Indices->size() != (HardwareBuffer->size() / sizeOfIndex))
+					Indices->set_used(HardwareBuffer->size() / sizeOfIndex);
+				// copy the data
+				memcpy(Indices->pointer(), lcked, HardwareBuffer->size());
+
+
+			}
 		}
 
 	protected:
@@ -219,52 +235,52 @@ namespace scene
 			{
 			}
 
-			virtual void clear()
+			virtual void clear() override
 			{
 				Data.clear();
 			}
 
-			virtual void* pointer()
+			virtual void* pointer() override
 			{
 				return Data.pointer();
 			}
 
-			virtual u32 size() const
+			virtual u32 size() const override
 			{
 				return Data.size();
 			}
 
-			virtual u32 getLast()
+			virtual u32 getLast() override
 			{
 				return (u32)Data.getLast();
 			}
 
-			virtual void set_used(u32 used)
+			virtual void set_used(u32 used) override
 			{
 				Data.set_used(used);
 			}
 
-			virtual void reallocate(u32 size)
+			virtual void reallocate(u32 size) override
 			{
 				Data.reallocate(size);
 			}
 
-			virtual u32 allocated_size() const
+			virtual u32 allocated_size() const override
 			{
 				return Data.allocated_size();
 			}
 
-			virtual s32 linear_reverse_search(const u32& element) const
+			virtual s32 linear_reverse_search(const u32& element) const override
 			{
 				return Data.linear_reverse_search(element);
 			}
 
-			virtual void addIndex(const u32& index)
+			virtual void addIndex(const u32& index) override
 			{
 				Data.push_back(index);
 			}
 
-			virtual u32 getIndex(u32 id) const
+			virtual u32 getIndex(u32 id) const override
 			{
 				if (id < Data.size())
 					return Data[id];
@@ -272,7 +288,7 @@ namespace scene
 				return 0;
 			}
 
-			virtual void setIndex(u32 id, u32 index)
+			virtual void setIndex(u32 id, u32 index) override
 			{
 				if (id < Data.size())
 					Data[id] = (T)index;
@@ -284,12 +300,9 @@ namespace scene
 
 		video::E_INDEX_TYPE Type;
 
-		E_HARDWARE_MAPPING HardwareMappingHint;
+		std::unique_ptr<IIndexList> Indices;
 
-		u32 ChangedID;
-
-		IIndexList* Indices;
-	};
+};
 
 	//typedef CIndexList<u16> SIndexBuffer16;
 	//typedef CIndexList<u32> SIndexBuffer32;

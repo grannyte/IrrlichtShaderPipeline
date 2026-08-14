@@ -12,13 +12,14 @@ namespace irr
 {
 namespace scene
 {
-
-	class CMeshSceneNode : public IMeshSceneNode
+	//oups you have been promoted as an involontary member of the api
+	class IRRLICHT_API CMeshSceneNode : public IMeshSceneNode
 	{
 	public:
 
 		//! constructor
-		CMeshSceneNode(IMesh* mesh, ISceneNode* parent, ISceneManager* mgr,	s32 id,
+		CMeshSceneNode(IMesh* mesh,
+			const std::shared_ptr<ISceneManager>& mgr,	s32 id,
 			const core::vector3df& position = core::vector3df(0,0,0),
 			const core::vector3df& rotation = core::vector3df(0,0,0),
 			const core::vector3df& scale = core::vector3df(1.0f, 1.0f, 1.0f));
@@ -28,6 +29,9 @@ namespace scene
 
 		//! frame
 		virtual void OnRegisterSceneNode() _IRR_OVERRIDE_;
+
+		//! animate
+		virtual void OnAnimate(u32 timeMs) _IRR_OVERRIDE_;
 
 		//! renders the node.
 		virtual void render() _IRR_OVERRIDE_;
@@ -62,8 +66,8 @@ namespace scene
 
 		//! Creates shadow volume scene node as child of this node
 		//! and returns a pointer to it.
-		virtual IShadowVolumeSceneNode* addShadowVolumeSceneNode(const IMesh* shadowMesh,
-			s32 id, bool zfailmethod=true, f32 infinity=10000.0f) _IRR_OVERRIDE_;
+		virtual std::shared_ptr<IShadowVolumeSceneNode> addShadowVolumeSceneNode(const IMesh* shadowMesh,
+			s32 id, bool zfailmethod = true, f32 infinity = 10000.0f) _IRR_OVERRIDE_;
 
 		//! Sets if the scene node should not copy the materials of the mesh but use them in a read only style.
 		/* In this way it is possible to change the materials a mesh causing all mesh scene nodes
@@ -74,12 +78,13 @@ namespace scene
 		virtual bool isReadOnlyMaterials() const _IRR_OVERRIDE_;
 
 		//! Creates a clone of this scene node and its children.
-		virtual ISceneNode* clone(ISceneNode* newParent=0, ISceneManager* newManager=0) _IRR_OVERRIDE_;
+		virtual std::shared_ptr<ISceneNode> clone(std::shared_ptr<ISceneNode> newParent = 0,
+		                                          std::shared_ptr<ISceneManager> newManager = 0) _IRR_OVERRIDE_;
 
 		//! Removes a child from this scene node.
 		//! Implemented here, to be able to remove the shadow properly, if there is one,
 		//! or to remove attached childs.
-		virtual bool removeChild(ISceneNode* child) _IRR_OVERRIDE_;
+		virtual bool removeChild(const std::shared_ptr<ISceneNode>& child) _IRR_OVERRIDE_;
 
 	protected:
 
@@ -90,7 +95,7 @@ namespace scene
 		video::SMaterial ReadOnlyMaterial;
 
 		IMesh* Mesh;
-		IShadowVolumeSceneNode* Shadow;
+		std::shared_ptr<IShadowVolumeSceneNode> Shadow;
 
 		s32 PassCount;
 		bool ReadOnlyMaterials;

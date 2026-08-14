@@ -26,14 +26,14 @@ public:
 	CD3D11NormalMapRenderer(ID3D11Device* device, video::IVideoDriver* driver, CD3D11CallBridge* bridgeCalls, s32& outMaterialTypeNr, IMaterialRenderer* baseMaterial);
 	virtual ~CD3D11NormalMapRenderer();
 
-	virtual bool OnRender(IMaterialRendererServices* service, E_VERTEX_TYPE vtxtype);
+	virtual bool OnRender(IMaterialRendererServices* service, IVertexDescriptor* vtxtype) _IRR_OVERRIDE_;
 
-	virtual void OnSetConstants( IMaterialRendererServices* services, s32 userData );
+	virtual void OnSetConstants( IMaterialRendererServices* services, s32 userData )_IRR_OVERRIDE_;
 
 	//! Returns the render capability of the material.
 	virtual s32 getRenderCapability() const;
 
-	virtual void OnSetMaterial( const SMaterial& material );	
+	virtual void OnSetMaterial( const SMaterial& material )_IRR_OVERRIDE_;
 
 private:
 	s32 cbPerFrameId;

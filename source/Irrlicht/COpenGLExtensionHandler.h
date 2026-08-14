@@ -1236,6 +1236,11 @@ class COpenGLExtensionHandler
 	void extGlGetQueryObjectiv(GLuint id, GLenum pname, GLint *params);
 	void extGlGetQueryObjectuiv(GLuint id, GLenum pname, GLuint *params);
 
+	void glTexImage3D(GLenum target,GLint level,GLint internalFormat,GLsizei width,GLsizei height,GLsizei depth,GLint border,GLenum format,GLenum type,const GLvoid * data);
+	void glTexSubImage3D(GLenum target,GLint level,GLint xoffset,GLint yoffset,GLint zoffset,GLsizei width,GLsizei height,GLsizei depth,GLenum format,GLenum type,const GLvoid * data);
+
+
+
 	// blend
 	void extGlBlendFuncSeparate(GLenum sfactorRGB, GLenum dfactorRGB, GLenum sfactorAlpha, GLenum dfactorAlpha);
 	void extGlBlendEquation(GLenum mode);
@@ -1382,6 +1387,9 @@ class COpenGLExtensionHandler
 		PFNGLBLENDFUNCSEPARATEEXTPROC pGlBlendFuncSeparateEXT;
 		PFNGLBLENDFUNCSEPARATEPROC pGlBlendFuncSeparate;
 		PFNGLBLENDEQUATIONEXTPROC pGlBlendEquationEXT;
+		PFNGLTEXIMAGE3DPROC PFNGLTEXIMAGE3D;
+		PFNGLTEXSUBIMAGE3DPROC PFNGLTEXSUBIMAGE3D;
+
 		PFNGLBLENDEQUATIONPROC pGlBlendEquation;
 		PFNGLBLENDEQUATIONSEPARATEEXTPROC pGlBlendEquationSeparateEXT;
 		PFNGLBLENDEQUATIONSEPARATEPROC pGlBlendEquationSeparate;
@@ -1411,6 +1419,37 @@ class COpenGLExtensionHandler
 		#endif
 	#endif
 };
+
+
+
+inline void COpenGLExtensionHandler::glTexImage3D(GLenum target, GLint level, GLint internalFormat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const GLvoid * data)
+{
+#ifdef _IRR_OPENGL_USE_EXTPOINTER_
+	if (PFNGLTEXIMAGE3D)
+		PFNGLTEXIMAGE3D(target, level, internalFormat,width,height,  depth, border, format, type,  data);
+	else
+		os::Printer::log("glTexImage3D not loaded", ELL_ERROR);
+#elif defined(GL_ARB_occlusion_query)
+	glGetQueryObjectuivARB(id, pname, params);
+#elif defined(GL_NV_occlusion_query)
+	glGetOcclusionQueryuivNV(id, pname, params);
+#else
+	os::Printer::log("PFNGLTEXSUBIMAGE3D not supported", ELL_ERROR);
+#endif
+}
+
+
+inline void COpenGLExtensionHandler::glTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, const GLvoid * data)
+{
+#ifdef _IRR_OPENGL_USE_EXTPOINTER_
+	if (PFNGLTEXSUBIMAGE3D)
+		PFNGLTEXSUBIMAGE3D(target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, data);
+	else
+		os::Printer::log("glTexSubImage3D not loaded", ELL_ERROR);
+#else
+	os::Printer::log("PFNGLTEXSUBIMAGE3D not supported", ELL_ERROR);
+#endif
+}
 
 inline void COpenGLExtensionHandler::extGlActiveTexture(GLenum texture)
 {

@@ -19,7 +19,7 @@ class CLightSceneNode : public ILightSceneNode
 public:
 
 	//! constructor
-	CLightSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id,
+	CLightSceneNode(std::shared_ptr<ISceneManager> mgr, s32 id,
 		const core::vector3df& position, video::SColorf color, f32 range);
 
 	//! pre render event
@@ -56,7 +56,8 @@ public:
 	virtual void deserializeAttributes(io::IAttributes* in, io::SAttributeReadWriteOptions* options=0) _IRR_OVERRIDE_;
 
 	//! Creates a clone of this scene node and its children.
-	virtual ISceneNode* clone(ISceneNode* newParent=0, ISceneManager* newManager=0) _IRR_OVERRIDE_;
+	virtual std::shared_ptr<ISceneNode> clone(std::shared_ptr<ISceneNode> newParent = 0,
+	                                          std::shared_ptr<ISceneManager> newManager = 0) _IRR_OVERRIDE_;
 
 	//! Sets the light's radius of influence.
 	/** Outside this radius the light won't lighten geometry and cast no

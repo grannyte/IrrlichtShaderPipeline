@@ -21,7 +21,7 @@ namespace scene
 	{
 	public:
 
-		CSTLMeshWriter(scene::ISceneManager* smgr);
+		CSTLMeshWriter(std::weak_ptr<scene::ISceneManager> smgr);
 		virtual ~CSTLMeshWriter();
 
 		//! Returns the type of the mesh writer
@@ -45,7 +45,7 @@ namespace scene
 		void writeFace(io::IWriteFile* file, const core::vector3df& v1,
 				const core::vector3df& v2, const core::vector3df& v3);
 
-		scene::ISceneManager* SceneManager;
+		std::weak_ptr<scene::ISceneManager> SceneManager;
 	};
 
 } // end namespace

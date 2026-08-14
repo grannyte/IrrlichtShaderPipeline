@@ -21,7 +21,7 @@ class CBillboardSceneNode : virtual public IBillboardSceneNode
 public:
 
 	//! constructor
-	CBillboardSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id,
+	CBillboardSceneNode( std::shared_ptr<ISceneManager> mgr, s32 id,
 		const core::vector3df& position, const core::dimension2d<f32>& size,
 		video::SColor colorTop=video::SColor(0xFFFFFFFF),
 		video::SColor colorBottom=video::SColor(0xFFFFFFFF));
@@ -81,7 +81,8 @@ public:
 	virtual ESCENE_NODE_TYPE getType() const _IRR_OVERRIDE_ { return ESNT_BILLBOARD; }
 
 	//! Creates a clone of this scene node and its children.
-	virtual ISceneNode* clone(ISceneNode* newParent=0, ISceneManager* newManager=0) _IRR_OVERRIDE_;
+	virtual std::shared_ptr<ISceneNode> clone(std::shared_ptr<ISceneNode> newParent = 0,
+	                                          std::shared_ptr<ISceneManager> newManager = 0) _IRR_OVERRIDE_;
 
 private:
 

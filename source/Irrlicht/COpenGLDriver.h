@@ -37,12 +37,11 @@ namespace video
     class COpenGLCallBridge;
 	class COpenGLTexture;
 
-	class COpenGLVertexAttribute : public IVertexAttribute
+	class COpenGLVertexAttribute : public CVertexAttribute
 	{
 	public:
 		COpenGLVertexAttribute(const core::stringc& name, u32 elementCount, E_VERTEX_ATTRIBUTE_SEMANTIC semantic, E_VERTEX_ATTRIBUTE_TYPE type, u32 offset, u32 bufferID, u32 layerCount);
-
-		virtual void setOffset(u32 offset);
+		virtual ~COpenGLVertexAttribute();
 
 		// Add location layer.
 		void addLocationLayer();
@@ -61,23 +60,26 @@ namespace video
 		core::array<s32> Location;
 	};
 
-	class COpenGLVertexDescriptor : public IVertexDescriptor
+	class COpenGLVertexDescriptor : public CVertexDescriptor
 	{
 	public:
 		COpenGLVertexDescriptor(const core::stringc& name, u32 id, u32 layerCount);
-
-		virtual void setID(u32 id);
-
-		virtual IVertexAttribute* addAttribute(const core::stringc& name, u32 elementCount, E_VERTEX_ATTRIBUTE_SEMANTIC semantic, E_VERTEX_ATTRIBUTE_TYPE type, u32 bufferID) _IRR_OVERRIDE_;
-
-		virtual void clearAttribute() _IRR_OVERRIDE_;
+		virtual ~COpenGLVertexDescriptor();
 
 		void addLocationLayer();
 
-	protected:
-		core::array<COpenGLVertexAttribute> Attribute;
+		virtual bool addAttribute(const core::stringc& name, u32 elementCount, E_VERTEX_ATTRIBUTE_SEMANTIC semantic, E_VERTEX_ATTRIBUTE_TYPE type, u32 bufferID);
 
+		COpenGLVertexAttribute* getAttributeSorted(u32 id) const;
+
+		virtual bool removeAttribute(u32 id);
+
+		virtual void removeAllAttribute();
+
+	protected:
 		u32 LayerCount;
+
+		core::array<COpenGLVertexAttribute*> AttributeSorted;
 	};
 
 	class COpenGLHardwareBuffer : public IHardwareBuffer
@@ -164,27 +166,27 @@ namespace video
 
 		//! Create occlusion query.
 		/** Use node for identification and mesh for occlusion test. */
-		virtual void addOcclusionQuery(scene::ISceneNode* node,
+		virtual void addOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node,
 				const scene::IMesh* mesh=0) _IRR_OVERRIDE_;
 
 		//! Remove occlusion query.
-		virtual void removeOcclusionQuery(scene::ISceneNode* node) _IRR_OVERRIDE_;
+		virtual void removeOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node) _IRR_OVERRIDE_;
 
 		//! Run occlusion query. Draws mesh stored in query.
 		/** If the mesh shall not be rendered visible, use
 		overrideMaterial to disable the color and depth buffer. */
-		virtual void runOcclusionQuery(scene::ISceneNode* node, bool visible=false) _IRR_OVERRIDE_;
+		virtual void runOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool visible=false) _IRR_OVERRIDE_;
 
 		//! Update occlusion query. Retrieves results from GPU.
 		/** If the query shall not block, set the flag to false.
 		Update might not occur in this case, though */
-		virtual void updateOcclusionQuery(scene::ISceneNode* node, bool block=true) _IRR_OVERRIDE_;
+		virtual void updateOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool block=true) _IRR_OVERRIDE_;
 
 		//! Return query result.
 		/** Return value is the number of visible pixels/fragments.
 		The value is a safe approximation, i.e. can be larger then the
 		actual value of pixels. */
-		virtual u32 getOcclusionQueryResult(scene::ISceneNode* node) const _IRR_OVERRIDE_;
+		virtual u32 getOcclusionQueryResult(std::shared_ptr<irr::scene::ISceneNode> node) const _IRR_OVERRIDE_;
 
 		virtual void drawMeshBuffer(const scene::IMeshBuffer* mb) _IRR_OVERRIDE_;
 
@@ -507,6 +509,9 @@ namespace video
 		bool genericDriverInit();
 		//! returns a device dependent texture from a software surface (IImage)
 		virtual video::ITexture* createDeviceDependentTexture(IImage* surface, const io::path& name, void* mipmapData) _IRR_OVERRIDE_;
+
+		//! returns a texture array from textures
+		virtual video::ITexture* createDeviceDependentTexture(const core::array<ITexture*> &surfaces, const E_TEXTURE_TYPE Type, const io::path& name, void* mipmapData);
 
 		//! creates a transposed matrix in supplied GLfloat array to pass to OpenGL
 		inline void getGLMatrix(GLfloat gl_matrix[16], const core::matrix4& m);

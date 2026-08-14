@@ -50,13 +50,13 @@ namespace scene
 		virtual irr::f32 getIndexOfRefraction(const irr::video::SMaterial& material) const _IRR_OVERRIDE_;
 
 		//! Should node be used in scene export? By default all visible nodes are exported.
-		virtual bool isExportable(const irr::scene::ISceneNode * node) const _IRR_OVERRIDE_;
+		virtual bool isExportable(const std::shared_ptr<irr::scene::ISceneNode> node) const _IRR_OVERRIDE_;
 
 		//! Return the mesh for the given nod. If it has no mesh or shouldn't export it's mesh return 0.
-		virtual irr::scene::IMesh* getMesh(irr::scene::ISceneNode * node) _IRR_OVERRIDE_;
+		virtual irr::scene::IMesh* getMesh(std::shared_ptr<irr::scene::ISceneNode> node) _IRR_OVERRIDE_;
 
 		//! Return if the node has it's own material overwriting the mesh-materials
-		virtual bool useNodeMaterial(const scene::ISceneNode* node) const _IRR_OVERRIDE_;
+		virtual bool useNodeMaterial(const std::shared_ptr<irr::scene::ISceneNode> node) const _IRR_OVERRIDE_;
 	};
 
 	class CColladaMeshWriterNames  : public virtual IColladaMeshWriterNames
@@ -64,8 +64,8 @@ namespace scene
 	public:
 		CColladaMeshWriterNames(IColladaMeshWriter * writer);
 		virtual irr::core::stringw nameForMesh(const scene::IMesh* mesh, int instance) _IRR_OVERRIDE_;
-		virtual irr::core::stringw nameForNode(const scene::ISceneNode* node) _IRR_OVERRIDE_;
-		virtual irr::core::stringw nameForMaterial(const video::SMaterial & material, int materialId, const scene::IMesh* mesh, const scene::ISceneNode* node) _IRR_OVERRIDE_;
+		virtual irr::core::stringw nameForNode(const std::shared_ptr<irr::scene::ISceneNode> node) _IRR_OVERRIDE_;
+		virtual irr::core::stringw nameForMaterial(const video::SMaterial & material, int materialId, const scene::IMesh* mesh, const std::shared_ptr<irr::scene::ISceneNode> node) _IRR_OVERRIDE_;
 	protected:
 		irr::core::stringw nameForPtr(const void* ptr) const;
 	private:
@@ -81,14 +81,14 @@ class CColladaMeshWriter : public IColladaMeshWriter
 {
 public:
 
-	CColladaMeshWriter(ISceneManager * smgr, video::IVideoDriver* driver, io::IFileSystem* fs);
+	CColladaMeshWriter(std::weak_ptr<ISceneManager > smgr, video::IVideoDriver* driver, io::IFileSystem* fs);
 	virtual ~CColladaMeshWriter();
 
 	//! Returns the type of the mesh writer
 	virtual EMESH_WRITER_TYPE getType() const _IRR_OVERRIDE_;
 
 	//! writes a scene starting with the given node
-	virtual bool writeScene(io::IWriteFile* file, scene::ISceneNode* root) _IRR_OVERRIDE_;
+	virtual bool writeScene(io::IWriteFile* file, std::shared_ptr<scene::ISceneNode> root) _IRR_OVERRIDE_;
 
 	//! writes a mesh
 	virtual bool writeMesh(io::IWriteFile* file, scene::IMesh* mesh, s32 flags=EMWF_NONE) _IRR_OVERRIDE_;
@@ -97,7 +97,7 @@ public:
 	virtual irr::core::stringw toNCName(const irr::core::stringw& oldString, const irr::core::stringw& prefix=irr::core::stringw(L"_NC_")) const _IRR_OVERRIDE_;
 
 	//! After export you can find out which name had been used for writing the geometry for this node.
-	virtual const irr::core::stringw* findGeometryNameForNode(ISceneNode* node) _IRR_OVERRIDE_;
+	virtual const irr::core::stringw* findGeometryNameForNode(std::shared_ptr<ISceneNode> node) _IRR_OVERRIDE_;
 
 protected:
 
@@ -111,10 +111,10 @@ protected:
 	inline irr::core::stringw toString(const irr::video::E_TEXTURE_CLAMP clamp) const;
 	inline irr::core::stringw toString(const irr::scene::E_COLLADA_TRANSPARENT_FX opaque) const;
 	inline irr::core::stringw toRef(const irr::core::stringw& source) const;
-	bool isCamera(const scene::ISceneNode* node) const;
+	bool isCamera(const std::shared_ptr<irr::scene::ISceneNode> node) const;
 	irr::core::stringw nameForMesh(const scene::IMesh* mesh, int instance) const;
-	irr::core::stringw nameForNode(const scene::ISceneNode* node) const;
-	irr::core::stringw nameForMaterial(const video::SMaterial & material, int materialId, const scene::IMesh* mesh, const scene::ISceneNode* node);
+	irr::core::stringw nameForNode(const std::shared_ptr<irr::scene::ISceneNode> node) const;
+	irr::core::stringw nameForMaterial(const video::SMaterial & material, int materialId, const scene::IMesh* mesh, const std::shared_ptr<irr::scene::ISceneNode> node);
 	irr::core::stringw nameForMaterialSymbol(const scene::IMesh* mesh, int materialId) const;
 	irr::core::stringw findCachedMaterialName(const irr::video::SMaterial& material) const;
 	irr::core::stringw minTexfilterToString(bool bilinear, bool trilinear) const;
@@ -125,18 +125,18 @@ protected:
 	s32 getCheckedTextureIdx(const video::SMaterial & material, E_COLLADA_COLOR_SAMPLER cs);
 	video::SColor getColorMapping(const video::SMaterial & material, E_COLLADA_COLOR_SAMPLER cs, E_COLLADA_IRR_COLOR colType);
 	void writeAsset();
-	void makeMeshNames(irr::scene::ISceneNode * node);
-	void writeNodeMaterials(irr::scene::ISceneNode * node);
-	void writeNodeEffects(irr::scene::ISceneNode * node);
-	void writeNodeLights(irr::scene::ISceneNode * node);
-	void writeNodeCameras(irr::scene::ISceneNode * node);
+	void makeMeshNames(std::shared_ptr<irr::scene::ISceneNode> node);
+	void writeNodeMaterials(std::shared_ptr<irr::scene::ISceneNode> node);
+	void writeNodeEffects(std::shared_ptr<irr::scene::ISceneNode> node);
+	void writeNodeLights(std::shared_ptr<irr::scene::ISceneNode> node);
+	void writeNodeCameras(std::shared_ptr<irr::scene::ISceneNode> node);
 	void writeAllMeshGeometries();
-	void writeSceneNode(irr::scene::ISceneNode * node);
+	void writeSceneNode(std::shared_ptr<irr::scene::ISceneNode> node);
 	void writeMeshMaterials(scene::IMesh* mesh, irr::core::array<irr::core::stringw> * materialNamesOut=0);
 	void writeMeshEffects(scene::IMesh* mesh);
 	void writeMaterialEffect(const irr::core::stringw& materialname, const video::SMaterial & material);
 	void writeMeshGeometry(const irr::core::stringw& meshname, scene::IMesh* mesh);
-	void writeMeshInstanceGeometry(const irr::core::stringw& meshname, scene::IMesh* mesh, scene::ISceneNode* node=0);
+	void writeMeshInstanceGeometry(const irr::core::stringw& meshname, scene::IMesh* mesh, std::shared_ptr<irr::scene::ISceneNode> node=0);
 	void writeMaterial(const irr::core::stringw& materialname);
 	void writeLightInstance(const irr::core::stringw& lightName);
 	void writeCameraInstance(const irr::core::stringw& cameraName);
@@ -197,7 +197,7 @@ protected:
 
 		irr::core::stringw GeometryName;				// replacing the usual ColladaMesh::Name
 		core::array<irr::core::stringw> MaterialNames;	// Material names exported for this instance
-		core::array<const ISceneNode*> MaterialOwners;	// Nodes using this specific mesh-material combination
+		core::array<std::shared_ptr<ISceneNode>> MaterialOwners;	// Nodes using this specific mesh-material combination
 	};
 
 	// Check per mesh-ptr if stuff has been written for this mesh already
@@ -217,7 +217,7 @@ protected:
 			return NULL;
 		}
 
-		const irr::core::stringw& findGeometryNameForNode(const ISceneNode* node) const
+		const irr::core::stringw& findGeometryNameForNode(const std::shared_ptr<ISceneNode> node) const
 		{
 			if ( GeometryMeshMaterials.size() < 2 )
 				return Name;
@@ -244,12 +244,12 @@ protected:
 		SColladaLight()	{}
 		irr::core::stringw Name;
 	};
-	typedef core::map<ISceneNode*, SColladaLight>::Node LightNode;
-	core::map<ISceneNode*, SColladaLight> LightNodes;
+	typedef core::map<std::shared_ptr<ISceneNode>, SColladaLight>::Node LightNode;
+	core::map<std::shared_ptr<ISceneNode>, SColladaLight> LightNodes;
 
 	// structure for the camera library
-	typedef core::map<ISceneNode*, irr::core::stringw>::Node CameraNode;
-	core::map<ISceneNode*, irr::core::stringw> CameraNodes;
+	typedef core::map<std::shared_ptr<ISceneNode>, irr::core::stringw>::Node CameraNode;
+	core::map<std::shared_ptr<ISceneNode>, irr::core::stringw> CameraNodes;
 
 	// Check per name if stuff has been written already
 	// TODO: second parameter not needed, we just don't have a core::set class yet in Irrlicht

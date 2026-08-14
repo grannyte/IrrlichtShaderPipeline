@@ -97,7 +97,7 @@ namespace irr
 
 		//! Provides access to the scene manager.
 		/** \return Pointer to the scene manager. */
-		virtual scene::ISceneManager* getSceneManager() = 0;
+		virtual std::shared_ptr<scene::ISceneManager> getSceneManager() = 0;
 
 		//! Provides access to the cursor control.
 		/** \return Pointer to the mouse cursor control interface. */
@@ -219,7 +219,7 @@ namespace irr
 		/** If set to null, the main scene manager (returned by
 		GetSceneManager()) will receive the input
 		\param sceneManager New scene manager to be used. */
-		virtual void setInputReceivingSceneManager(scene::ISceneManager* sceneManager) = 0;
+		virtual void setInputReceivingSceneManager(std::shared_ptr<scene::ISceneManager> sceneManager) = 0;
 
 		//! Sets if the window should be resizable in windowed mode.
 		/** The default is false. This method only works in windowed

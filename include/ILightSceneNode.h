@@ -24,9 +24,9 @@ class ILightSceneNode : public ISceneNode
 public:
 
 	//! constructor
-	ILightSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id,
+	ILightSceneNode(std::shared_ptr<ISceneManager> mgr, s32 id,
 		const core::vector3df& position = core::vector3df(0,0,0))
-		: ISceneNode(parent, mgr, id, position) {}
+		: ISceneNode(mgr, id, position) {}
 
 	//! Sets the light data associated with this ILightSceneNode
 	/** \param light The new light data. */

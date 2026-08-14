@@ -112,17 +112,17 @@ f32 CColladaMeshWriterProperties::getIndexOfRefraction(const video::SMaterial& m
 	return -1.f;
 }
 
-bool CColladaMeshWriterProperties::isExportable(const irr::scene::ISceneNode * node) const
+bool CColladaMeshWriterProperties::isExportable(const std::shared_ptr<irr::scene::ISceneNode> node) const
 {
 	return node && node->isVisible();
 }
 
-IMesh* CColladaMeshWriterProperties::getMesh(irr::scene::ISceneNode * node)
+IMesh* CColladaMeshWriterProperties::getMesh(std::shared_ptr<irr::scene::ISceneNode> node)
 {
 	if ( !node )
 		return 0;
 	if ( node->getType() == ESNT_ANIMATED_MESH )
-		return static_cast<IAnimatedMeshSceneNode*>(node)->getMesh()->getMesh(0);
+		return std::static_pointer_cast<IAnimatedMeshSceneNode>(node)->getMesh()->getMesh(0);
 	// TODO: we need some ISceneNode::hasType() function to get rid of those checks
 	if (	node->getType() == ESNT_MESH
 		||	node->getType() == ESNT_CUBE
@@ -130,14 +130,14 @@ IMesh* CColladaMeshWriterProperties::getMesh(irr::scene::ISceneNode * node)
 		||	node->getType() == ESNT_WATER_SURFACE
 		||	node->getType() == ESNT_Q3SHADER_SCENE_NODE
 		)
-		return static_cast<IMeshSceneNode*>(node)->getMesh();
+		return std::static_pointer_cast<IMeshSceneNode>(node)->getMesh();
 	if ( node->getType() == ESNT_TERRAIN )
-		return static_cast<ITerrainSceneNode*>(node)->getMesh();
+		return std::static_pointer_cast<ITerrainSceneNode>(node)->getMesh();
 	return 0;
 }
 
 // Check if the node has it's own material overwriting the mesh-materials
-bool CColladaMeshWriterProperties::useNodeMaterial(const scene::ISceneNode* node) const
+bool CColladaMeshWriterProperties::useNodeMaterial(const std::shared_ptr<irr::scene::ISceneNode> node) const
 {
 	if ( !node )
 		return false;
@@ -148,10 +148,10 @@ bool CColladaMeshWriterProperties::useNodeMaterial(const scene::ISceneNode* node
 								node->getType() == ESNT_SPHERE ||
 								node->getType() == ESNT_WATER_SURFACE ||
 								node->getType() == ESNT_Q3SHADER_SCENE_NODE)
-								&& static_cast<const IMeshSceneNode*>(node)->isReadOnlyMaterials())
+								&& std::static_pointer_cast<const IMeshSceneNode>(node)->isReadOnlyMaterials())
 
 							||	(node->getType() == ESNT_ANIMATED_MESH
-								&& static_cast<const IAnimatedMeshSceneNode*>(node)->isReadOnlyMaterials() );
+								&& std::static_pointer_cast<const IAnimatedMeshSceneNode>(node)->isReadOnlyMaterials() );
 
 	return !useMeshMaterial;
 }
@@ -175,7 +175,7 @@ irr::core::stringw CColladaMeshWriterNames::nameForMesh(const scene::IMesh* mesh
 	return ColladaMeshWriter->toNCName(name);
 }
 
-irr::core::stringw CColladaMeshWriterNames::nameForNode(const scene::ISceneNode* node)
+irr::core::stringw CColladaMeshWriterNames::nameForNode(const std::shared_ptr<irr::scene::ISceneNode> node)
 {
 	irr::core::stringw name;
 	// Prefix, because xs::ID can't start with a number, also nicer name
@@ -183,7 +183,7 @@ irr::core::stringw CColladaMeshWriterNames::nameForNode(const scene::ISceneNode*
 		name = L"light";
 	else
 		name = L"node";
-	name += nameForPtr(node);
+	name += nameForPtr(node.get());
 	if ( node )
 	{
 		name += irr::core::stringw(node->getName());
@@ -191,7 +191,7 @@ irr::core::stringw CColladaMeshWriterNames::nameForNode(const scene::ISceneNode*
 	return ColladaMeshWriter->toNCName(name);
 }
 
-irr::core::stringw CColladaMeshWriterNames::nameForMaterial(const video::SMaterial & material, int materialId, const scene::IMesh* mesh, const scene::ISceneNode* node)
+irr::core::stringw CColladaMeshWriterNames::nameForMaterial(const video::SMaterial & material, int materialId, const scene::IMesh* mesh, const std::shared_ptr<irr::scene::ISceneNode> node)
 {
 	core::stringw strMat(L"mat");
 
@@ -199,7 +199,7 @@ irr::core::stringw CColladaMeshWriterNames::nameForMaterial(const video::SMateri
 	if ( nodeMaterial )
 	{
 		strMat += L"node";
-		strMat += nameForPtr(node);
+		strMat += nameForPtr(node.get());
 		strMat += irr::core::stringw(node->getName());
 	}
 	strMat += L"mesh";
@@ -217,7 +217,7 @@ irr::core::stringw CColladaMeshWriterNames::nameForPtr(const void* ptr) const
 
 
 
-CColladaMeshWriter::CColladaMeshWriter(	ISceneManager * smgr, video::IVideoDriver* driver,
+CColladaMeshWriter::CColladaMeshWriter(	std::weak_ptr<ISceneManager > smgr, video::IVideoDriver* driver,
 					io::IFileSystem* fs)
 	: FileSystem(fs), VideoDriver(driver), Writer(0)
 {
@@ -232,8 +232,8 @@ CColladaMeshWriter::CColladaMeshWriter(	ISceneManager * smgr, video::IVideoDrive
 	if (FileSystem)
 		FileSystem->grab();
 
-	if ( smgr )
-		setAmbientLight( smgr->getAmbientLight() );
+	if ( smgr.lock() )
+		setAmbientLight(smgr.lock()->getAmbientLight() );
 
 	CColladaMeshWriterProperties * p = new CColladaMeshWriterProperties();
 	setDefaultProperties(p);
@@ -275,7 +275,7 @@ EMESH_WRITER_TYPE CColladaMeshWriter::getType() const
 }
 
 //! writes a scene starting with the given node
-bool CColladaMeshWriter::writeScene(io::IWriteFile* file, scene::ISceneNode* root)
+bool CColladaMeshWriter::writeScene(io::IWriteFile* file, std::shared_ptr<scene::ISceneNode> root)
 {
 	if (!file || !root)
 		return false;
@@ -376,8 +376,8 @@ bool CColladaMeshWriter::writeScene(io::IWriteFile* file, scene::ISceneNode* roo
 		{
 			// The visual_scene element is identical to our scenemanager and acts as root,
 			// so we do not write the root itself if it points to the scenemanager.
-			const core::list<ISceneNode*>& rootChildren = root->getChildren();
-			for ( core::list<ISceneNode*>::ConstIterator it = rootChildren.begin();
+			auto& rootChildren = root->getChildren();
+			for ( auto it = rootChildren.begin();
 					it != rootChildren.end();
 					++ it )
 			{
@@ -411,7 +411,7 @@ bool CColladaMeshWriter::writeScene(io::IWriteFile* file, scene::ISceneNode* roo
 	return true;
 }
 
-void CColladaMeshWriter::makeMeshNames(irr::scene::ISceneNode * node)
+void CColladaMeshWriter::makeMeshNames(std::shared_ptr<irr::scene::ISceneNode> node)
 {
 	if ( !node || !getProperties() || !getProperties()->isExportable(node) || !getNameGenerator())
 		return;
@@ -427,14 +427,14 @@ void CColladaMeshWriter::makeMeshNames(irr::scene::ISceneNode * node)
 		}
 	}
 
-	const core::list<ISceneNode*>& children = node->getChildren();
-	for ( core::list<ISceneNode*>::ConstIterator it = children.begin(); it != children.end(); ++it )
+	const auto& children = node->getChildren();
+	for ( auto it = children.begin(); it != children.end(); ++it )
 	{
 		makeMeshNames(*it);
 	}
 }
 
-void CColladaMeshWriter::writeNodeMaterials(irr::scene::ISceneNode * node)
+void CColladaMeshWriter::writeNodeMaterials(std::shared_ptr<irr::scene::ISceneNode> node)
 {
 	if ( !node || !getProperties() || !getProperties()->isExportable(node) )
 		return;
@@ -488,8 +488,8 @@ void CColladaMeshWriter::writeNodeMaterials(irr::scene::ISceneNode * node)
 		}
 	}
 
-	const core::list<ISceneNode*>& children = node->getChildren();
-	for ( core::list<ISceneNode*>::ConstIterator it = children.begin(); it != children.end(); ++it )
+	const auto& children = node->getChildren();
+	for ( auto it = children.begin(); it != children.end(); ++it )
 	{
 		writeNodeMaterials( *it );
 	}
@@ -518,7 +518,7 @@ void CColladaMeshWriter::writeMaterial(const irr::core::stringw& materialname)
 	Writer->writeLineBreak();
 }
 
-void CColladaMeshWriter::writeNodeEffects(irr::scene::ISceneNode * node)
+void CColladaMeshWriter::writeNodeEffects(std::shared_ptr<irr::scene::ISceneNode> node)
 {
 	if ( !node || !getProperties() || !getProperties()->isExportable(node) || !getNameGenerator() )
 		return;
@@ -549,21 +549,21 @@ void CColladaMeshWriter::writeNodeEffects(irr::scene::ISceneNode * node)
 		}
 	}
 
-	const core::list<ISceneNode*>& children = node->getChildren();
-	for ( core::list<ISceneNode*>::ConstIterator it = children.begin(); it != children.end(); ++it )
+	const auto& children = node->getChildren();
+	for (auto it = children.begin(); it != children.end(); ++it )
 	{
 		writeNodeEffects( *it );
 	}
 }
 
-void CColladaMeshWriter::writeNodeLights(irr::scene::ISceneNode * node)
+void CColladaMeshWriter::writeNodeLights(std::shared_ptr<irr::scene::ISceneNode> node)
 {
 	if ( !node || !getProperties() || !getProperties()->isExportable(node))
 		return;
 
 	if ( node->getType() == ESNT_LIGHT )
 	{
-		ILightSceneNode * lightNode = static_cast<ILightSceneNode*>(node);
+		auto lightNode = std::static_pointer_cast<ILightSceneNode>(node);
 		const video::SLight& lightData = lightNode->getLightData();
 
 		SColladaLight cLight;
@@ -629,21 +629,21 @@ void CColladaMeshWriter::writeNodeLights(irr::scene::ISceneNode * node)
 
 	}
 
-	const core::list<ISceneNode*>& children = node->getChildren();
-	for ( core::list<ISceneNode*>::ConstIterator it = children.begin(); it != children.end(); ++it )
+	const auto & children = node->getChildren();
+	for ( auto it = children.begin(); it != children.end(); ++it )
 	{
 		writeNodeLights( *it );
 	}
 }
 
-void CColladaMeshWriter::writeNodeCameras(irr::scene::ISceneNode * node)
+void CColladaMeshWriter::writeNodeCameras(std::shared_ptr<irr::scene::ISceneNode> node)
 {
 	if ( !node || !getProperties() || !getProperties()->isExportable(node) )
 		return;
 
 	if ( isCamera(node) )
 	{
-		ICameraSceneNode * cameraNode = static_cast<ICameraSceneNode*>(node);
+		auto cameraNode = std::static_pointer_cast<ICameraSceneNode>(node);
 		irr::core::stringw name = nameForNode(node);
 		CameraNodes.insert(cameraNode, name);
 
@@ -703,8 +703,8 @@ void CColladaMeshWriter::writeNodeCameras(irr::scene::ISceneNode * node)
 		Writer->writeLineBreak();
 	}
 
-	const core::list<ISceneNode*>& children = node->getChildren();
-	for ( core::list<ISceneNode*>::ConstIterator it = children.begin(); it != children.end(); ++it )
+	const auto & children = node->getChildren();
+	for ( auto it = children.begin(); it != children.end(); ++it )
 	{
 		writeNodeCameras( *it );
 	}
@@ -732,7 +732,7 @@ void CColladaMeshWriter::writeAllMeshGeometries()
 	}
 }
 
-void CColladaMeshWriter::writeSceneNode(irr::scene::ISceneNode * node )
+void CColladaMeshWriter::writeSceneNode(std::shared_ptr<irr::scene::ISceneNode> node )
 {
 	if ( !node || !getProperties() || !getProperties()->isExportable(node) )
 		return;
@@ -758,7 +758,7 @@ void CColladaMeshWriter::writeSceneNode(irr::scene::ISceneNode * node )
 		// We could maybe use projection matrices, but avoiding them might allow us to get rid of some DummyTransformationSceneNodes on
 		// import in the future. So that's why we use the lookat element instead.
 
-		ICameraSceneNode * camNode = static_cast<ICameraSceneNode*>(node);
+		auto camNode = std::static_pointer_cast<ICameraSceneNode>(node);
 		writeLookAtElement(camNode->getPosition(), camNode->getTarget(), camNode->getUpVector());
 	}
 	else
@@ -799,8 +799,8 @@ void CColladaMeshWriter::writeSceneNode(irr::scene::ISceneNode * node )
 			writeCameraInstance(camNode->getValue());
 	}
 
-	const core::list<ISceneNode*>& children = node->getChildren();
-	for ( core::list<ISceneNode*>::ConstIterator it = children.begin(); it != children.end(); ++it )
+	const auto & children = node->getChildren();
+	for ( auto it = children.begin(); it != children.end(); ++it )
 	{
 		writeSceneNode( *it );
 	}
@@ -925,7 +925,7 @@ bool CColladaMeshWriter::writeMesh(io::IWriteFile* file, scene::IMesh* mesh, s32
 	return true;
 }
 
-void CColladaMeshWriter::writeMeshInstanceGeometry(const irr::core::stringw& meshname, scene::IMesh* mesh, scene::ISceneNode* node)
+void CColladaMeshWriter::writeMeshInstanceGeometry(const irr::core::stringw& meshname, scene::IMesh* mesh, std::shared_ptr<irr::scene::ISceneNode> node)
 {
 	//<instance_geometry url="#mesh">
 	Writer->writeElement(L"instance_geometry", false, L"url", toRef(meshname).c_str());
@@ -1068,7 +1068,7 @@ irr::core::stringw CColladaMeshWriter::toRef(const irr::core::stringw& source) c
 	return ref;
 }
 
-bool CColladaMeshWriter::isCamera(const scene::ISceneNode* node) const
+bool CColladaMeshWriter::isCamera(const std::shared_ptr<irr::scene::ISceneNode> node) const
 {
 	// TODO: we need some ISceneNode::hasType() function to get rid of those checks
 	if (	node->getType() == ESNT_CAMERA
@@ -1088,7 +1088,7 @@ irr::core::stringw CColladaMeshWriter::nameForMesh(const scene::IMesh* mesh, int
 	return irr::core::stringw(L"missing_name_generator");
 }
 
-irr::core::stringw CColladaMeshWriter::nameForNode(const scene::ISceneNode* node) const
+irr::core::stringw CColladaMeshWriter::nameForNode(const std::shared_ptr<irr::scene::ISceneNode> node) const
 {
 	IColladaMeshWriterNames * nameGenerator = getNameGenerator();
 	if ( nameGenerator )
@@ -1098,7 +1098,7 @@ irr::core::stringw CColladaMeshWriter::nameForNode(const scene::ISceneNode* node
 	return irr::core::stringw(L"missing_name_generator");
 }
 
-irr::core::stringw CColladaMeshWriter::nameForMaterial(const video::SMaterial & material, int materialId, const scene::IMesh* mesh, const scene::ISceneNode* node)
+irr::core::stringw CColladaMeshWriter::nameForMaterial(const video::SMaterial & material, int materialId, const scene::IMesh* mesh, const std::shared_ptr<irr::scene::ISceneNode> node)
 {
 	irr::core::stringw matName;
 	if ( getExportSMaterialsOnlyOnce() )
@@ -1211,7 +1211,7 @@ irr::core::stringw CColladaMeshWriter::toNCName(const irr::core::stringw& oldStr
 	return result;
 }
 
-const irr::core::stringw* CColladaMeshWriter::findGeometryNameForNode(ISceneNode* node)
+const irr::core::stringw* CColladaMeshWriter::findGeometryNameForNode(std::shared_ptr<ISceneNode> node)
 {
 	IMesh* mesh = getProperties()->getMesh(node);
 	if ( !mesh )

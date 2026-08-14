@@ -15,42 +15,48 @@
 struct ID3D11InputLayout;
 struct ID3D11Device;
 struct D3D11_INPUT_ELEMENT_DESC;
+struct D3D11_SO_DECLARATION_ENTRY;
 
 namespace irr
 {
-namespace video
-{
+	namespace video
+	{
+		class CD3D11VertexDescriptor : public CVertexDescriptor
+		{
+		public:
+			CD3D11VertexDescriptor(ID3D11Device* device, const core::stringc& name, u32 id, u32 layerCount);
+			virtual ~CD3D11VertexDescriptor();
 
-class CD3D11VertexDescriptor : public CVertexDescriptor
-{
-public:
-	CD3D11VertexDescriptor(ID3D11Device* device, const core::stringc& name, u32 id);
-	virtual ~CD3D11VertexDescriptor();
+			virtual bool addAttribute(const core::stringc& name, u32 elementCount, E_VERTEX_ATTRIBUTE_SEMANTIC semantic, E_VERTEX_ATTRIBUTE_TYPE type, u32 bufferID);
 
-	virtual IVertexAttribute* addAttribute(const core::stringc& name, u32 elementCount, E_VERTEX_ATTRIBUTE_SEMANTIC semantic, E_VERTEX_ATTRIBUTE_TYPE type, u32 bufferID) _IRR_OVERRIDE_;
+			virtual bool removeAttribute(u32 id);
 
-	virtual void clearAttribute() _IRR_OVERRIDE_;
+			virtual void removeAllAttribute();
 
-	virtual core::array<D3D11_INPUT_ELEMENT_DESC>& getInputLayoutDescription();
+			virtual core::array<D3D11_INPUT_ELEMENT_DESC>& getInputLayoutDescription();
+			virtual core::array<D3D11_SO_DECLARATION_ENTRY>& getOutputLayoutDescription();
 
-	virtual	void clear();
+			virtual	void clear();
 
-	void rebuild();
+			void rebuild();
+			void rebuildOutput();
 
-protected:
-	//! Parse semantic
-	c8* getSemanticName(E_VERTEX_ATTRIBUTE_SEMANTIC semantic) const;
+		protected:
+			//! Parse semantic
+			const c8* getSemanticName(E_VERTEX_ATTRIBUTE_SEMANTIC semantic) const;
+			const c8* getSemanticNameOut(E_VERTEX_ATTRIBUTE_SEMANTIC semantic) const;
 
-	DXGI_FORMAT getFormat(E_VERTEX_ATTRIBUTE_TYPE type, u32 count) const;
+			DXGI_FORMAT getFormat(E_VERTEX_ATTRIBUTE_TYPE type, u32 count) const;
 
-	ID3D11Device* Device;
+			ID3D11Device* Device;
 
-	core::array<D3D11_INPUT_ELEMENT_DESC> InputLayoutDesc;
+			core::array<D3D11_INPUT_ELEMENT_DESC> InputLayoutDesc;
 
-	u32 SemanticIndex[EVAS_COUNT];
-};
+			core::array<D3D11_SO_DECLARATION_ENTRY> OutputLayoutDesc;
 
-}
+			u32 SemanticIndex[EVAS_COUNT];
+		};
+	}
 }
 #endif
 #endif

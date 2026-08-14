@@ -13,8 +13,8 @@ namespace scene
 {
 
 //! constructor
-CTriangleSelector::CTriangleSelector(ISceneNode* node)
-: SceneNode(node), AnimatedNode(0), LastMeshFrame(0)
+CTriangleSelector::CTriangleSelector(std::shared_ptr<ISceneNode> node)
+: SceneNode(node), LastMeshFrame(0)
 {
 	#ifdef _DEBUG
 	setDebugName("CTriangleSelector");
@@ -25,8 +25,8 @@ CTriangleSelector::CTriangleSelector(ISceneNode* node)
 
 
 //! constructor
-CTriangleSelector::CTriangleSelector(const core::aabbox3d<f32>& box, ISceneNode* node)
-: SceneNode(node), AnimatedNode(0), LastMeshFrame(0)
+CTriangleSelector::CTriangleSelector(const core::aabbox3d<f32>& box,std::shared_ptr<ISceneNode> node)
+: SceneNode(node), LastMeshFrame(0)
 {
 	#ifdef _DEBUG
 	setDebugName("CTriangleSelector");
@@ -38,8 +38,8 @@ CTriangleSelector::CTriangleSelector(const core::aabbox3d<f32>& box, ISceneNode*
 
 
 //! constructor
-CTriangleSelector::CTriangleSelector(const IMesh* mesh, ISceneNode* node)
-: SceneNode(node), AnimatedNode(0), LastMeshFrame(0)
+CTriangleSelector::CTriangleSelector(const IMesh* mesh,std::shared_ptr<ISceneNode> node)
+: SceneNode(node), LastMeshFrame(0)
 {
 	#ifdef _DEBUG
 	setDebugName("CTriangleSelector");
@@ -49,21 +49,21 @@ CTriangleSelector::CTriangleSelector(const IMesh* mesh, ISceneNode* node)
 }
 
 
-CTriangleSelector::CTriangleSelector(IAnimatedMeshSceneNode* node)
+CTriangleSelector::CTriangleSelector(std::shared_ptr<IAnimatedMeshSceneNode > node)
 : SceneNode(node), AnimatedNode(node), LastMeshFrame(0)
 {
 	#ifdef _DEBUG
 	setDebugName("CTriangleSelector");
 	#endif
 
-	if (!AnimatedNode)
+	if (!AnimatedNode.lock())
 		return;
 
-	IAnimatedMesh* animatedMesh = AnimatedNode->getMesh();
+	IAnimatedMesh* animatedMesh = AnimatedNode.lock()->getMesh();
 	if (!animatedMesh)
 		return;
 
-	LastMeshFrame = (u32)AnimatedNode->getFrameNr();
+	LastMeshFrame = (u32)AnimatedNode.lock()->getFrameNr();
 	IMesh* mesh = animatedMesh->getMesh(LastMeshFrame);
 
 	if (mesh)
@@ -126,15 +126,15 @@ void CTriangleSelector::updateFromMesh(const IMesh* mesh) const
 
 void CTriangleSelector::update(void) const
 {
-	if (!AnimatedNode)
+	if (!AnimatedNode.lock())
 		return; //< harmless no-op
 
-	const u32 currentFrame = (u32)AnimatedNode->getFrameNr();
+	const u32 currentFrame = (u32)AnimatedNode.lock()->getFrameNr();
 	if (currentFrame == LastMeshFrame)
 		return; //< Nothing to do
 
 	LastMeshFrame = currentFrame;
-	IAnimatedMesh * animatedMesh = AnimatedNode->getMesh();
+	IAnimatedMesh * animatedMesh = AnimatedNode.lock()->getMesh();
 
 	if (animatedMesh)
 	{
@@ -161,8 +161,8 @@ void CTriangleSelector::getTriangles(core::triangle3df* triangles,
 	core::matrix4 mat;
 	if (transform)
 		mat = *transform;
-	if (SceneNode)
-		mat *= SceneNode->getAbsoluteTransformation();
+	if (auto grabbed =SceneNode.lock())
+		mat *= grabbed->getAbsoluteTransformation();
 
 	for (u32 i=0; i<cnt; ++i)
 	{
@@ -187,17 +187,17 @@ void CTriangleSelector::getTriangles(core::triangle3df* triangles,
 	core::matrix4 mat(core::matrix4::EM4CONST_NOTHING);
 	core::aabbox3df tBox(box);
 
-	if (SceneNode)
+	if (auto grabbed = SceneNode.lock())
 	{
-		SceneNode->getAbsoluteTransformation().getInverse(mat);
+		grabbed->getAbsoluteTransformation().getInverse(mat);
 		mat.transformBoxEx(tBox);
 	}
 	if (transform)
 		mat = *transform;
 	else
 		mat.makeIdentity();
-	if (SceneNode)
-		mat *= SceneNode->getAbsoluteTransformation();
+	if (auto grabbed = SceneNode.lock())
+		mat *= grabbed->getAbsoluteTransformation();
 
 	outTriangleCount = 0;
 

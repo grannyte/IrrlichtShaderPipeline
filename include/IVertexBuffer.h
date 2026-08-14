@@ -8,39 +8,26 @@
 #include "IReferenceCounted.h"
 #include "irrArray.h"
 #include "IHardwareBuffer.h"
+#include "IBuffer.h"
 
 namespace irr
 {
 namespace scene
 {
-	class IVertexBuffer : public virtual IReferenceCounted
+	class IVertexBuffer :public IBuffer
 	{
 	public:
-		IVertexBuffer() : HardwareBuffer(0)
+		IVertexBuffer() : IBuffer(EBT_VERTEX)
 		{
 		}
 
-		virtual ~IVertexBuffer()
+		virtual ~IVertexBuffer() override
 		{
-			if (HardwareBuffer)
-				HardwareBuffer->drop();
 		}
-
-		virtual void clear() = 0;
-
-		virtual void set_used(u32 used) = 0;
-
-		virtual void reallocate(u32 size) = 0;
-
-		virtual u32 allocated_size() const = 0;
 
 		virtual s32 linear_reverse_search(const void* element) const = 0;
 
 		virtual void fill(u32 used) = 0;
-
-		virtual E_HARDWARE_MAPPING getHardwareMappingHint() const = 0;
-
-		virtual void setHardwareMappingHint(E_HARDWARE_MAPPING hardwareMappingHint) = 0;
 
 		virtual void addVertex(const void* vertex) = 0;
 
@@ -54,29 +41,14 @@ namespace scene
 
 		virtual void setVertex(u32 id, const void* vertex) = 0;
 
-		virtual void setDirty() = 0;
+		//! Reserve capacity without changing the used count, so repeated addVertex() calls don't reallocate.
+		virtual void reallocate(u32 size) = 0;
 
-		virtual u32 getChangedID() const = 0;
+		//! Set the used count, keeping capacity. set_used(0) resets without freeing, unlike clear().
+		virtual void set_used(u32 used) = 0;
 
-		video::IHardwareBuffer* getHardwareBuffer() const
-		{
-			return HardwareBuffer;
-		}
-
-		// externalMemoryHandler parameter is used only by hardware buffers.
-		void setHardwareBuffer(video::IHardwareBuffer* hardwareBuffer, bool externalMemoryHandler = false)
-		{
-			if (!externalMemoryHandler && HardwareBuffer)
-				HardwareBuffer->drop();
-
-			HardwareBuffer = hardwareBuffer;
-
-			if (!externalMemoryHandler && HardwareBuffer)
-				HardwareBuffer->grab();
-		}
-
-	protected:
-		video::IHardwareBuffer* HardwareBuffer;
+		//! Currently reserved capacity, which may exceed getVertexCount().
+		virtual u32 allocated_size() const = 0;
 	};
 }
 }

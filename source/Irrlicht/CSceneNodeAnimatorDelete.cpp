@@ -12,7 +12,7 @@ namespace scene
 
 
 //! constructor
-CSceneNodeAnimatorDelete::CSceneNodeAnimatorDelete(ISceneManager* manager, u32 time)
+CSceneNodeAnimatorDelete::CSceneNodeAnimatorDelete(std::shared_ptr<ISceneManager> manager, u32 time)
 : ISceneNodeAnimatorFinishing(time), SceneManager(manager)
 {
 	#ifdef _DEBUG
@@ -22,7 +22,7 @@ CSceneNodeAnimatorDelete::CSceneNodeAnimatorDelete(ISceneManager* manager, u32 t
 
 
 //! animates a scene node
-void CSceneNodeAnimatorDelete::animateNode(ISceneNode* node, u32 timeMs)
+void irr::scene::CSceneNodeAnimatorDelete::animateNode(ISceneNode* node, u32 timeMs)
 {
 	if (timeMs > FinishTime+PauseTimeSum)
 	{
@@ -31,13 +31,14 @@ void CSceneNodeAnimatorDelete::animateNode(ISceneNode* node, u32 timeMs)
 		{
 			// don't delete if scene manager is attached to an editor
 			if (!SceneManager->getParameters()->getAttributeAsBool(IRR_SCENE_MANAGER_IS_EDITOR))
-				SceneManager->addToDeletionQueue(node);
+				SceneManager->addToDeletionQueue(std::dynamic_pointer_cast<ISceneNode>(node->shared_from_this()));
 		}
 	}
 }
 
 
-ISceneNodeAnimator* CSceneNodeAnimatorDelete::createClone(ISceneNode* node, ISceneManager* newManager)
+ISceneNodeAnimator* CSceneNodeAnimatorDelete::createClone(std::shared_ptr<ISceneNode> node,
+                                                          std::shared_ptr<ISceneManager> newManager)
 {
 	if (!newManager)
 		newManager = SceneManager;

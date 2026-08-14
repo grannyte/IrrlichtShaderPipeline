@@ -6,10 +6,119 @@
 #define __I_IREFERENCE_COUNTED_H_INCLUDED__
 
 #include "irrTypes.h"
+#include <atomic>
+#include <memory>
 
 #ifdef _IRR_COMPILE_WITH_LEAK_HUNTER_
-	#include "leakHunter.h"
+#include "leakHunter.h"
 #endif
+
+template<typename T>
+class irrObjectHolder
+{
+public:
+	irrObjectHolder<T>() : ref(nullptr)
+	{
+	}
+
+	irrObjectHolder<T>(T* refcounted) : ref(refcounted)
+	{
+		if (ref)
+			ref->grab();
+	}
+	irrObjectHolder<T>(const irrObjectHolder<T>& other) : ref(other.ref)
+	{
+		if (ref)
+			ref->grab();
+	}
+	irrObjectHolder<T>(irrObjectHolder<T>&& other) : ref(other.ref)
+	{
+		if (ref)
+			ref->grab();
+	}
+	irrObjectHolder<T>& operator=(const irrObjectHolder<T>& other)
+	{
+		if (ref && !other.ref)
+			__debugbreak();
+		if (ref)
+		{
+			ref->drop();
+			ref = nullptr;
+		}
+		if (other.ref)
+		{
+			other.ref->grab();
+			ref = other.ref;
+		}
+		return *this;
+	}
+	irrObjectHolder<T>& operator=(irrObjectHolder<T>&& other)
+	{
+		if (ref && !other.ref)
+			__debugbreak();
+		if (ref)
+		{
+			ref->drop();
+			ref = nullptr;
+		}
+		if (other.ref)
+		{
+			other.ref->grab();
+			ref = other.ref;
+		}
+		return *this;
+	}
+	bool operator>(const irrObjectHolder<T>& other)
+	{
+		return ref > other.ref;
+	}
+	bool operator<(const irrObjectHolder<T>& other)
+	{
+		return ref < other.ref;
+	}
+	bool operator==(const irrObjectHolder<T>& other)
+	{
+		return ref == other.ref;
+	}
+
+	template < typename U > // class T : public U
+	bool operator==(const irrObjectHolder<U>& other)
+	{
+		return ref == other.ref;
+	}
+	template < typename U > // class T : public U
+	bool operator==(const U* other)
+	{
+		return ref == other;
+	}
+	template < typename U > // class T : public U
+	operator irrObjectHolder<U>() const
+	{
+		return irrObjectHolder<U>((U*)ref);
+	}
+
+
+
+	operator T* ()
+	{
+		return ref;
+	}
+	~irrObjectHolder()
+	{
+		if (ref)
+			ref->drop();
+	}
+	T* operator->()
+	{
+		return ref;
+	}
+	T* operator->() const
+	{
+		return ref;
+	}
+protected:
+	T* ref;
+};
 
 namespace irr
 {
@@ -58,9 +167,9 @@ namespace irr
 		//! Destructor.
 		virtual ~IReferenceCounted()
 		{
-			#ifdef _IRR_COMPILE_WITH_LEAK_HUNTER_
-				LeakHunter::removeObject(this);
-			#endif
+#ifdef _IRR_COMPILE_WITH_LEAK_HUNTER_
+			LeakHunter::removeObject(this);
+#endif
 		}
 
 		//! Grabs the object. Increments the reference counter by one.
@@ -128,7 +237,7 @@ namespace irr
 			// someone is doing bad reference counting.
 			_IRR_DEBUG_BREAK_IF(ReferenceCounter <= 0)
 
-			--ReferenceCounter;
+				--ReferenceCounter;
 			if (!ReferenceCounter)
 			{
 				delete this;
@@ -165,13 +274,13 @@ namespace irr
 			DebugName = newName;
 		}
 
-	private:
+	protected:
 
 		//! The debug name.
 		const c8* DebugName;
 
 		//! The reference counter. Mutable to do reference counting on const objects.
-		mutable s32 ReferenceCounter;
+		mutable std::atomic<s32> ReferenceCounter;
 	};
 
 } // end namespace irr

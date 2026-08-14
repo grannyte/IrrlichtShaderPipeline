@@ -13,7 +13,7 @@ namespace scene
 
 
 //! constructor
-CTerrainTriangleSelector::CTerrainTriangleSelector ( ITerrainSceneNode* node, s32 LOD )
+CTerrainTriangleSelector::CTerrainTriangleSelector (std::shared_ptr<ITerrainSceneNode> node, s32 LOD )
 	: SceneNode(node)
 {
 	#ifdef _DEBUG
@@ -32,7 +32,7 @@ CTerrainTriangleSelector::~CTerrainTriangleSelector()
 
 
 //! Clears and sets triangle data
-void CTerrainTriangleSelector::setTriangleData(ITerrainSceneNode* node, s32 LOD)
+void CTerrainTriangleSelector::setTriangleData(std::shared_ptr<ITerrainSceneNode> node, s32 LOD)
 {
 	video::IVertexAttribute* attribute = node->getRenderBuffer()->getVertexDescriptor()->getAttributeBySemantic(video::EVAS_POSITION);
 
@@ -43,7 +43,7 @@ void CTerrainTriangleSelector::setTriangleData(ITerrainSceneNode* node, s32 LOD)
 	offset += attribute->getOffset();
 
 	// Clear current data
-	const s32 count = (static_cast<CTerrainSceneNode*>(node))->TerrainData.PatchCount;
+	const s32 count = (std::static_pointer_cast<CTerrainSceneNode>(node))->TerrainData.PatchCount;
 	TrianglePatches.TotalTriangles = 0;
 	TrianglePatches.NumPatches = count*count;
 
@@ -199,7 +199,7 @@ s32 CTerrainTriangleSelector::getTriangleCount() const
 }
 
 
-ISceneNode* CTerrainTriangleSelector::getSceneNodeForTriangle(
+std::shared_ptr<ISceneNode> CTerrainTriangleSelector::getSceneNodeForTriangle(
 		u32 triangleIndex) const
 {
 	return SceneNode;

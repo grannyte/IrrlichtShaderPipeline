@@ -5,7 +5,7 @@
 #include "IrrCompileConfig.h"
 #ifdef _IRR_COMPILE_WITH_DIRECT3D_11_
 
-#define _IRR_DONT_DO_MEMORY_DEBUGGING_HERE
+
 
 #include "CD3D11ParallaxMapRenderer.h"
 #include "IMaterialRendererServices.h"
@@ -19,7 +19,7 @@ namespace video
 {
 	const char PARALLAX_MAP_SHADER[] =
 		"// adding constant buffer for transform matrices\n"\
-		"cbuffer cbPerFrame : register(c0)\n"\
+		"cbuffer cbPerFrame : register(b0)\n"\
 		"{\n"\
 		"   float4x4 g_mWorld;\n"\
 		"   float4x4 g_mWorldViewProj;\n"\
@@ -66,27 +66,37 @@ namespace video
 		"	// transform position to clip space\n"\
 		"	output.pos = mul( input.pos, g_mWorldViewProj );\n"\
 		"\n"\
+		"	// Fix: g_lightPos1/g_lightPos2/g_eyePosition are WORLD-space (see\n"\
+		"	// OnSetConstants()), so the vertex position and TBN basis used to build the light/eye\n"\
+		"	// vectors below must also be transformed into world space first -- using the raw\n"\
+		"	// object-space input.pos/tangent/binormal/norm directly against world-space positions\n"\
+		"	// only happened to work when the object's world matrix was the identity.\n"\
+		"	float4 worldPos = mul( input.pos, g_mWorld );\n"\
+		"	float3 worldTangent  = normalize( mul( input.tangent,  (float3x3)g_mWorld ) );\n"\
+		"	float3 worldBinormal = normalize( mul( input.binormal, (float3x3)g_mWorld ) );\n"\
+		"	float3 worldNormal   = normalize( mul( input.norm,     (float3x3)g_mWorld ) );\n"\
+		"\n"\
 		"	// vertex - lightpositions\n"\
-		"	float4 tempLightVector0 = float4(g_lightPos1, 0.0) - input.pos;\n"\
-		"	float4 tempLightVector1 = float4(g_lightPos2, 0.0) - input.pos;\n"\
+		"	float4 tempLightVector0 = float4(g_lightPos1, 0.0) - worldPos;\n"\
+		"	float4 tempLightVector1 = float4(g_lightPos2, 0.0) - worldPos;\n"\
 		"\n"\
 		"	// eye vector\n"\
-		"	float4 temp = float4(g_eyePosition, 0.f) - input.pos;\n"\
+		"	float4 temp = float4(g_eyePosition, 0.f) - worldPos;\n"\
 		"\n"\
 		"	// transform the light vector 1 with U, V, W\n"\
-		"	output.lightVector1.x = dot(input.tangent,  tempLightVector0.xyz);\n"\
-		"	output.lightVector1.y = dot(input.binormal, tempLightVector0.xyz);\n"\
-		"	output.lightVector1.z = dot(input.norm,   tempLightVector0.xyz);\n"\
+		"	output.lightVector1.x = dot(worldTangent,  tempLightVector0.xyz);\n"\
+		"	output.lightVector1.y = dot(worldBinormal, tempLightVector0.xyz);\n"\
+		"	output.lightVector1.z = dot(worldNormal,   tempLightVector0.xyz);\n"\
 		"\n"\
 		"	// transform the light vector 2 with U, V, W\n"\
-		"	output.lightVector2.x = dot(input.tangent,  tempLightVector1.xyz);\n"\
-		"	output.lightVector2.y = dot(input.binormal, tempLightVector1.xyz);\n"\
-		"	output.lightVector2.z = dot(input.norm,   tempLightVector1.xyz);\n"\
+		"	output.lightVector2.x = dot(worldTangent,  tempLightVector1.xyz);\n"\
+		"	output.lightVector2.y = dot(worldBinormal, tempLightVector1.xyz);\n"\
+		"	output.lightVector2.z = dot(worldNormal,   tempLightVector1.xyz);\n"\
 		"\n"\
 		"	// transform the eye vector with U, V, W \n"\
-		"	output.eyePos.x = dot(input.tangent,  temp.xyz);\n"\
-		"	output.eyePos.y = dot(input.binormal, temp.xyz);\n"\
-		"	output.eyePos.z = dot(input.norm,   temp.xyz);\n"\
+		"	output.eyePos.x = dot(worldTangent,  temp.xyz);\n"\
+		"	output.eyePos.y = dot(worldBinormal, temp.xyz);\n"\
+		"	output.eyePos.z = dot(worldNormal,   temp.xyz);\n"\
 		"	output.eyePos *= float3(1.0,-1.0, -1.0);\n"\
 		"	output.eyePos = normalize(output.eyePos);\n"\
 		"\n"\
@@ -121,15 +131,15 @@ namespace video
 		"// High-definition pixel-shader\n"\
 		"float4 PS(PS_INPUT input) : SV_Target\n"\
 		"{\n"\
-		"	float4 normalMap = g_tex2.Sample( g_sampler2, input.normalMapCoord ).bgra *  2.0 - 1.0;\n"\
+		"	float4 normalMap = g_tex2.Sample( g_sampler2, input.normalMapCoord ).rgba *  2.0 - 1.0;\n"\
 		"	normalMap *= g_scaleFactor;\n"\
 		"\n"\
 		"	// calculate new texture coord: height * eye + oldTexCoord\n"\
 		"	float2 offset = input.eyePos.xy * normalMap.w + input.normalMapCoord;\n"\
 		"\n"\
 		"	// fetch new textures\n"\
-		"	float4 colorMap = g_tex1.Sample( g_sampler1, offset ).bgra;\n"\
-		"	normalMap = normalize(g_tex2.Sample( g_sampler2, offset ).bgra * 2.0 - 1.0);\n"\
+		"	float4 colorMap = g_tex1.Sample( g_sampler1, offset ).rgba;\n"\
+		"	normalMap = normalize(g_tex2.Sample( g_sampler2, offset ).rgba * 2.0 - 1.0);\n"\
 		"\n"\
 		"	// calculate color of light 0\n"\
 		"	float4 color = clamp(input.lightColor1, 0.0, 1.0) * dot(normalMap.xyz, normalize(input.lightVector1));\n"\
@@ -208,9 +218,9 @@ CD3D11ParallaxMapRenderer::~CD3D11ParallaxMapRenderer()
 		CallBack = NULL;
 }
 
-bool CD3D11ParallaxMapRenderer::OnRender(IMaterialRendererServices* service, E_VERTEX_TYPE vtxtype)
+bool CD3D11ParallaxMapRenderer::OnRender(IMaterialRendererServices* service, IVertexDescriptor* vtxtype)
 {
-	if (vtxtype != video::EVT_TANGENTS)
+	if (vtxtype->getID() != video::EVT_TANGENTS)
 	{
 		os::Printer::log("Error: Parallax map renderer only supports vertices of type EVT_TANGENTS", ELL_ERROR);
 		return false;
@@ -231,13 +241,16 @@ s32 CD3D11ParallaxMapRenderer::getRenderCapability() const
 
 void CD3D11ParallaxMapRenderer::OnSetConstants( IMaterialRendererServices* services, s32 userData )
 {
+	// Read from the caller, not the captured immediate driver -- see ID3D11MaterialRendererServices.
+	video::IVideoDriver* driver = services ? services->getVideoDriver() : Driver;
+
 	// Set matrices
-	cbPerFrame.g_mWorld = Driver->getTransform(video::ETS_WORLD).getTransposed();
+	cbPerFrame.g_mWorld = driver->getTransform(video::ETS_WORLD).getTransposed();
 
 	core::matrix4 minv;
-	core::matrix4 mat = Driver->getTransform(video::ETS_PROJECTION);
-	mat *=  minv = Driver->getTransform(video::ETS_VIEW);
-	mat *= Driver->getTransform(video::ETS_WORLD);
+	core::matrix4 mat = driver->getTransform(video::ETS_PROJECTION);
+	mat *=  minv = driver->getTransform(video::ETS_VIEW);
+	mat *= driver->getTransform(video::ETS_WORLD);
 	cbPerFrame.g_mWorldViewProj = mat.getTransposed();
 
 	f32 floats[4] = {0,0,0,1};
@@ -248,12 +261,12 @@ void CD3D11ParallaxMapRenderer::OnSetConstants( IMaterialRendererServices* servi
 
 	// here we've got to fetch the fixed function lights from the
 	// driver and set them as constants
-	u32 cnt = Driver->getDynamicLightCount();
+	u32 cnt = driver->getDynamicLightCount();
 
 	SLight light;
 
 	if(cnt >= 1)
-		light = Driver->getDynamicLight(0);	
+		light = driver->getDynamicLight(0);
 	else
 	{
 		light.DiffuseColor.set(0,0,0); // make light dark
@@ -266,7 +279,7 @@ void CD3D11ParallaxMapRenderer::OnSetConstants( IMaterialRendererServices* servi
 	cbPerFrame.g_lightColor1 = light.DiffuseColor;
 
 	if(cnt >= 2)
-		light = Driver->getDynamicLight(1);
+		light = driver->getDynamicLight(1);
 	else
 	{
 		light = SLight();
@@ -286,7 +299,8 @@ void CD3D11ParallaxMapRenderer::OnSetConstants( IMaterialRendererServices* servi
 
 	cbPerFrame.g_scaleFactor = factor;
 
-	setConstantBuffer(cbPerFrameId, &cbPerFrame, EST_VERTEX_SHADER);
+	ID3D11MaterialRendererServices* d3dServices = static_cast<ID3D11MaterialRendererServices*>(services);
+	setConstantBuffer(cbPerFrameId, &cbPerFrame, EST_VERTEX_SHADER, d3dServices ? d3dServices->getContext() : nullptr);
 }
 
 void CD3D11ParallaxMapRenderer::OnSetMaterial( const SMaterial& material )

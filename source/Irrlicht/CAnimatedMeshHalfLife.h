@@ -485,7 +485,7 @@ namespace scene
 		virtual ~CAnimatedMeshHalfLife();
 
 		//! loads a Halflife mdl file
-		bool loadModelFile( io::IReadFile* file, ISceneManager * smgr );
+		bool loadModelFile(io::IReadFile* file, ISceneManager* smgr);
 
 		//IAnimatedMesh
 		virtual u32 getFrameCount() const _IRR_OVERRIDE_;
@@ -546,7 +546,7 @@ namespace scene
 		//! return a Mesh per frame
 		SMesh* MeshIPol;
 
-		ISceneManager *SceneManager;
+		scene::ISceneManager* SceneManager;
 
 		SHalflifeHeader *Header;
 		SHalflifeHeader *TextureHeader;

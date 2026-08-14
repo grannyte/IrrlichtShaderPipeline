@@ -27,14 +27,14 @@ public:
 		s32& outMaterialTypeNr, IMaterialRenderer* baseMaterial);
 	virtual ~CD3D11ParallaxMapRenderer();
 	
-	virtual void OnSetMaterial(const SMaterial& material);
+	virtual void OnSetMaterial(const SMaterial& material)_IRR_OVERRIDE_;
 
-	virtual bool OnRender(IMaterialRendererServices* service, E_VERTEX_TYPE vtxtype);
+	virtual bool OnRender(IMaterialRendererServices* service, IVertexDescriptor* vtxtype)_IRR_OVERRIDE_;
 
 	//! Returns the render capability of the material.
 	virtual s32 getRenderCapability() const;
 
-	virtual void OnSetConstants( IMaterialRendererServices* services, s32 userData );
+	virtual void OnSetConstants( IMaterialRendererServices* services, s32 userData )_IRR_OVERRIDE_;
 
 private:
 	s32 cbPerFrameId;

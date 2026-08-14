@@ -73,6 +73,8 @@ namespace scene
 		the camera to look up. It is disabled by default. */
 		virtual void setInvertMouse(bool invert) _IRR_OVERRIDE_;
 
+		virtual void setLookDirection(const core::vector3df& direction, const core::vector3df& up) _IRR_OVERRIDE_;
+
 		//! This animator will receive events when attached to the active camera
 		virtual bool isEventReceiverEnabled() const _IRR_OVERRIDE_
 		{
@@ -89,10 +91,13 @@ namespace scene
 		/** Please note that you will have to drop
 		(IReferenceCounted::drop()) the returned pointer once you're
 		done with it. */
-		virtual ISceneNodeAnimator* createClone(ISceneNode* node, ISceneManager* newManager=0) _IRR_OVERRIDE_;
+		virtual ISceneNodeAnimator* createClone(std::shared_ptr<ISceneNode> node, std::shared_ptr<ISceneManager> newManager=0) _IRR_OVERRIDE_;
 
 	private:
 		void allKeysUp();
+		void rebaseYawPitchToUp(const core::vector3df& up, const core::vector3df& forward);
+		// (0,0,1) projected into the horizon plane of up; the yaw reference the reconstruction shares with rebaseYawPitchToUp
+		static core::vector3df yawBase(const core::vector3df& up);
 
 		gui::ICursorControl *CursorControl;
 
@@ -105,6 +110,8 @@ namespace scene
 		f32 MouseYDirection;
 
 		s32 LastAnimationTime;
+		f32 YawAngle, PitchAngle;
+		core::vector3df LastUp, LastForward;
 
 		core::array<SKeyMap> KeyMap;
 		core::position2d<f32> CenterCursor, CursorPos;

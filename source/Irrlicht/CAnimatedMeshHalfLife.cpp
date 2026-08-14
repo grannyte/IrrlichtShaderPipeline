@@ -216,7 +216,7 @@ CAnimatedMeshHalfLife::CAnimatedMeshHalfLife()
 	loads a complete model
 */
 bool CAnimatedMeshHalfLife::loadModelFile(io::IReadFile* file,
-		ISceneManager* smgr)
+                                          ISceneManager* smgr)
 {
 	if (!file)
 		return false;

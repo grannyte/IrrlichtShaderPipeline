@@ -18,7 +18,7 @@ namespace scene
 	public:
 
 		//! constructor
-		CCameraSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id,
+		CCameraSceneNode( std::shared_ptr<ISceneManager> mgr, s32 id,
 			const core::vector3df& position = core::vector3df(0,0,0),
 			const core::vector3df& lookat = core::vector3df(0,0,100));
 
@@ -146,7 +146,8 @@ namespace scene
 		virtual bool getTargetAndRotationBinding(void) const _IRR_OVERRIDE_;
 
 		//! Creates a clone of this scene node and its children.
-		virtual ISceneNode* clone(ISceneNode* newParent=0, ISceneManager* newManager=0) _IRR_OVERRIDE_;
+		virtual std::shared_ptr<ISceneNode> clone(std::shared_ptr<ISceneNode> newParent = 0,
+		                                          std::shared_ptr<ISceneManager> newManager = 0) _IRR_OVERRIDE_;
 
 	protected:
 

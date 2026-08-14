@@ -59,11 +59,23 @@ namespace video
 		primitives. */
 		EDT_DIRECT3D11,
 
+		//!Direct3D 12 device, native pipeline (PSO/root signature/command lists).
+		/** Performs hardware accelerated rendering of 3D and 2D
+		primitives. */
+		EDT_DIRECT3D12,
+
+		//!Direct3D 12 device via D3D11-on-12 interop (D3D11 pipeline recorded onto
+		//!a D3D12 command queue/swap chain). Distinct from EDT_DIRECT3D12 (natif) :
+		//!celui-ci ne cree jamais de PSO/root signature lui-meme, il delegue au
+		//!runtime d'interop. Garde pour compatibilite avec le code existant qui
+		//!attend un comportement D3D11 tout en tournant sur une queue D3D12.
+		EDT_DIRECT3D11ON12,
+
 		//! No driver, just for counting the elements
 		EDT_COUNT
 	};
-	
-	const c8* const DRIVER_TYPE_NAMES[] = 
+
+	const c8* const DRIVER_TYPE_NAMES[] =
 	{
 		"NullDriver",
 		"Software Renderer",
@@ -72,7 +84,9 @@ namespace video
 		"Direct3D 9.0c",
 		"OpenGL 1.x/2.x/3.x",
 		"Direct3D 11.0",
-		0 
+		"Direct3D 12 (natif)",
+		"Direct3D 11-on-12 (interop)",
+		0
 	};
 	
 

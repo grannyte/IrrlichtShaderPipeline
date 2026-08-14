@@ -20,6 +20,8 @@
 #if defined(__BORLANDC__) || defined (__BCPLUSPLUS__)
 #include "irrMath.h"    // needed by borland for sqrtf define
 #endif
+
+#define D3D_DEBUG_INFO
 #include <d3d9.h>
 
 #ifdef _IRR_COMPILE_WITH_CG_
@@ -58,9 +60,11 @@ namespace video
 		CD3D9VertexDescriptor(IDirect3DDevice9* device, const core::stringc& name, u32 id);
 		virtual ~CD3D9VertexDescriptor();
 
-		virtual IVertexAttribute* addAttribute(const core::stringc& name, u32 elementCount, E_VERTEX_ATTRIBUTE_SEMANTIC semantic, E_VERTEX_ATTRIBUTE_TYPE type, u32 bufferID) _IRR_OVERRIDE_;
+		virtual bool addAttribute(const core::stringc& name, u32 elementCount, E_VERTEX_ATTRIBUTE_SEMANTIC semantic, E_VERTEX_ATTRIBUTE_TYPE type, u32 bufferID);
 
-		virtual void clearAttribute() _IRR_OVERRIDE_;
+		virtual bool removeAttribute(u32 id);
+
+		virtual void removeAllAttribute();
 
 		IDirect3DVertexDeclaration9* getInputLayoutDescription();
 
@@ -154,27 +158,27 @@ namespace video
 
 		//! Create occlusion query.
 		/** Use node for identification and mesh for occlusion test. */
-		virtual void addOcclusionQuery(scene::ISceneNode* node,
+		virtual void addOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node,
 				const scene::IMesh* mesh=0) _IRR_OVERRIDE_;
 
 		//! Remove occlusion query.
-		virtual void removeOcclusionQuery(scene::ISceneNode* node) _IRR_OVERRIDE_;
+		virtual void removeOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node) _IRR_OVERRIDE_;
 
 		//! Run occlusion query. Draws mesh stored in query.
 		/** If the mesh shall not be rendered visible, use
 		overrideMaterial to disable the color and depth buffer. */
-		virtual void runOcclusionQuery(scene::ISceneNode* node, bool visible=false) _IRR_OVERRIDE_;
+		virtual void runOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool visible=false) _IRR_OVERRIDE_;
 
 		//! Update occlusion query. Retrieves results from GPU.
 		/** If the query shall not block, set the flag to false.
 		Update might not occur in this case, though */
-		virtual void updateOcclusionQuery(scene::ISceneNode* node, bool block=true) _IRR_OVERRIDE_;
+		virtual void updateOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool block=true) _IRR_OVERRIDE_;
 
 		//! Return query result.
 		/** Return value is the number of visible pixels/fragments.
 		The value is a safe approximation, i.e. can be larger then the
 		actual value of pixels. */
-		virtual u32 getOcclusionQueryResult(scene::ISceneNode* node) const _IRR_OVERRIDE_;
+		virtual u32 getOcclusionQueryResult(std::shared_ptr<irr::scene::ISceneNode> node) const _IRR_OVERRIDE_;
 
 		virtual void drawMeshBuffer(const scene::IMeshBuffer* mb) _IRR_OVERRIDE_;
 
@@ -409,6 +413,9 @@ namespace video
 		//! returns a device dependent texture from a software surface (IImage)
 		//! THIS METHOD HAS TO BE OVERRIDDEN BY DERIVED DRIVERS WITH OWN TEXTURES
 		virtual video::ITexture* createDeviceDependentTexture(IImage* surface, const io::path& name, void* mipmapData=0) _IRR_OVERRIDE_;
+		
+		//! returns a texture array from textures
+		virtual video::ITexture* createDeviceDependentTexture(const core::array<ITexture*> &surfaces, const E_TEXTURE_TYPE Type, const io::path& name, void* mipmapData);
 
 		//! returns the current size of the screen or rendertarget
 		virtual const core::dimension2d<u32>& getCurrentRenderTargetSize() const _IRR_OVERRIDE_;

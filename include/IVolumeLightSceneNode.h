@@ -20,14 +20,14 @@ namespace scene
 	public:
 
 		//! constructor
-		IVolumeLightSceneNode(ISceneNode* parent, ISceneManager* mgr, s32 id,
+		IVolumeLightSceneNode(std::shared_ptr<ISceneManager> mgr, s32 id,
 			const core::vector3df& position,
 			const core::vector3df& rotation,
 			const core::vector3df& scale)
-			: ISceneNode(parent, mgr, id, position, rotation, scale) {};
+			: ISceneNode(mgr, id, position, rotation, scale) {};
 
 		//! Returns type of the scene node
-		virtual ESCENE_NODE_TYPE getType() const { return ESNT_VOLUME_LIGHT; }
+		ESCENE_NODE_TYPE getType() const override { return ESNT_VOLUME_LIGHT; }
 
 		//! Sets the number of segments across the U axis
 		virtual void setSubDivideU(const u32 inU) =0;
