@@ -218,6 +218,10 @@ namespace irr
 
 			virtual void resetStructureCount(scene::IComputeBuffer* appendBuffer, u32 value = 0) override;
 
+			virtual void drawMeshBufferInstancedIndirect(const scene::IMeshBuffer* mb,
+				scene::IComputeBuffer* instanceBuffer, u32 instanceStride,
+				scene::IComputeBuffer* argBuffer, u32 byteOffset) override;
+
 			virtual void draw2DVertexPrimitiveList(const void* vertices, u32 vertexCount, const void* indices,
 				u32 primitiveCount, E_VERTEX_TYPE vType, scene::E_PRIMITIVE_TYPE pType, E_INDEX_TYPE iType) _IRR_OVERRIDE_;
 
@@ -256,6 +260,9 @@ namespace irr
 			//! sets a render target
 			virtual bool setRenderTarget(video::ITexture* texture, bool clearBackBuffer,
 				bool clearZBuffer, SColor color, video::ITexture* depthStencil) _IRR_OVERRIDE_;
+
+			virtual bool setRenderTargetSlice(video::ITexture* texture, u32 arraySlice,
+				bool clearTarget = true, SColor color = video::SColor(0, 0, 0, 0)) _IRR_OVERRIDE_;
 
 			//! Sets multiple render targets
 			virtual bool setRenderTarget(const core::array<video::IRenderTarget>& targets,
@@ -489,7 +496,7 @@ namespace irr
 				const io::path& name = "uav", const ECOLOR_FORMAT format = ECF_A32B32G32R32F) override;
 
 			//! Copies a whole texture to another of identical size and format.
-			virtual bool copyTexture(ITexture* dest, ITexture* source) override;
+			virtual bool copyTexture(ITexture* dest, ITexture* source, u32 destSlice = 0) override;
 
 			//! Clears the ZBuffer.
 			virtual void clearZBuffer();

@@ -3474,10 +3474,17 @@ namespace irr
 			return levels.NumQualityLevels;
 		}
 
-		bool CD3D12Driver::copyTexture(ITexture* dest, ITexture* source)
+		bool CD3D12Driver::copyTexture(ITexture* dest, ITexture* source, u32 destSlice)
 		{
 			if (!dest || !source || dest == source)
 				return false;
+
+			// Slice copies are D3D11-only for now; refuse rather than silently writing slice 0.
+			if (destSlice != 0)
+			{
+				os::Printer::log("copyTexture: array-slice destination not implemented on D3D12.", ELL_ERROR);
+				return false;
+			}
 
 			if (dest->getSize() != source->getSize() ||
 				dest->getColorFormat() != source->getColorFormat())

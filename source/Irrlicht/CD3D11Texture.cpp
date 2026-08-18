@@ -263,6 +263,11 @@ namespace irr
 			if (RTView)
 				RTView->Release();
 
+			for (u32 i = 0; i < SliceRTViews.size(); ++i)
+				if (SliceRTViews[i])
+					SliceRTViews[i]->Release();
+			SliceRTViews.clear();
+
 			if (SRView)
 				SRView->Release();
 
@@ -286,6 +291,40 @@ namespace irr
 		ID3D11RenderTargetView* CD3D11Texture::getRenderTargetView() const
 		{
 			return RTView;
+		}
+
+		// Rendering into a slice, rather than copying into it, makes the source format irrelevant.
+		ID3D11RenderTargetView* CD3D11Texture::getRenderTargetView(u32 arraySlice)
+		{
+			if (arraySlice >= NumberOfArraySlices || !Texture || !Device)
+				return 0;
+
+			if (SliceRTViews.size() < NumberOfArraySlices)
+			{
+				const u32 had = SliceRTViews.size();
+				SliceRTViews.set_used(NumberOfArraySlices);
+				for (u32 i = had; i < NumberOfArraySlices; ++i)
+					SliceRTViews[i] = 0;
+			}
+
+			if (!SliceRTViews[arraySlice])
+			{
+				D3D11_TEXTURE2D_DESC desc;
+				((ID3D11Texture2D*)Texture)->GetDesc(&desc);
+
+				D3D11_RENDER_TARGET_VIEW_DESC rtvDesc;
+				ZeroMemory(&rtvDesc, sizeof(rtvDesc));
+				rtvDesc.Format = desc.Format;
+				rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
+				rtvDesc.Texture2DArray.MipSlice = 0;
+				rtvDesc.Texture2DArray.FirstArraySlice = arraySlice;
+				rtvDesc.Texture2DArray.ArraySize = 1;
+
+				if (FAILED(Device->CreateRenderTargetView(Texture, &rtvDesc, &SliceRTViews[arraySlice])))
+					return 0;
+			}
+
+			return SliceRTViews[arraySlice];
 		}
 
 		//! return shader resource view

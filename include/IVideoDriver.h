@@ -570,11 +570,13 @@ namespace irr
 				return nullptr;
 			};
 
-			//! Copies a whole texture to another of identical size and format.
+			//! Copies a whole texture into another of identical size and format, optionally into one
+			//! array slice of the destination.
 			/** Works for depth textures, which cannot be copied by rendering.
 			Neither texture may be bound to the pipeline during the call.
+			\param destSlice destination array slice; 0 for an ordinary 2D texture.
 			\return True on success, false if unsupported or the two do not match. */
-			virtual bool copyTexture(ITexture* dest, ITexture* source) {
+			virtual bool copyTexture(ITexture* dest, ITexture* source, u32 destSlice = 0) {
 				return false;
 			};
 
@@ -1158,6 +1160,22 @@ namespace irr
 			//! Reset an append/consume buffer's hidden counter. Applied on the next bind.
 			virtual void resetStructureCount(scene::IComputeBuffer* appendBuffer, u32 value = 0) {};
 
+			//! Draw a mesh buffer instanced, with the instance count read from a buffer the GPU wrote.
+			/** The counterpart of dispatchComputeShaderIndirect() for drawing: nothing about the
+			* instance set is known CPU-side, so no readback is needed. mb supplies the geometry and a
+			* vertex descriptor whose last slot is EIDSR_PER_INSTANCE; instanceBuffer is bound into
+			* that slot instead of mb's own, so compute output is drawn without a copy.
+			* \param mb Geometry and vertex descriptor
+			* \param instanceBuffer Per-instance stream, created with EHBF_VERTEX_ADDITIONAL_BIND
+			* \param instanceStride Bytes per instance in that stream
+			* \param argBuffer EHBF_DRAW_INDIRECT_ARGS buffer holding the 5 u32
+			*        DrawIndexedInstancedIndirect arguments at byteOffset
+			* \param byteOffset Offset of those arguments, must be a multiple of 4
+			*/
+			virtual void drawMeshBufferInstancedIndirect(const scene::IMeshBuffer* mb,
+				scene::IComputeBuffer* instanceBuffer, u32 instanceStride,
+				scene::IComputeBuffer* argBuffer, u32 byteOffset) {};
+
 
 			//! Draws normals of a mesh buffer
 			/** \param mb Buffer to draw the normals of
@@ -1611,6 +1629,19 @@ namespace irr
 			virtual IVertexDescriptor* getVertexDescriptor(const core::stringc& pName) const = 0;
 
 			virtual u32 getVertexDescriptorCount() const = 0;
+
+			//! Binds one array slice of a render-target array as the current render target.
+			/** Rendering into a slice, rather than copying into it, makes the source texture's
+			format irrelevant -- the blit converts. Restore with the usual setRenderTarget(0).
+			Declared LAST on purpose: inserting a virtual mid-class shifts every slot after it, and
+			anything linking Irrlicht without rebuilding then calls through the wrong ones.
+			\param texture the render-target array
+			\param arraySlice slice to draw into
+			\return True if bound, false if unsupported or the slice does not exist. */
+			virtual bool setRenderTargetSlice(video::ITexture* texture, u32 arraySlice,
+				bool clearTarget = true, SColor color = video::SColor(0, 0, 0, 0)) {
+				return false;
+			};
 		};
 
 	} // end namespace video

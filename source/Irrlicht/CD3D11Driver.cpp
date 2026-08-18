@@ -1339,6 +1339,94 @@ namespace irr
 			os::Printer::log("CD3D11Driver::resetStructureCount: buffer is not bound - bind it as a UAV first", ELL_WARNING);
 		}
 
+		void CD3D11Driver::drawMeshBufferInstancedIndirect(const scene::IMeshBuffer* mb,
+			scene::IComputeBuffer* instanceBuffer, u32 instanceStride,
+			scene::IComputeBuffer* argBuffer, u32 byteOffset)
+		{
+			if (!mb || !instanceBuffer || !argBuffer || !instanceStride)
+				return;
+
+			CD3D11HardwareBuffer* inst = prepareComputeBuffer(instanceBuffer);
+			CD3D11HardwareBuffer* args = prepareComputeBuffer(argBuffer);
+			if (!inst || !args || !inst->getBuffer() || !args->getBuffer())
+			{
+				os::Printer::log("drawMeshBufferInstancedIndirect: instance or args buffer has no D3D buffer", ELL_ERROR);
+				return;
+			}
+
+			// A buffer still bound as a compute UAV cannot be read by the IA.
+			unbindComputeResources();
+
+			const u32 slotCount = mb->getVertexBufferCount();
+			if (!slotCount || !mb->getVertexDescriptor())
+				return;
+
+			std::array<ID3D11Buffer*, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT> vbuffers = {};
+			std::array<u32, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT> strides = {};
+			std::array<UINT, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT> offsets = {};
+
+			for (u32 i = 0; i < slotCount; ++i)
+			{
+				offsets[i] = 0;
+
+				if (mb->getVertexDescriptor()->getInstanceDataStepRate(i) == EIDSR_PER_INSTANCE)
+				{
+					vbuffers[i] = inst->getBuffer();
+					strides[i] = instanceStride;
+					continue;
+				}
+
+				auto& hwBuff = mb->getVertexBuffer(i)->getHardwareBuffer();
+				if (!hwBuff && mb->getVertexBuffer(i)->getVertexCount() > 0)
+					createHardwareBuffer(mb->getVertexBuffer(i));
+				else if (hwBuff && hwBuff->isRequiredUpdate())
+					hwBuff->update(mb->getVertexBuffer(i)->getHardwareMappingHint(),
+						mb->getVertexBuffer(i)->getVertexCount() * mb->getVertexBuffer(i)->getVertexSize(),
+						mb->getVertexBuffer(i)->getVertices());
+
+				auto& ready = mb->getVertexBuffer(i)->getHardwareBuffer();
+				vbuffers[i] = ready ? ((CD3D11HardwareBuffer*)ready.get())->getBuffer() : NULL;
+				strides[i] = mb->getVertexBuffer(i)->getVertexSize();
+			}
+
+			Context->IASetVertexBuffers(0, slotCount, vbuffers.data(), strides.data(), offsets.data());
+
+			auto& hwindBuff = mb->getIndexBuffer()->getHardwareBuffer();
+			if (!hwindBuff && mb->getIndexBuffer()->getIndexCount() > 0)
+				createHardwareBuffer(mb->getIndexBuffer());
+			else if (hwindBuff && hwindBuff->isRequiredUpdate())
+				hwindBuff->update(mb->getIndexBuffer()->getHardwareMappingHint(),
+					mb->getIndexBuffer()->getIndexCount() * mb->getIndexBuffer()->getIndexSize(),
+					mb->getIndexBuffer()->getIndices());
+
+			auto& readyIdx = mb->getIndexBuffer()->getHardwareBuffer();
+			if (!readyIdx)
+				return;
+			Context->IASetIndexBuffer(((CD3D11HardwareBuffer*)readyIdx.get())->getBuffer(),
+				mb->getIndexBuffer()->getType() == video::EIT_16BIT ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT, 0);
+
+			if (!setRenderStates3DMode((CD3D11VertexDescriptor*)mb->getVertexDescriptor()))
+				return;
+			if (Material.MaterialType < 0)
+				return;
+
+			BridgeCalls->setInputLayout(mb->getVertexDescriptor(), getRendererFor(Material.MaterialType));
+			BridgeCalls->setDepthStencilState(DepthStencilDesc);
+			BridgeCalls->setBlendState(BlendDesc);
+			BridgeCalls->setRasterizerState(RasterizerDesc);
+			BridgeCalls->setPrimitiveTopology(getTopology(mb->getPrimitiveType()));
+
+			Context->DrawIndexedInstancedIndirect(args->getBuffer(), byteOffset);
+
+			for (u32 i = 0; i < slotCount; ++i)
+			{
+				vbuffers[i] = NULL;
+				strides[i] = 0;
+				offsets[i] = 0;
+			}
+			Context->IASetVertexBuffers(0, slotCount, vbuffers.data(), strides.data(), offsets.data());
+		}
+
 		void CD3D11Driver::unbindComputeResources()
 		{
 			if (ComputeUAVCount)
@@ -1393,6 +1481,44 @@ namespace irr
 		void CD3D11Driver::removeAllHardwareBuffers()
 		{
 			HardwareBuffer.clear();
+		}
+
+		bool CD3D11Driver::setRenderTargetSlice(video::ITexture* texture, u32 arraySlice,
+			bool clearTarget, SColor color)
+		{
+			if (!texture || texture->getDriverType() != EDT_DIRECT3D11 || !texture->isRenderTarget())
+			{
+				os::Printer::log("setRenderTargetSlice: not a D3D11 render target.", ELL_ERROR);
+				return false;
+			}
+
+			CD3D11Texture* tex = static_cast<CD3D11Texture*>(texture);
+			ID3D11RenderTargetView* view = tex->getRenderTargetView(arraySlice);
+			if (!view)
+				return false;
+
+			// No depth: slices are written by a full-screen blit, never depth-tested.
+			CurrentDepthBuffer = 0;
+			Context->OMSetRenderTargets(1, &view, NULL);
+
+			if (clearTarget)
+			{
+				const f32 clear[4] = { color.getRed() / 255.f, color.getGreen() / 255.f,
+					color.getBlue() / 255.f, color.getAlpha() / 255.f };
+				Context->ClearRenderTargetView(view, clear);
+			}
+
+			D3D11_VIEWPORT vp;
+			vp.TopLeftX = 0; vp.TopLeftY = 0;
+			vp.Width = (f32)texture->getSize().Width;
+			vp.Height = (f32)texture->getSize().Height;
+			vp.MinDepth = 0.f; vp.MaxDepth = 1.f;
+			Context->RSSetViewports(1, &vp);
+
+			// The bridge caches bound state; it cannot know about a view bound behind its back.
+			if (BridgeCalls)
+				BridgeCalls->invalidateCache();
+			return true;
 		}
 
 		bool CD3D11Driver::setRenderTarget(video::ITexture* texture, bool clearBackBuffer,
@@ -2819,7 +2945,7 @@ namespace irr
 			return 0;
 		}
 
-		bool CD3D11Driver::copyTexture(ITexture* dest, ITexture* source)
+		bool CD3D11Driver::copyTexture(ITexture* dest, ITexture* source, u32 destSlice)
 		{
 			if (!dest || !source || dest == source)
 				return false;
@@ -2831,13 +2957,56 @@ namespace irr
 				return false;
 			}
 
-			ID3D11Resource* d = static_cast<CD3D11Texture*>(dest)->getTextureResource();
+			CD3D11Texture* destTex = static_cast<CD3D11Texture*>(dest);
+			ID3D11Resource* d = destTex->getTextureResource();
 			ID3D11Resource* s = static_cast<CD3D11Texture*>(source)->getTextureResource();
 			if (!d || !s)
 				return false;
 
+			if (destSlice >= destTex->getNumberOfArraySlices())
+			{
+				os::Printer::log("copyTexture: destination slice out of range.", ELL_ERROR);
+				return false;
+			}
+
+			// getColorFormat() reports ECF_A8R8G8B8 for both B8G8R8A8 (plain textures) and
+			// R8G8B8A8 (render targets), but a copy between those two DXGI formats is invalid and
+			// silently transfers nothing. Compare what the resources actually are.
+			{
+				D3D11_TEXTURE2D_DESC destDesc, srcDesc;
+				ZeroMemory(&destDesc, sizeof(destDesc));
+				ZeroMemory(&srcDesc, sizeof(srcDesc));
+				ID3D11Texture2D* dest2D = NULL;
+				ID3D11Texture2D* src2D = NULL;
+				if (SUCCEEDED(d->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&dest2D)) && dest2D)
+				{
+					dest2D->GetDesc(&destDesc);
+					dest2D->Release();
+				}
+				if (SUCCEEDED(s->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&src2D)) && src2D)
+				{
+					src2D->GetDesc(&srcDesc);
+					src2D->Release();
+				}
+				if (destDesc.Format != srcDesc.Format)
+				{
+					os::Printer::log("copyTexture: DXGI formats differ, refusing.", ELL_ERROR);
+					return false;
+				}
+			}
+
 			// Neither may be bound; the caller unbinds the source depth surface first.
-			Context->CopyResource(d, s);
+			if (destSlice == 0 && destTex->getNumberOfArraySlices() == 1)
+			{
+				Context->CopyResource(d, s);
+			}
+			else
+			{
+				// Whole mip 0 of the source into one slice of the destination.
+				const UINT mipLevels = destTex->NumberOfMipLevels ? destTex->NumberOfMipLevels : 1;
+				const UINT subresource = D3D11CalcSubresource(0, destSlice, mipLevels);
+				Context->CopySubresourceRegion(d, subresource, 0, 0, 0, s, 0, NULL);
+			}
 			return true;
 		}
 

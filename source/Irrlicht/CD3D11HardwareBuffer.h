@@ -66,7 +66,8 @@ private:
 	ID3D11ShaderResourceView* SRView;
 
 	CD3D11Driver* Driver;
-	std::shared_ptr<CD3D11HardwareBuffer> TempStagingBuffer;
+	std::shared_ptr<CD3D11HardwareBuffer> TempStagingBuffer;   // kept across locks; freed on resize
+	bool StagingLocked = false;
 	D3D11_MAP LastMapDirection;
 	irr::scene::IBuffer* LinkedBuffer;
 };

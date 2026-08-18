@@ -64,6 +64,9 @@ namespace irr
 			//! return render target view
 			ID3D11RenderTargetView* getRenderTargetView() const;
 
+			//! render target view for one array slice, created on first use
+			ID3D11RenderTargetView* getRenderTargetView(u32 arraySlice);
+
 			//! return shader resource view
 			ID3D11ShaderResourceView* getShaderResourceView() const;
 
@@ -77,6 +80,8 @@ namespace irr
 			ID3D11DeviceContext* Context;
 			ID3D11Resource* Texture;
 			ID3D11RenderTargetView* RTView;
+			//! per-slice views, built lazily; index is the array slice
+			core::array<ID3D11RenderTargetView*> SliceRTViews;
 			ID3D11ShaderResourceView* SRView;
 			ID3D11UnorderedAccessView* UAView;
 			ID3D11DepthStencilView* dsView;
