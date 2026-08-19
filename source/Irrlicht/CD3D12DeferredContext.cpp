@@ -70,12 +70,19 @@ namespace irr
 			// cache (CD3D12Driver::createNullTexture()): ~CNullDriver() on THIS context therefore
 			// drops nothing and cannot destroy a texture still used elsewhere.
 
-			HRESULT hr = Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
-				IID_PPV_ARGS(&Frames[0].CommandAllocator));
-			if (FAILED(hr))
+			// One allocator per ring slot: beginRecording() rotates through them so it never resets
+			// one the GPU may still be executing, which is the only way to avoid blocking on the
+			// previous submission (the caller cannot wait -- see beginRecording).
+			HRESULT hr = S_OK;
+			for (UINT i = 0; i < NativeFrameCount; ++i)
 			{
-				os::Printer::log("CD3D12DeferredContext: CreateCommandAllocator failed", ELL_ERROR);
-				return;
+				hr = Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+					IID_PPV_ARGS(&Frames[i].CommandAllocator));
+				if (FAILED(hr))
+				{
+					os::Printer::log("CD3D12DeferredContext: CreateCommandAllocator failed", ELL_ERROR);
+					return;
+				}
 			}
 
 			// Builds the constant ring, shader-visible SRV heap and vertex ring for all of
@@ -163,13 +170,17 @@ namespace irr
 
 		void CD3D12DeferredContext::prepareRecordingState()
 		{
-			if (!CommandList || !Frames[0].ShaderVisibleSRVHeap)
+			// Per-slot, not slot 0: the rings and heap bound here must belong to the same frame as
+			// the allocator beginRecording() just reset, or a still-in-flight submission's data is
+			// overwritten under it.
+			SD3D12FrameContext& frame = Frames[CurrentFrameIndex];
+			if (!CommandList || !frame.ShaderVisibleSRVHeap)
 				return;
 
-			Frames[0].ConstantRingOffset = 0;
-			Frames[0].ShaderVisibleSRVNext = 0;
-			Frames[0].VertexRingOffset = 0;
-			ID3D12DescriptorHeap* heaps[] = { Frames[0].ShaderVisibleSRVHeap.Get() };
+			frame.ConstantRingOffset = 0;
+			frame.ShaderVisibleSRVNext = 0;
+			frame.VertexRingOffset = 0;
+			ID3D12DescriptorHeap* heaps[] = { frame.ShaderVisibleSRVHeap.Get() };
 			CommandList->SetDescriptorHeaps(1, heaps);
 
 			if (!Target)
@@ -217,14 +228,30 @@ namespace irr
 			// defeating the point of recording in parallel): it's up to the caller to have called
 			// waitForCompletion() (or otherwise know the previous submission is done) before
 			// calling beginRecording() again.
-			if (Fence && Fence->GetCompletedValue() < FenceValue)
-				os::Printer::log("CD3D12DeferredContext::beginRecording: previous submission not"
-					" confirmed complete on the GPU -- call waitForCompletion() before"
-					" beginRecording() (see IDeferredContext::beginRecording contract)",
-					ELL_WARNING);
+			// Rotate through the frame ring instead of resetting one allocator every frame: an
+			// allocator may only be Reset() once the GPU has finished every list that used it, and
+			// the caller cannot wait here (blocking on the UI submission deadlocks against
+			// Present). With NativeFrameCount slots the wait below is effectively never taken,
+			// which is what makes recording in parallel safe rather than merely unblocked.
+			CurrentFrameIndex = (CurrentFrameIndex + 1) % NativeFrameCount;
+			SD3D12FrameContext& frame = Frames[CurrentFrameIndex];
 
-			Frames[0].CommandAllocator->Reset();
-			CommandList->Reset(Frames[0].CommandAllocator.Get(), nullptr);
+			if (Fence && frame.FenceValue != 0 && Fence->GetCompletedValue() < frame.FenceValue)
+			{
+				if (FenceEvent)
+				{
+					Fence->SetEventOnCompletion(frame.FenceValue, FenceEvent);
+					WaitForSingleObject(FenceEvent, INFINITE);
+				}
+				else
+				{
+					while (Fence->GetCompletedValue() < frame.FenceValue)
+						/* spin: no event to wait on */;
+				}
+			}
+
+			frame.CommandAllocator->Reset();
+			CommandList->Reset(frame.CommandAllocator.Get(), nullptr);
 			prepareRecordingState();
 		}
 
@@ -258,6 +285,9 @@ namespace irr
 			{
 				++FenceValue;
 				target->DirectQueue->Signal(Fence.Get(), FenceValue);
+				// Stamp the slot this submission used, so beginRecording() knows when it may be
+				// reset. Without this the ring rotates but never actually waits for anything.
+				Frames[CurrentFrameIndex].FenceValue = FenceValue;
 			}
 		}
 

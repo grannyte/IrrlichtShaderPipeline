@@ -95,6 +95,14 @@ namespace irr
 			virtual ITexture* addTexture(const core::dimension2d<u32>& size, const io::path& name,
 				ECOLOR_FORMAT format = ECF_A8R8G8B8) _IRR_OVERRIDE_ { return ImmediateDriver->addTexture(size, name, format); }
 			virtual ITexture* addTexture(const io::path& name, IImage* image, void* mipmapData = 0) _IRR_OVERRIDE_ { return ImmediateDriver->addTexture(name, image, mipmapData); }
+
+			// Same reason as the textures above: this context skips the driver's own setup, so its descriptor table is empty.
+			virtual IVertexDescriptor* getVertexDescriptor(u32 id) const _IRR_OVERRIDE_ { return ImmediateDriver->getVertexDescriptor(id); }
+			virtual IVertexDescriptor* getVertexDescriptor(const core::stringc& pName) const _IRR_OVERRIDE_ { return ImmediateDriver->getVertexDescriptor(pName); }
+			virtual u32 getVertexDescriptorCount() const _IRR_OVERRIDE_ { return ImmediateDriver->getVertexDescriptorCount(); }
+			virtual IVertexDescriptor* addVertexDescriptor(const core::stringc& pName) _IRR_OVERRIDE_ { return ImmediateDriver->addVertexDescriptor(pName); }
+
+			virtual IGPUProgrammingServices* getGPUProgrammingServices() _IRR_OVERRIDE_ { return ImmediateDriver->getGPUProgrammingServices(); }
 			virtual ITexture* addRenderTargetTexture(const core::dimension2d<u32>& size,
 				const io::path& name = "rt", const ECOLOR_FORMAT format = ECF_UNKNOWN) _IRR_OVERRIDE_
 			{
