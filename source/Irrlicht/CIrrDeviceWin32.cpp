@@ -61,6 +61,11 @@ namespace irr
 			io::IFileSystem* io, HWND window);
 #endif
 
+#ifdef _IRR_COMPILE_WITH_VULKAN_
+		IVideoDriver* createVulkanDriver(const irr::SIrrlichtCreationParameters& params,
+			io::IFileSystem* io, HWND window);
+#endif
+
 #ifdef _IRR_COMPILE_WITH_OPENGL_
 		IVideoDriver* createOpenGLDriver(const irr::SIrrlichtCreationParameters& params,
 			io::IFileSystem* io, CIrrDeviceWin32* device);
@@ -1274,6 +1279,22 @@ namespace irr
 #endif // _IRR_COMPILE_WITH_DIRECT3D_12_
 
 			break;
+
+		case video::EDT_VULKAN:
+#ifdef _IRR_COMPILE_WITH_VULKAN_
+
+			VideoDriver = video::createVulkanDriver(CreationParams, FileSystem, HWnd);
+
+			if (!VideoDriver)
+			{
+				os::Printer::log("Could not create VULKAN Driver.", ELL_ERROR);
+			}
+#else
+			os::Printer::log("VULKAN Driver was not compiled into this dll. Try another one.", ELL_ERROR);
+#endif // _IRR_COMPILE_WITH_VULKAN_
+
+			break;
+
 		case video::EDT_OPENGL:
 
 #ifdef _IRR_COMPILE_WITH_OPENGL_

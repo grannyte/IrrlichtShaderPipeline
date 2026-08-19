@@ -46,8 +46,7 @@ namespace irr
 				case ECF_BC6_S:          return DXGI_FORMAT_BC6H_SF16;
 				case ECF_BC7_U:          return DXGI_FORMAT_BC7_UNORM;
 				case ECF_BC7_S:          return DXGI_FORMAT_BC7_UNORM_SRGB;
-				// Extended engine formats used by the deferred renderer's G-buffer;
-				// ECF_A8R8G8B8S is the one OuterSpace uses.
+				// Extended engine formats used by the deferred renderer's G-buffer.
 				case ECF_A8R8G8B8S:      return DXGI_FORMAT_R8G8B8A8_SNORM;
 				case ECF_R8:             return DXGI_FORMAT_R8_UNORM;
 				case ECF_R8S:            return DXGI_FORMAT_R8_SNORM;
