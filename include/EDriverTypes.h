@@ -71,6 +71,11 @@ namespace video
 		//!attend un comportement D3D11 tout en tournant sur une queue D3D12.
 		EDT_DIRECT3D11ON12,
 
+		//! Vulkan device, loader opened at runtime (no SDK/import lib needed).
+		/** Performs hardware accelerated rendering of 3D and 2D
+		primitives. */
+		EDT_VULKAN,
+
 		//! No driver, just for counting the elements
 		EDT_COUNT
 	};
@@ -86,6 +91,7 @@ namespace video
 		"Direct3D 11.0",
 		"Direct3D 12 (natif)",
 		"Direct3D 11-on-12 (interop)",
+		"Vulkan",
 		0
 	};
 	

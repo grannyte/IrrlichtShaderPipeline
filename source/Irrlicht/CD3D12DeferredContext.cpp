@@ -46,6 +46,13 @@ namespace irr
 			// a mutex would be a genuine race (CD3D12PSOCache::getOrCreate() isn't thread-safe) --
 			// the accepted cost is that a handful of PSOs may be duplicated rather than reused
 			// between this context and the immediate driver.
+			//
+			// RootSignatureCache is likewise NOT copied, and needs no equivalent of the PSO caveat:
+			// nothing on a deferred context ever populates it. Root signatures are built once at
+			// registration time on the immediate driver (createBuiltInMaterialRenderers()/
+			// registerUserShaderMaterial() -> buildMaterialRootSignature()) and reached from here
+			// through the delegated material registry, as CD3D12MaterialRenderer::RootSignature. Only
+			// the DEFAULT one is copied below, as the fallback rootSignatureForRenderer() needs.
 			Device = immediate->Device;
 			DirectQueue = immediate->DirectQueue;
 			RootSignature = immediate->RootSignature;

@@ -4404,7 +4404,7 @@ namespace irr
 			// Params.DriverMultithreaded == false). Surface that failure here
 			// instead of handing back a degenerate object whose Context is
 			// NULL -- callers (and tests) should be able to trust a non-null
-			// return actually supports recording (see OS-376).
+			// return actually supports recording.
 			if (!deferred->getContext())
 			{
 				deferred->drop();
