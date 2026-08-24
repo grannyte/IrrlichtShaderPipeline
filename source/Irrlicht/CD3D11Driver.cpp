@@ -833,6 +833,7 @@ namespace irr
 			case EVDF_PIXEL_SHADER_5_0:
 			case EVDF_GEOMETRY_SHADER_5_0:
 			case EVDF_COMPUTING_SHADER_5_0:
+			case EVDF_BOUND_COMPUTE_PIPELINE:
 				return FeatureLevel >= D3D_FEATURE_LEVEL_11_0;
 
 			case EVDF_COMPUTING_SHADER_4_0:
@@ -1337,6 +1338,28 @@ namespace irr
 			}
 
 			os::Printer::log("CD3D11Driver::resetStructureCount: buffer is not bound - bind it as a UAV first", ELL_WARNING);
+		}
+
+		bool CD3D11Driver::beginComputeReadback(scene::IComputeBuffer* buffer, u32 slot)
+		{
+			if (!buffer || slot >= EMCS_MAX_READBACK_SLOTS)
+				return false;
+
+			CD3D11HardwareBuffer* hw = prepareComputeBuffer(buffer);
+			if (!hw || !hw->getBuffer())
+				return false;
+
+			return hw->beginAsyncReadback(slot);
+		}
+
+		bool CD3D11Driver::tryReadComputeBuffer(scene::IComputeBuffer* buffer, u32 slot, void* dst, u32 bytes, bool wait)
+		{
+			if (!buffer || slot >= EMCS_MAX_READBACK_SLOTS || !buffer->getHardwareBuffer())
+				return false;
+
+			// Not prepareComputeBuffer(): a poll must never trigger an upload of a dirty CPU copy.
+			CD3D11HardwareBuffer* hw = std::static_pointer_cast<CD3D11HardwareBuffer>(buffer->getHardwareBuffer()).get();
+			return hw->tryAsyncReadback(slot, dst, bytes, wait);
 		}
 
 		void CD3D11Driver::drawMeshBufferInstancedIndirect(const scene::IMeshBuffer* mb,

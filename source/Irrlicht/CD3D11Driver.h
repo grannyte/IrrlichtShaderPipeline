@@ -218,6 +218,10 @@ namespace irr
 
 			virtual void resetStructureCount(scene::IComputeBuffer* appendBuffer, u32 value = 0) override;
 
+			virtual bool beginComputeReadback(scene::IComputeBuffer* buffer, u32 slot) override;
+
+			virtual bool tryReadComputeBuffer(scene::IComputeBuffer* buffer, u32 slot, void* dst, u32 bytes, bool wait) override;
+
 			virtual void drawMeshBufferInstancedIndirect(const scene::IMeshBuffer* mb,
 				scene::IComputeBuffer* instanceBuffer, u32 instanceStride,
 				scene::IComputeBuffer* argBuffer, u32 byteOffset) override;

@@ -166,6 +166,11 @@ namespace video
 		//! Supports texture multisampling
 		EVDF_TEXTURE_MULTISAMPLING,
 
+		//! Are bindComputeBuffer()/dispatchComputeShaderBound()/unbindComputeResources() implemented?
+		//! Separate from EVDF_COMPUTING_SHADER_5_0: a driver can compile compute and still only offer
+		//! the legacy one-in/one-out dispatchComputeShader().
+		EVDF_BOUND_COMPUTE_PIPELINE,
+
 		//! Only used for counting the elements of this enum
 		EVDF_COUNT
 	};

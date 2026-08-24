@@ -1642,6 +1642,26 @@ namespace irr
 				bool clearTarget = true, SColor color = video::SColor(0, 0, 0, 0)) {
 				return false;
 			};
+
+			//! Staging copies a compute buffer can keep in flight for tryReadComputeBuffer().
+			enum
+			{
+				EMCS_MAX_READBACK_SLOTS = 4
+			};
+
+			//! Queue a GPU->staging copy of buffer into readback slot; returns without waiting.
+			/** Poll it with tryReadComputeBuffer(). Double-buffer by alternating slot per frame so
+			the copy a frame old is read while this frame's is still in flight. Appended LAST on
+			purpose, see setRenderTargetSlice.
+			\return False if unsupported or the buffer has no device copy yet. */
+			virtual bool beginComputeReadback(scene::IComputeBuffer* buffer, u32 slot) { return false; };
+
+			//! Copy a queued readback into dst once the GPU is done with it.
+			/** wait=false never stalls: it returns false while the copy is still in flight and dst
+			is left untouched. wait=true blocks like lock(true) does.
+			\return True if dst was filled. */
+			virtual bool tryReadComputeBuffer(scene::IComputeBuffer* buffer, u32 slot, void* dst,
+				u32 bytes, bool wait) { return false; };
 		};
 
 	} // end namespace video

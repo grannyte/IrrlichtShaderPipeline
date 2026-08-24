@@ -322,6 +322,39 @@ namespace irr
 			Context->Unmap(Buffer, 0);
 		}
 
+		bool CD3D11HardwareBuffer::beginAsyncReadback(u32 slot)
+		{
+			if (!Buffer || slot >= ASYNC_READBACK_SLOTS || Mapping == scene::EHM_STAGING)
+				return false;
+
+			// Sized to the live buffer: a resize since the last copy makes the old staging copy a lie.
+			if (!AsyncStaging[slot] || AsyncStaging[slot]->size() != Size || !AsyncStaging[slot]->getBuffer())
+				AsyncStaging[slot] = std::make_shared<CD3D11HardwareBuffer>(Driver, EHBT_SYSTEM, scene::EHM_STAGING, Size, 0, Stride);
+			if (!AsyncStaging[slot]->getBuffer())
+				return false;
+
+			AsyncStaging[slot]->copyFromBuffer(shared_from_this(), 0, 0, Size);
+			return true;
+		}
+
+		bool CD3D11HardwareBuffer::tryAsyncReadback(u32 slot, void* dst, u32 bytes, bool wait)
+		{
+			if (slot >= ASYNC_READBACK_SLOTS || !dst || !AsyncStaging[slot] || !AsyncStaging[slot]->getBuffer())
+				return false;
+
+			// DO_NOT_WAIT turns the usual readback stall into WAS_STILL_DRAWING, which is the poll.
+			D3D11_MAPPED_SUBRESOURCE mappedData;
+			HRESULT hr = Context->Map(AsyncStaging[slot]->getBuffer(), 0, D3D11_MAP_READ,
+				wait ? 0 : D3D11_MAP_FLAG_DO_NOT_WAIT, &mappedData);
+			if (FAILED(hr))
+				return false;
+
+			const u32 avail = AsyncStaging[slot]->size();
+			memcpy(dst, mappedData.pData, bytes < avail ? bytes : avail);
+			Context->Unmap(AsyncStaging[slot]->getBuffer(), 0);
+			return true;
+		}
+
 		//! Copy data from system memory
 		void CD3D11HardwareBuffer::copyFromMemory(const void* sysData, u32 offset, u32 length)
 		{
