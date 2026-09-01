@@ -1437,7 +1437,9 @@ namespace irr
 			BridgeCalls->setDepthStencilState(DepthStencilDesc);
 			BridgeCalls->setBlendState(BlendDesc);
 			BridgeCalls->setRasterizerState(RasterizerDesc);
-			BridgeCalls->setPrimitiveTopology(getTopology(mb->getPrimitiveType()));
+			// Same patch-topology override as renderArray -- see there.
+			BridgeCalls->setPrimitiveTopology(BridgeCalls->hasTessellationStages()
+				? D3D11_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST : getTopology(mb->getPrimitiveType()));
 
 			Context->DrawIndexedInstancedIndirect(args->getBuffer(), byteOffset);
 
@@ -1822,7 +1824,10 @@ namespace irr
 
 			// copy vertices to dynamic buffers, if needed
 
-			BridgeCalls->setPrimitiveTopology(getTopology(pType));
+			// A bound HS+DS pair requires a patch topology; meshes are authored as EPT_TRIANGLES,
+			// so without this the draw is invalid and the tessellator never runs. Mirrors CD3D12Driver.
+			BridgeCalls->setPrimitiveTopology(BridgeCalls->hasTessellationStages()
+				? D3D11_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST : getTopology(pType));
 
 #ifdef _DEBUG
 			// Catches what the debug layer would only report as DEVICE_DRAW_VERTEX_SHADER_NOT_SET a

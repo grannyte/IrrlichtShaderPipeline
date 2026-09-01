@@ -326,6 +326,8 @@ namespace irr
 				getProfiler().add(EPID_SM_RENDER_SHADOWS, L"shadows", L"Irrlicht scene");
 				getProfiler().add(EPID_SM_RENDER_VOLUMETRIC_EFFECT, L"volumetriceffect", L"Irrlicht scene");
 			getProfiler().add(EPID_SM_RENDER_DISPLACEMENT_EFFECT, L"displacementeffect", L"Irrlicht scene");
+			getProfiler().add(EPID_SM_RENDER_REACH_OVERLAY, L"reachoverlay", L"Irrlicht scene");
+			getProfiler().add(EPID_SM_RENDER_CLOUD_VOLUME, L"cloudvolume", L"Irrlicht scene");
 				getProfiler().add(EPID_SM_RENDER_TRANSPARENT, L"transp.nodes", L"Irrlicht scene");
 				getProfiler().add(EPID_SM_RENDER_EFFECT, L"effectnodes", L"Irrlicht scene");
 				getProfiler().add(EPID_SM_REGISTER, L"reg.render.node", L"Irrlicht scene");
@@ -1416,6 +1418,19 @@ namespace irr
 					taken = 1;
 				}
 				break;
+			case ESNRP_REACH_OVERLAY:
+				if (!isCulled(node))
+				{
+					ReachOverlayNodeList.push_back(node);
+					taken = 1;
+				}
+				break;
+			case ESNRP_CLOUD_VOLUME:
+				// Not culled: the node is a full-screen quad whose bounding box is meaningless, and
+				// the camera is often inside the volume it represents.
+				CloudVolumeNodeList.push_back(node);
+				taken = 1;
+				break;
 
 			case ESNRP_NONE: // ignore this one
 
@@ -1705,6 +1720,51 @@ namespace irr
 
 			if (LightManager)
 				LightManager->OnRenderPassPostRender(CurrentRenderPass);
+		}
+
+		void CSceneManager::RenderReachOverlay()
+		{
+			IRR_PROFILE(CProfileScope psReachOverlay(EPID_SM_RENDER_REACH_OVERLAY);)
+			CurrentRenderPass = ESNRP_REACH_OVERLAY;
+			Driver->getOverrideMaterial().Enabled = ((Driver->getOverrideMaterial().EnablePasses & CurrentRenderPass) != 0);
+
+			if (LightManager)
+			{
+				LightManager->OnRenderPassPreRender(CurrentRenderPass);
+				for (u32 i = 0; i < ReachOverlayNodeList.size(); ++i)
+				{
+					auto node = ReachOverlayNodeList[i];
+					LightManager->OnNodePreRender(node);
+					node->render();
+					LightManager->OnNodePostRender(node);
+				}
+			}
+			else
+			{
+				for (u32 i = 0; i < ReachOverlayNodeList.size(); ++i)
+				{
+					ReachOverlayNodeList[i]->render();
+				}
+			}
+
+			ReachOverlayNodeList.clear();
+
+			if (LightManager)
+				LightManager->OnRenderPassPostRender(CurrentRenderPass);
+		}
+
+		void CSceneManager::RenderCloudVolume()
+		{
+			IRR_PROFILE(CProfileScope psCloudVolume(EPID_SM_RENDER_CLOUD_VOLUME);)
+			CurrentRenderPass = ESNRP_CLOUD_VOLUME;
+			Driver->getOverrideMaterial().Enabled = ((Driver->getOverrideMaterial().EnablePasses & CurrentRenderPass) != 0);
+
+			for (u32 i = 0; i < CloudVolumeNodeList.size(); ++i)
+			{
+				CloudVolumeNodeList[i]->render();
+			}
+
+			CloudVolumeNodeList.clear();
 		}
 
 		void CSceneManager::RenderTransparent()

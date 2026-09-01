@@ -176,6 +176,12 @@ namespace irr
 			//!Explicitly render all ESNRP_DISPLACEMENT_EFFECT scenenodes
 			virtual void RenderDisplacementEffect() _IRR_OVERRIDE_;
 
+			//!Explicitly render all ESNRP_REACH_OVERLAY scenenodes
+			virtual void RenderReachOverlay() _IRR_OVERRIDE_;
+
+			//!Explicitly render all ESNRP_CLOUD_VOLUME scenenodes
+			virtual void RenderCloudVolume() _IRR_OVERRIDE_;
+
 			//! Explicitly clear material, transforms and other states.
 			virtual void CleanupDraw() _IRR_OVERRIDE_;
 
@@ -711,6 +717,8 @@ namespace irr
 			core::array < std::shared_ptr<ISceneNode>> ShadowNodeList;
 			core::array < std::shared_ptr<ISceneNode>> VolumetricEffectNodeList;
 			core::array < std::shared_ptr<ISceneNode>> DisplacementEffectNodeList;
+			core::array < std::shared_ptr<ISceneNode>> ReachOverlayNodeList;
+			core::array < std::shared_ptr<ISceneNode>> CloudVolumeNodeList;
 			core::array < std::shared_ptr<ISceneNode>> SkyBoxList;
 			core::array<DefaultNodeEntry> SolidNodeList;
 			core::array<TransparentNodeEntry> TransparentNodeList;

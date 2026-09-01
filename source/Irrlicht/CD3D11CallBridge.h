@@ -215,6 +215,12 @@ namespace irr
 			//! the debug layer reports as DEVICE_DRAW_VERTEX_SHADER_NOT_SET, a call too late to trace.
 			bool hasVertexShader() const { return shaders[EST_VERTEX_SHADER] != 0; }
 
+			//! True if both tessellation stages are bound. D3D11 then requires a patch topology.
+			bool hasTessellationStages() const
+			{
+				return shaders[EST_HULL_SHADER] != 0 && shaders[EST_DOMAIN_SHADER] != 0;
+			}
+
 			ID3D11SamplerState* getSamplerState(u32 idx);
 
 			void setViewPort(const core::rect<s32>& vp);

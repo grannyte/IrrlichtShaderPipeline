@@ -776,7 +776,7 @@
       <DataExecutionPrevention>
       </DataExecutionPrevention>
       <ImportLibrary>$(SolutionDir)\Irrlich trunk FVF\lib\Win64-visualstudio\Irrlicht.lib</ImportLibrary>
-      <LinkTimeCodeGeneration>UseFastLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
       <OptimizeReferences>true</OptimizeReferences>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <LargeAddressAware>true</LargeAddressAware>
@@ -933,7 +933,7 @@
       <ImportLibrary>..\..\lib\Win64-visualstudio\Irrlicht.lib</ImportLibrary>
       <SubSystem>Windows</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
-      <LinkTimeCodeGeneration>UseFastLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
     <Bscmake>
       <PreserveSbr>true</PreserveSbr>

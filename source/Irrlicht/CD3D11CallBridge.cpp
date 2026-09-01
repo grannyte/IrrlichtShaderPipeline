@@ -326,7 +326,8 @@ namespace irr
 
 		void CD3D11CallBridge::setHullShader(SShader* shader)
 		{
-			if (shaders[EST_HULL_SHADER] != shader)
+			const bool stageChanged = (shaders[EST_HULL_SHADER] != shader);
+			if (stageChanged)
 			{
 				shaders[EST_HULL_SHADER] = shader;
 
@@ -348,9 +349,9 @@ namespace irr
 
 			if (shader)
 			{
-				// only set samplers and textures if a shader is set and if samplers / textures are used, setted and changed
-				u32 samplersToSet = shader->samplersUsed & samplersChanged;
-				u32 texturesToSet = shader->texturesUsed & texturesChanged;
+				// Same newly-bound-stage rebind as setDomainShader -- see there.
+				const u32 samplersToSet = stageChanged ? shader->samplersUsed : (shader->samplersUsed & samplersChanged);
+				const u32 texturesToSet = stageChanged ? shader->texturesUsed : (shader->texturesUsed & texturesChanged);
 
 				if (samplersToSet || texturesToSet)
 				{
@@ -359,7 +360,7 @@ namespace irr
 						if (samplersToSet & (1 << i))
 							Context->HSSetSamplers(i, 1, &SamplerStates[i]);
 
-						if (texturesChanged & (1 << i))
+						if (texturesToSet & (1 << i))
 						{
 							ID3D11ShaderResourceView* views = NULL;
 
@@ -375,7 +376,8 @@ namespace irr
 
 		void CD3D11CallBridge::setDomainShader(SShader* shader)
 		{
-			if (shaders[EST_DOMAIN_SHADER] != shader)
+			const bool stageChanged = (shaders[EST_DOMAIN_SHADER] != shader);
+			if (stageChanged)
 			{
 				shaders[EST_DOMAIN_SHADER] = shader;
 
@@ -397,9 +399,10 @@ namespace irr
 
 			if (shader)
 			{
-				// only set samplers and textures if a shader is set and if samplers / textures are used, setted and changed
-				u32 samplersToSet = shader->samplersUsed & samplersChanged;
-				u32 texturesToSet = shader->texturesUsed & texturesChanged;
+				// texturesChanged tracks texture IDENTITY changes, not per-stage binding state, so a
+				// newly bound stage would inherit nothing and sample zeros. Bind all it uses instead.
+				const u32 samplersToSet = stageChanged ? shader->samplersUsed : (shader->samplersUsed & samplersChanged);
+				const u32 texturesToSet = stageChanged ? shader->texturesUsed : (shader->texturesUsed & texturesChanged);
 
 				if (samplersToSet || texturesToSet)
 				{
@@ -408,7 +411,7 @@ namespace irr
 						if (samplersToSet & (1 << i))
 							Context->DSSetSamplers(i, 1, &SamplerStates[i]);
 
-						if (texturesChanged & (1 << i))
+						if (texturesToSet & (1 << i))
 						{
 							ID3D11ShaderResourceView* views = NULL;
 
