@@ -1415,6 +1415,33 @@
     <ClInclude Include="CVulkanDefaultShaders.h">
       <Filter>Irrlicht\video\Vulkan</Filter>
     </ClInclude>
+    <ClInclude Include="CVulkanCompute.h">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="CVulkanImmediate.h">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="CVulkanMaterialRenderer.h">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="CVulkanOcclusionQuery.h">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="CVulkanRenderTarget.h">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="CVulkanSamplerCache.h">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="CVulkanShaderCompiler.h">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="CVulkanUserMaterial.h">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="CVulkanVertexDescriptor.h">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClInclude>
     <ClInclude Include="DDSTextureLoader.h">
       <Filter>Irrlicht\video\Direct3D11</Filter>
     </ClInclude>
@@ -2465,6 +2492,33 @@
       <Filter>Irrlicht\video\Vulkan</Filter>
     </ClCompile>
     <ClCompile Include="CVulkanPipelineCache.cpp">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="CVulkanCompute.cpp">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="CVulkanImmediate.cpp">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="CVulkanMaterialRenderer.cpp">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="CVulkanOcclusionQuery.cpp">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="CVulkanRenderTarget.cpp">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="CVulkanSamplerCache.cpp">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="CVulkanShaderCompiler.cpp">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="CVulkanUserMaterial.cpp">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="CVulkanVertexDescriptor.cpp">
       <Filter>Irrlicht\video\Vulkan</Filter>
     </ClCompile>
     <ClCompile Include="DDSTextureLoader.cpp">
