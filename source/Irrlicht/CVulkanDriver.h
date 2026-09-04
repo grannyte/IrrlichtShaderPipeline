@@ -14,7 +14,8 @@
 // E_MATERIAL_TYPEs, whose pre-compiled SPIR-V is embedded (CVulkanDefaultShaders.h) and served by
 // CVulkanMaterialRenderer, and user shaders created through addHighLevelShaderMaterial(), which are
 // CVulkanUserMaterial objects carrying their own compiled modules, reflection and descriptor set
-// layouts. The compute entry points still return -1 with a logged warning.
+// layouts. Compute shaders are a third kind: CVulkanComputeMaterial objects registered through
+// addComputeShader(), dispatched by CVulkanCompute (see dispatchComputeShader()).
 
 #ifndef __C_VULKAN_DRIVER_H_INCLUDED__
 #define __C_VULKAN_DRIVER_H_INCLUDED__
@@ -30,6 +31,8 @@
 #include "CVulkanVertexDescriptor.h"
 #include "CVulkanImmediate.h"
 #include "CVulkanRenderTarget.h"
+#include "CVulkanCompute.h"
+#include "CVulkanOcclusionQuery.h"
 #include "SIrrCreationParameters.h"
 #include <vector>
 
@@ -47,6 +50,7 @@ namespace irr
 	namespace video
 	{
 		class CVulkanTexture;
+		class CVulkanHardwareBuffer;
 
 		//! One frame in flight: its command buffer, the fence that says the GPU is done with it,
 		//! and the transient allocators reset when it comes round again. Mirrors
@@ -214,6 +218,107 @@ namespace irr
 			virtual ITexture* addRenderTargetTexture(const core::dimension2d<u32>& size,
 				const io::path& name = "rt", const ECOLOR_FORMAT format = ECF_UNKNOWN) _IRR_OVERRIDE_;
 
+			//! Multisample/array form. `arraySlices` > 1 gives an ETT_2D_ARRAY target whose slices are
+			//! bound one at a time through setRenderTargetSlice(). `sampleCount` > 1 is not served by
+			//! this backend (no resolve pass): it is logged and a single-sample target is created.
+			virtual ITexture* addRenderTargetTexture(const core::dimension2d<u32>& size,
+				const io::path& name, const ECOLOR_FORMAT format,
+				u32 sampleCount, u32 sampleQuality, u32 arraySlices) _IRR_OVERRIDE_;
+
+			//! Binds one slice of a render-target array as the current colour target.
+			virtual bool setRenderTargetSlice(video::ITexture* texture, u32 arraySlice,
+				bool clearTarget = true, SColor color = video::SColor(0, 0, 0, 0)) _IRR_OVERRIDE_;
+
+			//! ERT_FRAME_BUFFER goes back to the swapchain; the other E_RENDER_TARGET values have no
+			//! Vulkan equivalent and are refused.
+			virtual bool setRenderTarget(E_RENDER_TARGET target, bool clearTarget = true,
+				bool clearZBuffer = true, SColor color = video::SColor(0, 0, 0, 0)) _IRR_OVERRIDE_;
+
+			//! vkCmdCopyImage between two textures of one size and format, depth included. Recorded
+			//! on the frame's command buffer when a scene is open (the rendering instance is
+			//! suspended around it), on a one-shot upload buffer otherwise.
+			virtual bool copyTexture(ITexture* dest, ITexture* source, u32 destSlice = 0) _IRR_OVERRIDE_;
+
+			//! A texture with STORAGE usage, the target of dispatchComputeShaderToTexture().
+			virtual ITexture* addUAVTexture(const core::dimension2d<u32>& size,
+				const io::path& name = "uav", const ECOLOR_FORMAT format = ECF_A32B32G32R32F) _IRR_OVERRIDE_;
+
+			//! Cube maps and 2D arrays: every slice is copied on the GPU into one layer of a new
+			//! image, so the slices only have to be Vulkan textures of one size and format.
+			virtual ITexture* createDeviceDependentTexture(const core::array<ITexture*>& surfaces,
+				const E_TEXTURE_TYPE Type, const io::path& name, void* mipmapData = 0) _IRR_OVERRIDE_;
+
+			// --- IVideoDriver: stencil shadows. The swapchain depth buffer carries a stencil aspect
+			// when SIrrlichtCreationParameters::Stencilbuffer asked for one; without it both calls
+			// are no-ops, as on the other backends.
+			virtual void drawStencilShadowVolume(const core::array<core::vector3df>& triangles,
+				bool zfail = true, u32 debugDataVisible = 0) _IRR_OVERRIDE_;
+			virtual void drawStencilShadow(bool clearStencilBuffer = false,
+				video::SColor leftUpEdge = video::SColor(0, 0, 0, 0),
+				video::SColor rightUpEdge = video::SColor(0, 0, 0, 0),
+				video::SColor leftDownEdge = video::SColor(0, 0, 0, 0),
+				video::SColor rightDownEdge = video::SColor(0, 0, 0, 0)) _IRR_OVERRIDE_;
+
+			// --- IVideoDriver: occlusion queries, one VK_QUERY_TYPE_OCCLUSION slot per node (see
+			// CVulkanOcclusionQuery). runOcclusionQuery() records the query on the frame's command
+			// buffer; the result is read back by updateOcclusionQuery() once that frame completed.
+			virtual void addOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node,
+				const scene::IMesh* mesh = 0) _IRR_OVERRIDE_;
+			virtual void removeOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node) _IRR_OVERRIDE_;
+			virtual void removeAllOcclusionQueries() _IRR_OVERRIDE_;
+			virtual void runOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool visible = false) _IRR_OVERRIDE_;
+			virtual void runAllOcclusionQueries(bool visible = false) _IRR_OVERRIDE_;
+			virtual void updateOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool block = true) _IRR_OVERRIDE_;
+			virtual void updateAllOcclusionQueries(bool block = true) _IRR_OVERRIDE_;
+			virtual u32 getOcclusionQueryResult(std::shared_ptr<scene::ISceneNode> node) const _IRR_OVERRIDE_;
+
+			// --- IVideoDriver: compute. Every dispatch is synchronous and records on its own
+			// command buffer (beginUpload()/endUploadAndWait()), exactly like the D3D12 backend: the
+			// caller may dispatch outside beginScene()/endScene() and read the result back at once.
+			virtual std::shared_ptr<video::IHardwareBuffer> createHardwareBuffer(scene::IComputeBuffer* computeBuffer) _IRR_OVERRIDE_;
+			virtual void dispatchComputeShader(const core::vector3d<u32>& groupCount,
+				scene::IComputeBuffer* Src, scene::IComputeBuffer* Dst) _IRR_OVERRIDE_;
+			virtual void dispatchComputeShaderToTexture(const core::vector3d<u32>& groupCount,
+				scene::IComputeBuffer* Src, ITexture* Dst) _IRR_OVERRIDE_;
+
+			//! The multi-slot compute path CD3D11Driver offers: buffers and textures are bound to
+			//! numbered slots, then dispatched against whatever the active compute material declares
+			//! at those slots (see CVulkanComputeMaterial's reflected binding table).
+			virtual void bindComputeBuffer(u32 slot, scene::IComputeBuffer* buffer,
+				E_HARDWARE_BUFFER_TYPE binding) _IRR_OVERRIDE_;
+			virtual void bindComputeTexture(u32 slot, ITexture* texture, bool asUAV) _IRR_OVERRIDE_;
+			virtual void dispatchComputeShaderBound(const core::vector3d<u32>& groupCount) _IRR_OVERRIDE_;
+			virtual void unbindComputeResources() _IRR_OVERRIDE_;
+			virtual void computeBarrier(scene::IComputeBuffer* buffer) _IRR_OVERRIDE_;
+			virtual void computeBarrierAll() _IRR_OVERRIDE_;
+			virtual void dispatchComputeShaderIndirect(scene::IComputeBuffer* argBuffer, u32 byteOffset) _IRR_OVERRIDE_;
+			//! The hidden append/consume counter is emulated: DXC compiles an HLSL
+			//! AppendStructuredBuffer to a data buffer plus a one-uint counter buffer, which the
+			//! dispatch binds from CVulkanHardwareBuffer::getCounterBuffer(). copyStructureCount() is
+			//! then a 4-byte copy and resetStructureCount() a host write (applied at once, every
+			//! dispatch having been waited on).
+			virtual void copyStructureCount(scene::IComputeBuffer* dst, u32 dstByteOffset,
+				scene::IComputeBuffer* appendBuffer) _IRR_OVERRIDE_;
+			virtual void resetStructureCount(scene::IComputeBuffer* appendBuffer, u32 value = 0) _IRR_OVERRIDE_;
+			virtual bool beginComputeReadback(scene::IComputeBuffer* buffer, u32 slot) _IRR_OVERRIDE_;
+			virtual bool tryReadComputeBuffer(scene::IComputeBuffer* buffer, u32 slot, void* dst,
+				u32 bytes, bool wait) _IRR_OVERRIDE_;
+			virtual void drawMeshBufferInstancedIndirect(const scene::IMeshBuffer* mb,
+				scene::IComputeBuffer* instanceBuffer, u32 instanceStride,
+				scene::IComputeBuffer* argBuffer, u32 byteOffset) _IRR_OVERRIDE_;
+
+			// --- IGPUProgrammingServices: compute shaders. The source language is the build's
+			// default (see CVulkanShaderCompiler.h); a file whose first word is the SPIR-V magic is
+			// taken as a pre-compiled module.
+			virtual s32 addComputeShader(const c8* computeShaderProgram,
+				const c8* computeShaderEntryPointName = "main",
+				E_COMPUTE_SHADER_TYPE csCompileTarget = ECST_CS_5_0,
+				IShaderConstantSetCallBack* callback = 0, s32 userData = 0) _IRR_OVERRIDE_;
+			virtual s32 addComputeShaderFromFile(const io::path& computeShaderProgramFileName,
+				const c8* computeShaderEntryPointName = "main",
+				E_COMPUTE_SHADER_TYPE csCompileTarget = ECST_CS_5_0,
+				IShaderConstantSetCallBack* callback = 0, s32 userData = 0) _IRR_OVERRIDE_;
+
 			//! Reads the last presented swapchain image back. Call after endScene(), like the D3D12
 			//! driver: before that the image holds the previous frame.
 			virtual IImage* createScreenShot(video::ECOLOR_FORMAT format = video::ECF_UNKNOWN,
@@ -379,6 +484,16 @@ namespace irr
 			virtual bool setDomainShaderConstant(s32 index, const s64* longs, int count) _IRR_OVERRIDE_;
 			virtual bool setDomainShaderConstant(s32 index, const u64* ulongs, int count) _IRR_OVERRIDE_;
 
+			//! Compute stage: meaningful only during a compute material's OnSetConstants(), which
+			//! dispatchComputeShader() issues with ActiveMaterialRendererIndex naming that material.
+			virtual s32 getComputeShaderConstantID(const c8* name) _IRR_OVERRIDE_;
+			virtual bool setComputeShaderConstant(s32 index, const f32* floats, int count) _IRR_OVERRIDE_;
+			virtual bool setComputeShaderConstant(s32 index, const s32* ints, int count) _IRR_OVERRIDE_;
+			virtual bool setComputeShaderConstant(s32 index, const u32* uints, int count) _IRR_OVERRIDE_;
+			virtual bool setComputeShaderConstant(s32 index, const f64* doubles, int count) _IRR_OVERRIDE_;
+			virtual bool setComputeShaderConstant(s32 index, const s64* longs, int count) _IRR_OVERRIDE_;
+			virtual bool setComputeShaderConstant(s32 index, const u64* ulongs, int count) _IRR_OVERRIDE_;
+
 			//! Register-based path: assembly shaders have no Vulkan equivalent, see addShaderMaterial().
 			virtual void setVertexShaderConstant(const f32* data, s32 startRegister,
 				s32 constantAmount = 1) _IRR_OVERRIDE_;
@@ -460,6 +575,43 @@ namespace irr
 			//! The two lookups are exclusive: a registration is one or the other.
 			CVulkanUserMaterial* getUserMaterial(s32 index) const;
 
+			//! The registered compute material for a type, or 0 for anything else.
+			CVulkanComputeMaterial* getComputeMaterial(s32 index) const;
+
+			//! Brings `buffer`'s hardware copy up to date (creating it on first use) and returns it.
+			//! 0 (logged) when the buffer is empty or the allocation failed.
+			CVulkanHardwareBuffer* prepareComputeBuffer(scene::IComputeBuffer* buffer);
+
+			//! Runs the active compute material's OnSetConstants() with ActiveMaterialRendererIndex
+			//! set, so the compute constant setters above write into that material's scratch.
+			void runComputeCallback(CVulkanComputeMaterial* material);
+
+			//! The shared tail of dispatchComputeShaderBound() and dispatchComputeShaderIndirect():
+			//! translates the SRV/UAV slots into a binding table, brings every bound buffer up to
+			//! date, then records and waits for one dispatch. `indirectArgs` null means a direct
+			//! dispatch of `groupCount`.
+			void dispatchBoundResources(const core::vector3d<u32>& groupCount,
+				CVulkanHardwareBuffer* indirectArgs, u32 indirectOffset);
+
+			//! The stencil half of a pipeline key that SMaterial cannot express, for the two shadow
+			//! passes; everything else in the key still comes from the material.
+			struct SVulkanStencilOverride
+			{
+				VkCompareOp CompareOp = VK_COMPARE_OP_ALWAYS;
+				VkStencilOp FailOp = VK_STENCIL_OP_KEEP;
+				VkStencilOp DepthFailOp = VK_STENCIL_OP_KEEP;
+				VkStencilOp PassOp = VK_STENCIL_OP_KEEP;
+			};
+
+			//! Whether the bound depth attachment carries a stencil aspect at all.
+			bool currentTargetHasStencil() const;
+
+			//! Suspends the running dynamic rendering instance, so a barrier, copy, query reset or
+			//! dispatch can be recorded on the frame's command buffer, and resumeRendering() reopens
+			//! it on the same attachments without clearing. Both are no-ops outside a scene.
+			void suspendRendering();
+			void resumeRendering();
+
 			//! What a user material's pipelines are created against, built once at registration.
 			//! Sets the shader leaves unused get the empty layout: a VkPipelineLayout is indexed by
 			//! set number and cannot carry a hole.
@@ -509,13 +661,14 @@ namespace irr
 			//! and pipeline creation cannot disagree.
 			SVulkanPipelineKey buildPipelineKeyFromMaterial(const SMaterial& material,
 				const SVulkanDrawProgram& program, const SVulkanVertexInputState& vertexInput,
-				VkPrimitiveTopology topology) const;
+				VkPrimitiveTopology topology, const SVulkanStencilOverride* stencil = nullptr) const;
 
 			//! Pipeline + descriptor sets for one draw: the counterpart of the D3D12 driver's
 			//! bindDrawState(). False (already logged, or silent outside a scene) means "skip it".
 			bool bindDrawState(const SMaterial& material, const core::matrix4& world,
 				const core::matrix4& view, const core::matrix4& proj, IVertexDescriptor* descriptor,
-				const SVulkanVertexInputState& vertexInput, VkPrimitiveTopology topology);
+				const SVulkanVertexInputState& vertexInput, VkPrimitiveTopology topology,
+				const SVulkanStencilOverride* stencil = nullptr);
 
 			//! Set 4: the five uniform blocks, each sub-allocated from the frame's ring. Bound
 			//! against `layout`, which is the drawing pipeline's own -- set 4 is identical in all of
@@ -536,7 +689,7 @@ namespace irr
 			//! Uploads `vertices` to the frame's immediate ring and draws them non-indexed.
 			void drawImmediate(const S3DVertex* vertices, u32 vertexCount, VkPrimitiveTopology topology,
 				const SMaterial& material, const core::matrix4& world, const core::matrix4& view,
-				const core::matrix4& proj);
+				const core::matrix4& proj, const SVulkanStencilOverride* stencil = nullptr);
 			//! The tail every 2D primitive shares: scissor from `clip`, ImmediateVertices drawn
 			//! through build2DProjection() with identity world and view, then the scissor restored.
 			void draw2DImmediate(VkPrimitiveTopology topology, const SMaterial& material,
@@ -601,6 +754,27 @@ namespace irr
 			//! Only the UserRenderers entries carry anything; a built-in draws with
 			//! BuiltInPipelineLayout and needs no per-material layout.
 			std::vector<SVulkanUserLayout> UserLayouts;
+			//! Compute materials, same index convention. The one registry holds three kinds.
+			std::vector<CVulkanComputeMaterial*> ComputeRenderers;
+
+			//! The compute layouts, pipeline cache and descriptor pool; null until initDriver().
+			CVulkanCompute* Compute = nullptr;
+			//! The multi-slot bindings for dispatchComputeShaderBound(), valid until
+			//! unbindComputeResources(). A slot holds a buffer or a texture, never both.
+			struct SVulkanComputeSlot
+			{
+				scene::IComputeBuffer* Buffer = nullptr;
+				ITexture* Texture = nullptr;
+				bool empty() const { return !Buffer && !Texture; }
+			};
+			SVulkanComputeSlot ComputeSRV[EMCS_MAX_COMPUTE_SRV_SLOTS];
+			SVulkanComputeSlot ComputeUAV[EMCS_MAX_COMPUTE_UAV_SLOTS];
+
+			//! Occlusion query pool and per-node records; null until initDriver().
+			CVulkanOcclusionQuery* Occlusion = nullptr;
+			//! Bumped once per endScene(); the marker a query is stamped with, so a readback can tell
+			//! a submitted frame from the one still being recorded (waiting on that one would hang).
+			u64 FrameCounter = 1;
 
 			//! The user material bindDrawState() is currently drawing, i.e. the one every
 			//! IMaterialRendererServices method reads; -1 outside a draw. Equal to
@@ -612,6 +786,10 @@ namespace irr
 			//! Whether createLogicalDevice() could enable the geometry stage, which is what
 			//! queryFeature(EVDF_GEOMETRY_SHADER) reports: a user material may well declare one.
 			bool HasGeometryShader = false;
+			//! Whether occlusionQueryPrecise was enabled, i.e. whether a query counts samples exactly
+			//! rather than merely non-zero when anything was visible.
+			bool HasPreciseOcclusionQuery = false;
+			bool WarnedNoStencil = false;
 
 			// Set layouts, cached and owned by LayoutCache; copies only.
 			VkDescriptorSetLayout MaterialTextureSetLayout = VK_NULL_HANDLE;	//!< set 0

@@ -134,7 +134,9 @@ namespace irr
 			PFN_vkCmdBindIndexBuffer CmdBindIndexBuffer = nullptr;
 			PFN_vkCmdDraw CmdDraw = nullptr;
 			PFN_vkCmdDrawIndexed CmdDrawIndexed = nullptr;
+			PFN_vkCmdDrawIndexedIndirect CmdDrawIndexedIndirect = nullptr;
 			PFN_vkCmdDispatch CmdDispatch = nullptr;
+			PFN_vkCmdDispatchIndirect CmdDispatchIndirect = nullptr;
 			PFN_vkCmdSetViewport CmdSetViewport = nullptr;
 			PFN_vkCmdSetScissor CmdSetScissor = nullptr;
 			PFN_vkCmdPushConstants CmdPushConstants = nullptr;
@@ -340,7 +342,9 @@ namespace irr
 			vk::CmdBindIndexBuffer = nullptr;
 			vk::CmdDraw = nullptr;
 			vk::CmdDrawIndexed = nullptr;
+			vk::CmdDrawIndexedIndirect = nullptr;
 			vk::CmdDispatch = nullptr;
+			vk::CmdDispatchIndirect = nullptr;
 			vk::CmdSetViewport = nullptr;
 			vk::CmdSetScissor = nullptr;
 			vk::CmdPushConstants = nullptr;
@@ -493,7 +497,9 @@ namespace irr
 			IRR_VK_DEVICE_PROC(CmdBindIndexBuffer)
 			IRR_VK_DEVICE_PROC(CmdDraw)
 			IRR_VK_DEVICE_PROC(CmdDrawIndexed)
+			IRR_VK_DEVICE_PROC(CmdDrawIndexedIndirect)
 			IRR_VK_DEVICE_PROC(CmdDispatch)
+			IRR_VK_DEVICE_PROC(CmdDispatchIndirect)
 			IRR_VK_DEVICE_PROC(CmdSetViewport)
 			IRR_VK_DEVICE_PROC(CmdSetScissor)
 			IRR_VK_DEVICE_PROC(CmdPushConstants)

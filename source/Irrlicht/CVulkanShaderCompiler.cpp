@@ -19,7 +19,10 @@
 #ifdef _IRR_COMPILE_WITH_VULKAN_
 
 #include <string.h>
+#include <stdio.h>
 #include "os.h"
+#include "IFileSystem.h"
+#include "IReadFile.h"
 
 #ifdef _IRR_COMPILE_WITH_VULKAN_GLSLANG_
 #include <glslang/Public/ShaderLang.h>
@@ -248,8 +251,141 @@ namespace irr
 				return result;
 			}
 
+			core::stringc narrow(const wchar_t* text)
+			{
+				const int needed = WideCharToMultiByte(CP_UTF8, 0, text, -1, 0, 0, 0, 0);
+				if (needed <= 1)
+					return core::stringc();
+
+				std::string result((size_t)(needed - 1), '\0');
+				WideCharToMultiByte(CP_UTF8, 0, text, -1, &result[0], needed, 0, 0);
+				return core::stringc(result.c_str());
+			}
+
+			//! Resolves an HLSL `#include "x"` the way CD3D12ShaderInclude does, through the engine's
+			//! file system (so an archive-mounted shader tree works too): the including file's own
+			//! directory first, then the name as written, then media/shaders/. Without a file system
+			//! the same candidates go through fopen().
+			class CIrrDxcIncludeHandler : public IDxcIncludeHandler
+			{
+			public:
+				CIrrDxcIncludeHandler(IDxcUtils* utils, io::IFileSystem* fileSystem, const c8* baseDirectory)
+					: Utils(utils), FileSystem(fileSystem), BaseDirectory(baseDirectory ? baseDirectory : ""),
+					RefCount(1)
+				{
+					if (BaseDirectory.size() && BaseDirectory.lastChar() != '/' && BaseDirectory.lastChar() != '\\')
+						BaseDirectory += '/';
+				}
+
+				HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObject) override
+				{
+					if (!ppvObject)
+						return E_POINTER;
+					if (riid == __uuidof(IUnknown) || riid == __uuidof(IDxcIncludeHandler))
+					{
+						*ppvObject = static_cast<IDxcIncludeHandler*>(this);
+						AddRef();
+						return S_OK;
+					}
+					*ppvObject = 0;
+					return E_NOINTERFACE;
+				}
+
+				ULONG STDMETHODCALLTYPE AddRef() override { return (ULONG)InterlockedIncrement(&RefCount); }
+
+				ULONG STDMETHODCALLTYPE Release() override
+				{
+					// Stack-allocated by the caller, which holds the initial reference: never deleted here.
+					return (ULONG)InterlockedDecrement(&RefCount);
+				}
+
+				HRESULT STDMETHODCALLTYPE LoadSource(LPCWSTR pFilename, IDxcBlob** ppIncludeSource) override
+				{
+					if (!ppIncludeSource)
+						return E_POINTER;
+					*ppIncludeSource = 0;
+
+					// DXC hands over "./name" for a quoted include and may have joined it with its own
+					// notion of the current directory; only the name the shader wrote matters here.
+					core::stringc name = narrow(pFilename);
+					name.replace('\\', '/');
+					while (name.size() > 2 && name[0] == '.' && name[1] == '/')
+						name = name.subString(2, (s32)name.size() - 2);
+					core::stringc baseName = name;
+					const s32 slash = name.findLast('/');
+					if (slash >= 0)
+						baseName = name.subString(slash + 1, (s32)name.size() - slash - 1);
+
+					core::stringc candidates[4];
+					candidates[0] = BaseDirectory + baseName;
+					candidates[1] = name;
+					candidates[2] = core::stringc("media/shaders/") + baseName;
+					candidates[3] = BaseDirectory + name;
+
+					std::vector<c8> bytes;
+					for (u32 i = 0; i < 4; ++i)
+					{
+						if (candidates[i].size() == 0 || !readFile(candidates[i], bytes))
+							continue;
+
+						IDxcBlobEncoding* blob = 0;
+						if (FAILED(Utils->CreateBlob(bytes.data(), (UINT32)bytes.size(), DXC_CP_UTF8, &blob)) || !blob)
+							return E_OUTOFMEMORY;
+						*ppIncludeSource = blob;
+						return S_OK;
+					}
+
+					os::Printer::log("CVulkanShaderCompiler: could not open included shader file", name.c_str(), ELL_ERROR);
+					return E_FAIL;
+				}
+
+			private:
+				bool readFile(const core::stringc& path, std::vector<c8>& out)
+				{
+					out.clear();
+					if (FileSystem)
+					{
+						if (!FileSystem->existFile(io::path(path.c_str())))
+							return false;
+						io::IReadFile* file = FileSystem->createAndOpenFile(io::path(path.c_str()));
+						if (!file)
+							return false;
+						const long size = file->getSize();
+						if (size > 0)
+						{
+							out.resize((size_t)size);
+							if (file->read(out.data(), (u32)size) != (s32)size)
+								out.clear();
+						}
+						file->drop();
+						return size >= 0;
+					}
+
+					FILE* file = fopen(path.c_str(), "rb");
+					if (!file)
+						return false;
+					fseek(file, 0, SEEK_END);
+					const long size = ftell(file);
+					fseek(file, 0, SEEK_SET);
+					if (size > 0)
+					{
+						out.resize((size_t)size);
+						if (fread(out.data(), 1, (size_t)size, file) != (size_t)size)
+							out.clear();
+					}
+					fclose(file);
+					return true;
+				}
+
+				IDxcUtils* Utils;
+				io::IFileSystem* FileSystem;
+				core::stringc BaseDirectory;
+				LONG RefCount;
+			};
+
 			bool compileHlslWithDxc(const c8* source, u32 length, const c8* entryPoint,
-				E_SHADER_TYPE stage, std::vector<u32>& outSpirv, core::stringc& outError)
+				E_SHADER_TYPE stage, std::vector<u32>& outSpirv, core::stringc& outError,
+				io::IFileSystem* includeFileSystem, const c8* includeDirectory)
 			{
 				const wchar_t* const profile = dxcTargetProfile(stage);
 
@@ -270,6 +406,13 @@ namespace irr
 					return false;
 				}
 
+				// The utils object only serves the include handler (it builds the blobs an include
+				// resolves to); without it includes are simply refused by DXC.
+				IDxcUtils* utils = 0;
+				if (FAILED(DxcCreateInstanceFn(CLSID_DxcUtils, IID_PPV_ARGS(&utils))))
+					utils = 0;
+				CIrrDxcIncludeHandler includeHandler(utils, includeFileSystem, includeDirectory);
+
 				DxcBuffer sourceBuffer;
 				sourceBuffer.Ptr = source;
 				sourceBuffer.Size = length;
@@ -278,17 +421,37 @@ namespace irr
 				const std::wstring entry = widen(entryPoint);
 
 				// -spirv is what makes this a Vulkan compile at all; without it DXC emits DXIL.
-				const wchar_t* arguments[] =
+				//
+				// Compute stages get the register shifts the driver's slot convention relies on
+				// (see CVulkanCompute.h): t# -> binding #, u# -> 16 + #, b# -> 32 + #, s# -> 48 + #.
+				// Without them DXC puts t0, u0 and b0 all on binding 0 and a D3D11-style compute
+				// shader cannot get a valid descriptor set layout. An explicit [[vk::binding()]]
+				// still wins over the shift. Graphics stages keep their existing numbering.
+				std::vector<const wchar_t*> arguments;
+				arguments.push_back(L"-E");
+				arguments.push_back(entry.c_str());
+				arguments.push_back(L"-T");
+				arguments.push_back(profile);
+				arguments.push_back(L"-spirv");
+				arguments.push_back(L"-fspv-target-env=vulkan1.0");
+				if (stage == EST_COMPUTE_SHADER)
 				{
-					L"-E", entry.c_str(),
-					L"-T", profile,
-					L"-spirv",
-					L"-fspv-target-env=vulkan1.0"
-				};
+					static const wchar_t* const shifts[] =
+					{
+						L"-fvk-t-shift", L"0", L"all",
+						L"-fvk-u-shift", L"16", L"all",
+						L"-fvk-b-shift", L"32", L"all",
+						L"-fvk-s-shift", L"48", L"all",
+					};
+					for (size_t i = 0; i < sizeof(shifts) / sizeof(shifts[0]); ++i)
+						arguments.push_back(shifts[i]);
+				}
 
 				IDxcResult* result = 0;
-				const HRESULT compiled = compiler->Compile(&sourceBuffer, arguments,
-					(UINT32)(sizeof(arguments) / sizeof(arguments[0])), 0, IID_PPV_ARGS(&result));
+				const HRESULT compiled = compiler->Compile(&sourceBuffer, arguments.data(),
+					(UINT32)arguments.size(), utils ? &includeHandler : 0, IID_PPV_ARGS(&result));
+				if (utils)
+					utils->Release();
 
 				if (FAILED(compiled) || !result)
 				{
@@ -347,8 +510,11 @@ namespace irr
 
 		bool CVulkanShaderCompiler::compileToSpirv(const c8* source, u32 sourceLength,
 			const c8* entryPoint, E_SHADER_TYPE stage, E_GPU_SHADING_LANGUAGE lang,
-			std::vector<u32>& outSpirv, core::stringc& outError)
+			std::vector<u32>& outSpirv, core::stringc& outError,
+			io::IFileSystem* includeFileSystem, const c8* includeDirectory)
 		{
+			(void)includeFileSystem;
+			(void)includeDirectory;
 			outSpirv.clear();
 			outError = "";
 
@@ -379,7 +545,7 @@ namespace irr
 				// Only DXC is built in, so EGSL_DEFAULT falls back to meaning HLSL -- the same
 				// sources the Direct3D backends take, which is the useful reading of "default" here.
 				if (compileHlslWithDxc(source, length, effectiveEntryPoint(entryPoint), stage,
-						outSpirv, outError))
+						outSpirv, outError, includeFileSystem, includeDirectory))
 					return true;
 #else
 				outError = "The Vulkan driver was built without a shader source compiler. Define "

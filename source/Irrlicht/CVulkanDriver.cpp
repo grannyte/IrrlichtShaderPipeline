@@ -8,6 +8,7 @@
 #include "CVulkanTexture.h"
 #include "CVulkanHardwareBuffer.h"
 #include "CVulkanShaderCompiler.h"
+#include "IComputebuffer.h"
 #include "CImage.h"
 #include "IMeshBuffer.h"
 #include "IVertexBuffer.h"
@@ -259,6 +260,20 @@ namespace irr
 				return (index >= 0 && index < static_cast<s32>(sizeof(map) / sizeof(map[0]))) ?
 					map[index] : VK_BLEND_OP_ADD;
 			}
+
+			//! The combined formats are the only ones a stencil pass can run against.
+			bool depthFormatHasStencil(VkFormat format)
+			{
+				return format == VK_FORMAT_D24_UNORM_S8_UINT || format == VK_FORMAT_D32_SFLOAT_S8_UINT ||
+					format == VK_FORMAT_D16_UNORM_S8_UINT;
+			}
+
+			//! The aspect mask a barrier or a view over a depth image has to name.
+			VkImageAspectFlags depthAspectOf(VkFormat format)
+			{
+				return depthFormatHasStencil(format) ?
+					(VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT) : VK_IMAGE_ASPECT_DEPTH_BIT;
+			}
 		}
 
 		CVulkanDriver::CVulkanDriver(const irr::SIrrlichtCreationParameters& params,
@@ -290,6 +305,13 @@ namespace irr
 			NativeRenderers.clear();
 			UserRenderers.clear();
 			UserLayouts.clear();
+			ComputeRenderers.clear();
+			// After the compute materials (they own the pipelines built against Compute's cache) and
+			// before the device. The query pool likewise.
+			delete Compute;
+			Compute = nullptr;
+			delete Occlusion;
+			Occlusion = nullptr;
 			// Releases glslang's per-process pools and the DXC library handle; a later driver
 			// re-acquires both on its first compile.
 			CVulkanShaderCompiler::shutdown();
@@ -362,10 +384,44 @@ namespace irr
 				vk::CreateCommandPool(Context.Device, &poolInfo, nullptr, &UploadPool)))
 				return false;
 
+			// A stencil aspect only when asked for, as on the D3D drivers: the shadow volume passes
+			// need it, everything else pays its bandwidth for nothing. D24S8 first (the D3D default),
+			// D32S8 where the device lacks it; one of the two is guaranteed by the spec.
+			if (Params.Stencilbuffer)
+			{
+				const VkFormat candidates[] = { VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT_S8_UINT };
+				bool found = false;
+				for (u32 i = 0; i < 2 && !found; ++i)
+				{
+					VkFormatProperties properties = {};
+					vk::GetPhysicalDeviceFormatProperties(Context.PhysicalDevice, candidates[i], &properties);
+					if (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)
+					{
+						DepthFormat = candidates[i];
+						found = true;
+					}
+				}
+				if (!found)
+					os::Printer::log("CVulkanDriver: no depth/stencil format is supported, stencil "
+						"shadows will be unavailable", ELL_WARNING);
+			}
+
 			if (!createSwapchain(Params.WindowSize))
 				return false;
 			if (!createFrameContexts())
 				return false;
+
+			// Compute and occlusion queries are optional halves: a failure only disables the
+			// corresponding IVideoDriver entry points (queryFeature() says so), as on D3D12.
+			Compute = new CVulkanCompute(Context);
+			if (!Compute->init())
+				os::Printer::log("CVulkanDriver: compute unavailable, dispatchComputeShader() will do "
+					"nothing", ELL_WARNING);
+			Occlusion = new CVulkanOcclusionQuery(Context);
+			if (!Occlusion->create())
+				os::Printer::log("CVulkanDriver: occlusion queries unavailable", ELL_WARNING);
+			else
+				Occlusion->setPreciseCounts(HasPreciseOcclusionQuery);
 
 			CurrentRenderTargetSize = core::dimension2d<u32>(SwapchainExtent.width, SwapchainExtent.height);
 			ViewPort = core::rect<s32>(0, 0, (s32)SwapchainExtent.width, (s32)SwapchainExtent.height);
@@ -490,10 +546,19 @@ namespace irr
 			// through getMaterialRenderer(), but bindDrawState() can get no shader modules out of it.
 			NativeRenderers.resize(MaterialRenderers.size(), nullptr);
 			UserRenderers.resize(MaterialRenderers.size(), nullptr);
+			ComputeRenderers.resize(MaterialRenderers.size(), nullptr);
 			UserLayouts.resize(MaterialRenderers.size());
 			NativeRenderers[index] = dynamic_cast<CVulkanMaterialRenderer*>(renderer);
 			UserRenderers[index] = dynamic_cast<CVulkanUserMaterial*>(renderer);
+			ComputeRenderers[index] = dynamic_cast<CVulkanComputeMaterial*>(renderer);
 			return index;
+		}
+
+		CVulkanComputeMaterial* CVulkanDriver::getComputeMaterial(s32 index) const
+		{
+			if (index < 0 || static_cast<size_t>(index) >= ComputeRenderers.size())
+				return nullptr;
+			return ComputeRenderers[index];
 		}
 
 		CVulkanMaterialRenderer* CVulkanDriver::getNativeRenderer(s32 index) const
@@ -708,6 +773,15 @@ namespace irr
 			features.geometryShader = supported.geometryShader;
 			features.tessellationShader = supported.tessellationShader;
 			HasGeometryShader = supported.geometryShader == VK_TRUE;
+			// Exact sample counts for getOcclusionQueryResult(), which callers scale intensities by.
+			features.occlusionQueryPrecise = supported.occlusionQueryPrecise;
+			HasPreciseOcclusionQuery = supported.occlusionQueryPrecise == VK_TRUE;
+			// Indirect draws/dispatches read their arguments from a buffer a compute shader wrote.
+			features.drawIndirectFirstInstance = supported.drawIndirectFirstInstance;
+			// D3D bounds-checks every buffer access: an append past capacity is dropped while the
+			// counter still advances, which callers use to detect overflow. robustBufferAccess is
+			// the Vulkan feature that gives the same guarantee (core, always supported).
+			features.robustBufferAccess = supported.robustBufferAccess;
 
 			// Must be enabled explicitly even when the extension is present, or CmdBeginRendering
 			// is undefined behaviour.
@@ -760,7 +834,12 @@ namespace irr
 			SwapchainExtent.width = caps.currentExtent.width != 0xFFFFFFFFu ? caps.currentExtent.width : size.Width;
 			SwapchainExtent.height = caps.currentExtent.height != 0xFFFFFFFFu ? caps.currentExtent.height : size.Height;
 			if (!SwapchainExtent.width || !SwapchainExtent.height)
+			{
+				// A minimised window reports a 0x0 surface, and a swapchain cannot be that size.
+				os::Printer::log("CVulkanDriver: the window surface has no area (minimised?), "
+					"no swapchain can be created", ELL_ERROR);
 				return false;
+			}
 
 			u32 imageCount = caps.minImageCount + 1;
 			if (caps.maxImageCount && imageCount > caps.maxImageCount)
@@ -857,7 +936,7 @@ namespace irr
 			depthView.image = DepthImage;
 			depthView.viewType = VK_IMAGE_VIEW_TYPE_2D;
 			depthView.format = DepthFormat;
-			depthView.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+			depthView.subresourceRange.aspectMask = depthAspectOf(DepthFormat);
 			depthView.subresourceRange.levelCount = 1;
 			depthView.subresourceRange.layerCount = 1;
 			if (vulkanFailed("CVulkanDriver: depth image view",
@@ -872,7 +951,7 @@ namespace irr
 			if (transition == VK_NULL_HANDLE)
 				return false;
 			transitionImageLayout(transition, DepthImage, VK_IMAGE_LAYOUT_UNDEFINED,
-				VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT);
+				VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, depthAspectOf(DepthFormat));
 			endUploadAndWait(transition);
 			return true;
 		}
@@ -1244,6 +1323,7 @@ namespace irr
 			// 0.0f, not 1.0f: this fork uses a reversed-Z convention, see the default
 			// SMaterial::ZBuffer of ECFN_GREATER.
 			depthAttachment.clearValue.depthStencil.depth = 0.0f;
+			depthAttachment.clearValue.depthStencil.stencil = 0;
 
 			VkRenderingInfo info = {};
 			info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
@@ -1252,6 +1332,9 @@ namespace irr
 			info.colorAttachmentCount = 1;
 			info.pColorAttachments = &colorAttachment;
 			info.pDepthAttachment = &depthAttachment;
+			// Named as the stencil attachment too when the format carries one, or the shadow volume
+			// pipelines (which declare a stencil format) would not match this instance.
+			info.pStencilAttachment = depthFormatHasStencil(DepthFormat) ? &depthAttachment : nullptr;
 
 			vk::CmdBeginRendering(frame.CommandBuffer, &info);
 			RenderingActive = true;
@@ -1338,6 +1421,9 @@ namespace irr
 				vulkanFailed("CVulkanDriver: vkQueuePresentKHR", presented);
 
 			CurrentFrameIndex = (CurrentFrameIndex + 1) % FrameCount;
+			// Everything recorded so far is now submitted: a query stamped with the old value may be
+			// waited on, one stamped with the new value is still being recorded.
+			++FrameCounter;
 			SceneOpen = false;
 			return true;
 		}
@@ -1436,18 +1522,28 @@ namespace irr
 
 		bool CVulkanDriver::queryFeature(E_VIDEO_DRIVER_FEATURE feature) const
 		{
-			if (!CNullDriver::queryFeature(feature))
+			// The disableFeature() mask, as CD3D11Driver honours it. NOT CNullDriver::queryFeature():
+			// that one is an unconditional "false" which used to hide the whole table below.
+			if (feature < 0 || feature >= EVDF_COUNT || !FeatureEnabled[feature])
 				return false;
 
 			switch (feature)
 			{
+			case EVDF_OCCLUSION_QUERY:
+				return Occlusion && Occlusion->isValid();
+			case EVDF_COMPUTING_SHADER_5_0:
+			case EVDF_BOUND_COMPUTE_PIPELINE:
+				return Compute && Compute->isReady();
+			// Only when the swapchain depth buffer actually got a stencil aspect (asked for through
+			// SIrrlichtCreationParameters::Stencilbuffer and offered by the device).
+			case EVDF_STENCIL_BUFFER:
+				return depthFormatHasStencil(DepthFormat);
 			case EVDF_RENDER_TO_TARGET:
 			case EVDF_HARDWARE_TL:
 			case EVDF_MULTITEXTURE:
 			case EVDF_BILINEAR_FILTER:
 			case EVDF_MIP_MAP:
 			case EVDF_MIP_MAP_AUTO_UPDATE:
-			case EVDF_STENCIL_BUFFER:
 			case EVDF_TEXTURE_NPOT:
 			case EVDF_COLOR_MASK:
 			case EVDF_BLEND_OPERATIONS:
@@ -1481,9 +1577,6 @@ namespace irr
 #else
 				return false;
 #endif
-			case EVDF_COMPUTING_SHADER_5_0:
-				// No compute path here yet: addComputeShader() still returns -1.
-				return false;
 			default:
 				return false;
 			}
@@ -1557,7 +1650,11 @@ namespace irr
 
 			VkClearAttachment clear = {};
 			clear.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+			// Stencil goes with it, as the D3D12 driver's ClearDepthStencilView() clears both.
+			if (currentTargetHasStencil())
+				clear.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
 			clear.clearValue.depthStencil.depth = 0.0f; // reversed-Z, see beginRendering()
+			clear.clearValue.depthStencil.stencil = 0;
 
 			VkClearRect rect = {};
 			rect.rect.extent.width = CurrentRenderTargetSize.Width;
@@ -1603,7 +1700,7 @@ namespace irr
 
 		SVulkanPipelineKey CVulkanDriver::buildPipelineKeyFromMaterial(const SMaterial& material,
 			const SVulkanDrawProgram& program, const SVulkanVertexInputState& vertexInput,
-			VkPrimitiveTopology topology) const
+			VkPrimitiveTopology topology, const SVulkanStencilOverride* stencil) const
 		{
 			SVulkanPipelineKey key;
 
@@ -1734,6 +1831,17 @@ namespace irr
 				const f32 factor = static_cast<f32>(material.PolygonOffsetFactor);
 				key.DepthBiasSlope = (material.PolygonOffsetDirection == EPO_BACK) ? 1.0f : -1.0f;
 				key.DepthBiasConstant = (material.PolygonOffsetDirection == EPO_BACK) ? factor : -factor;
+			}
+
+			// The shadow passes only. A stencil state against a depth-only attachment is refused by
+			// the pipeline, so it is dropped rather than baked when the target carries none.
+			if (stencil && hasDepth && depthFormatHasStencil(key.DepthFormat))
+			{
+				key.StencilTestEnable = true;
+				key.StencilCompareOp = stencil->CompareOp;
+				key.StencilFailOp = stencil->FailOp;
+				key.StencilDepthFailOp = stencil->DepthFailOp;
+				key.StencilPassOp = stencil->PassOp;
 			}
 
 			return key;
@@ -2086,7 +2194,8 @@ namespace irr
 
 		bool CVulkanDriver::bindDrawState(const SMaterial& material, const core::matrix4& world,
 			const core::matrix4& view, const core::matrix4& proj, IVertexDescriptor* descriptor,
-			const SVulkanVertexInputState& vertexInput, VkPrimitiveTopology topology)
+			const SVulkanVertexInputState& vertexInput, VkPrimitiveTopology topology,
+			const SVulkanStencilOverride* stencil)
 		{
 			// Outside beginScene()/endScene() the command buffer is not recording and swallows
 			// nothing: refuse, and say so once, the way the D3D12 driver does.
@@ -2113,7 +2222,7 @@ namespace irr
 				return false;
 
 			const SVulkanPipelineKey key = buildPipelineKeyFromMaterial(material, program,
-				vertexInput, topology);
+				vertexInput, topology, stencil);
 
 			VkPipeline pipeline = PipelineCache.getOrCreate(Context, key, program.Vertex,
 				program.Fragment, vertexInput.get(), program.Layout, program.Geometry,
@@ -2256,7 +2365,7 @@ namespace irr
 
 		void CVulkanDriver::drawImmediate(const S3DVertex* vertices, u32 vertexCount,
 			VkPrimitiveTopology topology, const SMaterial& material, const core::matrix4& world,
-			const core::matrix4& view, const core::matrix4& proj)
+			const core::matrix4& view, const core::matrix4& proj, const SVulkanStencilOverride* stencil)
 		{
 			if (!vertexCount || !SceneOpen || !RenderingActive)
 				return;
@@ -2268,7 +2377,7 @@ namespace irr
 				return;
 
 			// No mesh buffer here, so no descriptor: the EVT_STANDARD layout built at construction.
-			if (!bindDrawState(material, world, view, proj, nullptr, S3DVertexInput, topology))
+			if (!bindDrawState(material, world, view, proj, nullptr, S3DVertexInput, topology, stencil))
 				return;
 
 			// The range carries its own VkBuffer: a ring that grew mid-frame is no longer the one
@@ -3522,6 +3631,1152 @@ namespace irr
 		{
 			os::Printer::log("CVulkanDriver::setPixelShaderConstant(register): SPIR-V has no register "
 				"file to write into, use the by-name variant", ELL_ERROR);
+		}
+
+		// ============================ rendering instance control ============================
+
+		void CVulkanDriver::suspendRendering()
+		{
+			if (SceneOpen && RenderingActive)
+				endRendering();
+		}
+
+		void CVulkanDriver::resumeRendering()
+		{
+			if (!SceneOpen || RenderingActive)
+				return;
+
+			// Same attachments, nothing cleared: the pass simply continues where it left off.
+			const core::rect<s32> viewport = ViewPort;
+			beginRendering(false, false, SColor(0, 0, 0, 0));
+			// beginRendering() resets the viewport to the whole target; put the caller's back.
+			if (viewport != ViewPort)
+				setViewPort(viewport);
+		}
+
+		bool CVulkanDriver::currentTargetHasStencil() const
+		{
+			const VkFormat format = (RenderTargetActive && RenderTarget->isValid()) ?
+				RenderTarget->getDepthFormat() : DepthFormat;
+			return depthFormatHasStencil(format);
+		}
+
+		// ================================ stencil shadows ================================
+
+		// Two passes over the same volume, the technique CD3D12Driver::drawStencilShadowVolume() uses:
+		// with zfail the depth-FAILING back faces increment and the depth-failing front faces
+		// decrement (Carmack's reverse); with zpass the depth-passing front faces increment and the
+		// back faces decrement. Depth is tested with GREATER, this fork's reversed-Z convention, and
+		// never written; colour is masked off. The stencil reference is 0 in every pipeline.
+		void CVulkanDriver::drawStencilShadowVolume(const core::array<core::vector3df>& triangles,
+			bool zfail, u32 debugDataVisible)
+		{
+			const u32 count = triangles.size();
+			if (!count || !SceneOpen || !RenderingActive)
+				return;
+
+			if (!currentTargetHasStencil())
+			{
+				if (!WarnedNoStencil)
+				{
+					os::Printer::log("CVulkanDriver: stencil shadows need a stencil buffer, set "
+						"SIrrlichtCreationParameters::Stencilbuffer", ELL_WARNING);
+					WarnedNoStencil = true;
+				}
+				return;
+			}
+
+			ImmediateVertices.set_used(count);
+			for (u32 i = 0; i < count; ++i)
+				ImmediateVertices[i] = S3DVertex(triangles[i].X, triangles[i].Y, triangles[i].Z,
+					0, 0, 0, SColor(255, 255, 255, 255), 0, 0);
+
+			SMaterial material;
+			material.MaterialType = EMT_SOLID;
+			material.Lighting = false;
+			material.ZWriteEnable = false; // stencil marking must never modify the depth buffer
+			material.ZBuffer = ECFN_GREATER;
+			material.ColorMask = ECP_NONE;
+
+			SVulkanStencilOverride increment;
+			SVulkanStencilOverride decrement;
+			if (zfail)
+			{
+				increment.DepthFailOp = VK_STENCIL_OP_INCREMENT_AND_WRAP;
+				decrement.DepthFailOp = VK_STENCIL_OP_DECREMENT_AND_WRAP;
+			}
+			else
+			{
+				increment.PassOp = VK_STENCIL_OP_INCREMENT_AND_WRAP;
+				decrement.PassOp = VK_STENCIL_OP_DECREMENT_AND_WRAP;
+			}
+
+			// zfail increments on the BACK faces (front culled), zpass on the FRONT ones.
+			material.FrontfaceCulling = zfail;
+			material.BackfaceCulling = !zfail;
+			drawImmediate(ImmediateVertices.pointer(), count, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+				material, Matrices[ETS_WORLD], Matrices[ETS_VIEW], Matrices[ETS_PROJECTION], &increment);
+
+			material.FrontfaceCulling = !zfail;
+			material.BackfaceCulling = zfail;
+			drawImmediate(ImmediateVertices.pointer(), count, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+				material, Matrices[ETS_WORLD], Matrices[ETS_VIEW], Matrices[ETS_PROJECTION], &decrement);
+		}
+
+		void CVulkanDriver::drawStencilShadow(bool clearStencilBuffer, video::SColor leftUpEdge,
+			video::SColor rightUpEdge, video::SColor leftDownEdge, video::SColor rightDownEdge)
+		{
+			if (!SceneOpen || !RenderingActive || !currentTargetHasStencil())
+				return;
+
+			// A full-target quad, alpha blended, drawn only where the volume passes left the stencil
+			// non-zero: the corner alphas are the shadow's opacity.
+			const core::rect<s32> full(0, 0, (s32)CurrentRenderTargetSize.Width, (s32)CurrentRenderTargetSize.Height);
+			CVulkanImmediateGeometry::build2DRectangle(ImmediateVertices, full, leftUpEdge, rightUpEdge,
+				leftDownEdge, rightDownEdge, nullptr);
+
+			SVulkanStencilOverride test;
+			test.CompareOp = VK_COMPARE_OP_NOT_EQUAL; // against the baked reference of 0
+
+			setScissorFromClip(nullptr);
+			drawImmediate(ImmediateVertices.pointer(), ImmediateVertices.size(),
+				VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, build2DMaterial(true, nullptr),
+				core::IdentityMatrix, core::IdentityMatrix,
+				CVulkanImmediateGeometry::build2DProjection(CurrentRenderTargetSize), &test);
+
+			if (clearStencilBuffer)
+			{
+				VkClearAttachment clear = {};
+				clear.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT;
+				clear.clearValue.depthStencil.stencil = 0;
+
+				VkClearRect rect = {};
+				rect.rect.extent.width = CurrentRenderTargetSize.Width;
+				rect.rect.extent.height = CurrentRenderTargetSize.Height;
+				rect.layerCount = 1;
+				vk::CmdClearAttachments(Frames[CurrentFrameIndex].CommandBuffer, 1, &clear, 1, &rect);
+			}
+		}
+
+		// ================================ occlusion queries ================================
+
+		void CVulkanDriver::addOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, const scene::IMesh* mesh)
+		{
+			if (Occlusion && Occlusion->isValid())
+				Occlusion->addQuery(node, mesh);
+		}
+
+		void CVulkanDriver::removeOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node)
+		{
+			if (Occlusion)
+				Occlusion->removeQuery(node);
+		}
+
+		void CVulkanDriver::removeAllOcclusionQueries()
+		{
+			if (Occlusion)
+				Occlusion->removeAll();
+		}
+
+		void CVulkanDriver::runOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool visible)
+		{
+			if (!node || !Occlusion || !Occlusion->isValid() || !SceneOpen || !RenderingActive)
+				return;
+
+			const std::vector<core::vector3df>* positions = Occlusion->getPositions(node);
+			if (!positions || positions->empty())
+				return;
+
+			const u32 count = (u32)positions->size();
+			ImmediateVertices.set_used(count);
+			for (u32 i = 0; i < count; ++i)
+				ImmediateVertices[i] = S3DVertex((*positions)[i].X, (*positions)[i].Y, (*positions)[i].Z,
+					0, 0, 0, SColor(255, 255, 255, 255), 0, 0);
+
+			// Dedicated material, not the driver's current state, for the reasons the D3D12 driver
+			// spells out: no colour or depth writes, and GREATEREQUAL so fragments landing exactly on
+			// the depth the node itself already wrote still count.
+			SMaterial occlusionMaterial;
+			occlusionMaterial.Lighting = false;
+			occlusionMaterial.AntiAliasing = 0;
+			occlusionMaterial.ColorMask = ECP_NONE;
+			occlusionMaterial.GouraudShading = false;
+			occlusionMaterial.ZWriteEnable = false;
+			occlusionMaterial.ZBuffer = ECFN_GREATEREQUAL;
+			const SMaterial& drawMaterial = visible ? Material : occlusionMaterial;
+
+			// A Vulkan query slot has to be reset before every use, outside the rendering instance,
+			// and a reset discards whatever the slot held. So: a result still pending from an earlier
+			// frame is read first (that frame was submitted, waiting is finite), and a slot already
+			// recorded THIS frame is not reset at all -- the volume is drawn without a query, since
+			// the pending submission would never come back.
+			const u64 pending = Occlusion->getPendingFrame(node);
+			const bool runQuery = (pending != FrameCounter);
+			if (pending && runQuery)
+				Occlusion->updateResult(node, true);
+
+			SVulkanFrameContext& frame = Frames[CurrentFrameIndex];
+			const u32 slot = Occlusion->getSlot(node);
+			if (runQuery)
+			{
+				suspendRendering();
+				Occlusion->resetQuery(frame.CommandBuffer, slot);
+				resumeRendering();
+				if (!RenderingActive)
+					return;
+			}
+
+			const SVulkanTransientRange range =
+				frame.Immediate->allocateVertices(ImmediateVertices.pointer(), count, sizeof(S3DVertex));
+			if (!range.isValid())
+				return;
+
+			// Through the ordinary draw path, so whatever that binds (lighting, fog, a user shader's
+			// constants when `visible`) is bound here too.
+			if (!bindDrawState(drawMaterial, node->getAbsoluteTransformation(), Matrices[ETS_VIEW],
+				Matrices[ETS_PROJECTION], nullptr, S3DVertexInput, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST))
+				return;
+
+			vk::CmdBindVertexBuffers(frame.CommandBuffer, 0, 1, &range.Buffer, &range.Offset);
+			if (runQuery)
+				Occlusion->beginQuery(frame.CommandBuffer, slot);
+			vk::CmdDraw(frame.CommandBuffer, count, 1, 0, 0);
+			if (runQuery)
+			{
+				Occlusion->endQuery(frame.CommandBuffer, slot);
+				Occlusion->markPending(node, FrameCounter);
+			}
+		}
+
+		void CVulkanDriver::runAllOcclusionQueries(bool visible)
+		{
+			if (!Occlusion)
+				return;
+			const std::vector<std::shared_ptr<scene::ISceneNode>> nodes = Occlusion->getNodes();
+			for (size_t i = 0; i < nodes.size(); ++i)
+				runOcclusionQuery(nodes[i], visible);
+		}
+
+		void CVulkanDriver::updateOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool block)
+		{
+			if (!node || !Occlusion)
+				return;
+			// A query recorded in the frame still being recorded has not been submitted: blocking on
+			// it would hang, so such a call degrades to a poll ("update might not occur").
+			const bool submitted = Occlusion->getPendingFrame(node) != FrameCounter;
+			Occlusion->updateResult(node, block && submitted);
+		}
+
+		void CVulkanDriver::updateAllOcclusionQueries(bool block)
+		{
+			if (!Occlusion)
+				return;
+			const std::vector<std::shared_ptr<scene::ISceneNode>> nodes = Occlusion->getNodes();
+			for (size_t i = 0; i < nodes.size(); ++i)
+				updateOcclusionQuery(nodes[i], block);
+		}
+
+		u32 CVulkanDriver::getOcclusionQueryResult(std::shared_ptr<scene::ISceneNode> node) const
+		{
+			return Occlusion ? Occlusion->getResult(node) : ~0u;
+		}
+
+		// ==================================== compute ====================================
+
+		std::shared_ptr<video::IHardwareBuffer> CVulkanDriver::createHardwareBuffer(scene::IComputeBuffer* computeBuffer)
+		{
+			if (!computeBuffer)
+				return nullptr;
+
+			auto existing = computeBuffer->getHardwareBuffer();
+			if (existing && existing->getDriverType() == EDT_VULKAN && !existing->isRequiredUpdate())
+				return existing;
+
+			const u32 size = computeBuffer->getStructureCount() * computeBuffer->getStructureStride();
+			if (!size)
+			{
+				os::Printer::log("CVulkanDriver::createHardwareBuffer: empty compute buffer", ELL_ERROR);
+				return nullptr;
+			}
+
+			// Device local whatever the hint (see CVulkanHardwareBuffer::wantsDeviceLocal()): a
+			// compute buffer is a GPU write target. The flags decide the extra bind points -- vertex
+			// for a per-instance stream, indirect for draw/dispatch arguments.
+			auto buffer = std::make_shared<CVulkanHardwareBuffer>(Context, *this, size, EHBT_COMPUTE,
+				EHBA_DEFAULT, computeBuffer->getBufferFlags(), computeBuffer->getStructureStride(),
+				computeBuffer->getBufferPointer());
+			if (buffer->getBuffer() == VK_NULL_HANDLE)
+				return nullptr;
+
+			computeBuffer->setHardwareBuffer(buffer);
+			return buffer;
+		}
+
+		CVulkanHardwareBuffer* CVulkanDriver::prepareComputeBuffer(scene::IComputeBuffer* buffer)
+		{
+			if (!buffer || buffer->getStructureCount() == 0)
+				return nullptr;
+
+			// Same sequence as the D3D11/D3D12 dispatches: created on first use, re-uploaded when the
+			// CPU copy was marked dirty since.
+			auto hardware = buffer->getHardwareBuffer();
+			if (!hardware || hardware->getDriverType() != EDT_VULKAN)
+				hardware = createHardwareBuffer(buffer);
+			else if (hardware->isRequiredUpdate())
+				hardware->update(buffer->getHardwareMappingHint(),
+					buffer->getStructureCount() * buffer->getStructureStride(), buffer->getBufferPointer());
+			if (!hardware)
+				return nullptr;
+
+			CVulkanHardwareBuffer* native = static_cast<CVulkanHardwareBuffer*>(hardware.get());
+			return (native->getBuffer() != VK_NULL_HANDLE) ? native : nullptr;
+		}
+
+		void CVulkanDriver::runComputeCallback(CVulkanComputeMaterial* material)
+		{
+			// Same convention as bindDrawState(): the index is set before the callback so
+			// getComputeShaderConstantID()/setComputeShaderConstant() know which material is active.
+			ActiveMaterialRendererIndex = Material.MaterialType;
+			if (material && material->CallBack)
+			{
+				material->CallBack->OnSetMaterial(Material);
+				material->CallBack->OnSetConstants(this, material->UserData);
+			}
+		}
+
+		// Synchronous and on its own command buffer, as the D3D12 dispatch is: IVideoDriver's compute
+		// entry points may be called outside beginScene()/endScene(), and the caller reads the result
+		// back right after through IComputeBuffer::downloadFromGPU().
+		void CVulkanDriver::dispatchComputeShader(const core::vector3d<u32>& groupCount,
+			scene::IComputeBuffer* Src, scene::IComputeBuffer* Dst)
+		{
+			if (!Src || !Dst || Src->getStructureCount() == 0 || Dst->getStructureCount() == 0)
+				return;
+
+			CVulkanComputeMaterial* material = getComputeMaterial(Material.MaterialType);
+			if (!material)
+			{
+				os::Printer::log("CVulkanDriver::dispatchComputeShader: the active material has no "
+					"compute shader", ELL_ERROR);
+				return;
+			}
+			if (!Compute || !Compute->isReady())
+			{
+				os::Printer::log("CVulkanDriver::dispatchComputeShader: compute is unavailable", ELL_ERROR);
+				return;
+			}
+
+			CVulkanHardwareBuffer* src = prepareComputeBuffer(Src);
+			CVulkanHardwareBuffer* dst = prepareComputeBuffer(Dst);
+			if (!src || !dst)
+			{
+				os::Printer::log("CVulkanDriver::dispatchComputeShader: Src/Dst have no device buffer",
+					ELL_ERROR);
+				return;
+			}
+
+			runComputeCallback(material);
+
+			VkCommandBuffer cmd = beginUpload();
+			if (cmd != VK_NULL_HANDLE)
+			{
+				CVulkanCompute::barrierBeforeDispatch(cmd, src->getBuffer(), dst->getBuffer());
+				if (Compute->dispatch(cmd, material, src, dst, groupCount))
+					CVulkanCompute::barrierAfterDispatch(cmd, dst->getBuffer());
+				endUploadAndWait(cmd);
+			}
+			ActiveMaterialRendererIndex = -1;
+		}
+
+		void CVulkanDriver::dispatchComputeShaderToTexture(const core::vector3d<u32>& groupCount,
+			scene::IComputeBuffer* Src, ITexture* Dst)
+		{
+			if (!Src || !Dst || Src->getStructureCount() == 0)
+				return;
+
+			if (Dst->getDriverType() != EDT_VULKAN || !Dst->isUnorderedAccess())
+			{
+				os::Printer::log("CVulkanDriver::dispatchComputeShaderToTexture: Dst is not a UAV texture "
+					"of this driver (see addUAVTexture())", ELL_ERROR);
+				return;
+			}
+
+			CVulkanComputeMaterial* material = getComputeMaterial(Material.MaterialType);
+			if (!material)
+			{
+				os::Printer::log("CVulkanDriver::dispatchComputeShaderToTexture: the active material has "
+					"no compute shader", ELL_ERROR);
+				return;
+			}
+			if (!Compute || !Compute->isReady())
+			{
+				os::Printer::log("CVulkanDriver::dispatchComputeShaderToTexture: compute is unavailable",
+					ELL_ERROR);
+				return;
+			}
+
+			CVulkanHardwareBuffer* src = prepareComputeBuffer(Src);
+			CVulkanTexture* dstTexture = static_cast<CVulkanTexture*>(Dst);
+			if (!src || !dstTexture->hasDeviceResource())
+			{
+				os::Printer::log("CVulkanDriver::dispatchComputeShaderToTexture: Src has no device buffer",
+					ELL_ERROR);
+				return;
+			}
+
+			runComputeCallback(material);
+
+			VkCommandBuffer cmd = beginUpload();
+			if (cmd != VK_NULL_HANDLE)
+			{
+				CVulkanCompute::barrierBeforeDispatch(cmd, src->getBuffer(), VK_NULL_HANDLE);
+				Compute->dispatchToTexture(cmd, material, src, dstTexture, groupCount);
+				// Left ready to be sampled by the next draw, since endUploadAndWait() blocks until
+				// the dispatch has actually finished.
+				CVulkanCompute::barrierImageToShaderRead(cmd, dstTexture);
+				endUploadAndWait(cmd);
+			}
+			ActiveMaterialRendererIndex = -1;
+		}
+
+		void CVulkanDriver::bindComputeBuffer(u32 slot, scene::IComputeBuffer* buffer, E_HARDWARE_BUFFER_TYPE binding)
+		{
+			const bool asUAV = (binding == EHBT_COMPUTE);
+			const u32 maxSlot = asUAV ? (u32)EMCS_MAX_COMPUTE_UAV_SLOTS : (u32)EMCS_MAX_COMPUTE_SRV_SLOTS;
+			if (slot >= maxSlot)
+			{
+				os::Printer::log("CVulkanDriver::bindComputeBuffer: slot out of range", ELL_ERROR);
+				return;
+			}
+
+			SVulkanComputeSlot& target = asUAV ? ComputeUAV[slot] : ComputeSRV[slot];
+			target.Buffer = buffer;
+			target.Texture = nullptr;
+		}
+
+		void CVulkanDriver::bindComputeTexture(u32 slot, ITexture* texture, bool asUAV)
+		{
+			const u32 maxSlot = asUAV ? (u32)EMCS_MAX_COMPUTE_UAV_SLOTS : (u32)EMCS_MAX_COMPUTE_SRV_SLOTS;
+			if (slot >= maxSlot)
+			{
+				os::Printer::log("CVulkanDriver::bindComputeTexture: slot out of range", ELL_ERROR);
+				return;
+			}
+			if (texture && texture->getDriverType() != EDT_VULKAN)
+			{
+				os::Printer::log("CVulkanDriver::bindComputeTexture: texture is not a Vulkan one", ELL_ERROR);
+				return;
+			}
+			if (asUAV && texture && !texture->isUnorderedAccess())
+			{
+				os::Printer::log("CVulkanDriver::bindComputeTexture: texture has no storage usage - use "
+					"addUAVTexture()", ELL_ERROR);
+				return;
+			}
+
+			SVulkanComputeSlot& target = asUAV ? ComputeUAV[slot] : ComputeSRV[slot];
+			target.Buffer = nullptr;
+			target.Texture = texture;
+		}
+
+		void CVulkanDriver::dispatchComputeShaderBound(const core::vector3d<u32>& groupCount)
+		{
+			dispatchBoundResources(groupCount, nullptr, 0);
+		}
+
+		void CVulkanDriver::dispatchComputeShaderIndirect(scene::IComputeBuffer* argBuffer, u32 byteOffset)
+		{
+			if (!argBuffer)
+				return;
+
+			CVulkanHardwareBuffer* args = prepareComputeBuffer(argBuffer);
+			if (!args)
+			{
+				os::Printer::log("CVulkanDriver::dispatchComputeShaderIndirect: args buffer has no device "
+					"buffer", ELL_ERROR);
+				return;
+			}
+			if (!(args->getFlags() & EHBF_DRAW_INDIRECT_ARGS))
+			{
+				os::Printer::log("CVulkanDriver::dispatchComputeShaderIndirect: the args buffer needs "
+					"EHBF_DRAW_INDIRECT_ARGS", ELL_ERROR);
+				return;
+			}
+			if (byteOffset % 4 != 0 || byteOffset + 12 > args->getSize())
+			{
+				os::Printer::log("CVulkanDriver::dispatchComputeShaderIndirect: byteOffset must be a "
+					"multiple of 4 and leave room for three u32", ELL_ERROR);
+				return;
+			}
+
+			dispatchBoundResources(core::vector3d<u32>(1, 1, 1), args, byteOffset);
+		}
+
+		void CVulkanDriver::dispatchBoundResources(const core::vector3d<u32>& groupCount,
+			CVulkanHardwareBuffer* indirectArgs, u32 indirectOffset)
+		{
+			CVulkanComputeMaterial* material = getComputeMaterial(Material.MaterialType);
+			if (!material)
+			{
+				os::Printer::log("CVulkanDriver::dispatchComputeShaderBound: the active material has no "
+					"compute shader", ELL_ERROR);
+				return;
+			}
+			if (!Compute || !Compute->isReady())
+			{
+				os::Printer::log("CVulkanDriver::dispatchComputeShaderBound: compute is unavailable", ELL_ERROR);
+				return;
+			}
+
+			// Slots -> binding numbers, per the convention in CVulkanCompute.h. Every bound buffer is
+			// brought up to date here, which is also where a dirty CPU copy gets uploaded.
+			SVulkanComputeResources resources;
+			std::vector<CVulkanHardwareBuffer*> readBuffers;
+			std::vector<CVulkanHardwareBuffer*> writeBuffers;
+			std::vector<CVulkanTexture*> writeTextures;
+
+			for (u32 s = 0; s < EMCS_MAX_COMPUTE_SRV_SLOTS; ++s)
+			{
+				const SVulkanComputeSlot& slot = ComputeSRV[s];
+				if (slot.Buffer)
+				{
+					CVulkanHardwareBuffer* buffer = prepareComputeBuffer(slot.Buffer);
+					if (!buffer)
+					{
+						os::Printer::log("CVulkanDriver::dispatchComputeShaderBound: an SRV buffer has no "
+							"device buffer", ELL_ERROR);
+						return;
+					}
+					resources.setBuffer(VulkanComputeSrvBindingBase + s, buffer);
+					readBuffers.push_back(buffer);
+				}
+				else if (slot.Texture)
+					resources.setTexture(VulkanComputeSrvBindingBase + s, static_cast<CVulkanTexture*>(slot.Texture));
+			}
+
+			for (u32 u = 0; u < EMCS_MAX_COMPUTE_UAV_SLOTS; ++u)
+			{
+				const SVulkanComputeSlot& slot = ComputeUAV[u];
+				if (slot.Buffer)
+				{
+					CVulkanHardwareBuffer* buffer = prepareComputeBuffer(slot.Buffer);
+					if (!buffer)
+					{
+						os::Printer::log("CVulkanDriver::dispatchComputeShaderBound: a UAV buffer has no "
+							"device buffer", ELL_ERROR);
+						return;
+					}
+					resources.setBuffer(VulkanComputeUavBindingBase + u, buffer);
+					writeBuffers.push_back(buffer);
+				}
+				else if (slot.Texture)
+				{
+					CVulkanTexture* texture = static_cast<CVulkanTexture*>(slot.Texture);
+					resources.setTexture(VulkanComputeUavBindingBase + u, texture);
+					writeTextures.push_back(texture);
+				}
+			}
+
+			runComputeCallback(material);
+
+			VkCommandBuffer cmd = beginUpload();
+			if (cmd != VK_NULL_HANDLE)
+			{
+				// Whatever produced each buffer -- an upload, a previous dispatch, the host -- is made
+				// visible to this one; the argument buffer of an indirect dispatch as well.
+				for (size_t i = 0; i < readBuffers.size(); ++i)
+					CVulkanCompute::barrierBeforeDispatch(cmd, readBuffers[i]->getBuffer(), VK_NULL_HANDLE);
+				for (size_t i = 0; i < writeBuffers.size(); ++i)
+					CVulkanCompute::barrierBeforeDispatch(cmd, VK_NULL_HANDLE, writeBuffers[i]->getBuffer());
+				if (indirectArgs)
+					CVulkanCompute::bufferBarrier(cmd, indirectArgs->getBuffer(), 0, VK_WHOLE_SIZE,
+						VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT,
+						VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
+						VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_HOST_BIT,
+						VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT);
+
+				const bool dispatched = Compute->dispatchBound(cmd, material, resources, groupCount,
+					indirectArgs ? indirectArgs->getBuffer() : VK_NULL_HANDLE, indirectOffset);
+
+				if (dispatched)
+				{
+					for (size_t i = 0; i < writeBuffers.size(); ++i)
+						CVulkanCompute::barrierAfterDispatch(cmd, writeBuffers[i]->getBuffer());
+					// Back to the sampled layout so a draw can read the result; the next dispatch
+					// that binds one as a UAV moves it to GENERAL again by itself.
+					for (size_t i = 0; i < writeTextures.size(); ++i)
+						CVulkanCompute::barrierImageToShaderRead(cmd, writeTextures[i]);
+				}
+				endUploadAndWait(cmd);
+			}
+			ActiveMaterialRendererIndex = -1;
+		}
+
+		void CVulkanDriver::unbindComputeResources()
+		{
+			for (u32 i = 0; i < EMCS_MAX_COMPUTE_SRV_SLOTS; ++i)
+				ComputeSRV[i] = SVulkanComputeSlot();
+			for (u32 i = 0; i < EMCS_MAX_COMPUTE_UAV_SLOTS; ++i)
+				ComputeUAV[i] = SVulkanComputeSlot();
+		}
+
+		// Every dispatch here is submitted and waited on with full barriers around it, so there is
+		// no GPU hazard left to order. What remains is the D3D11 meaning of the call: the buffer
+		// stops being a UAV, so the next dispatch may read it through an SRV slot.
+		void CVulkanDriver::computeBarrier(scene::IComputeBuffer* buffer)
+		{
+			if (!buffer)
+				return;
+			for (u32 i = 0; i < EMCS_MAX_COMPUTE_UAV_SLOTS; ++i)
+				if (ComputeUAV[i].Buffer == buffer)
+					ComputeUAV[i] = SVulkanComputeSlot();
+		}
+
+		void CVulkanDriver::computeBarrierAll()
+		{
+			for (u32 i = 0; i < EMCS_MAX_COMPUTE_UAV_SLOTS; ++i)
+				ComputeUAV[i] = SVulkanComputeSlot();
+		}
+
+		// The counter lives in a small host-visible buffer of the append buffer's own (see
+		// CVulkanHardwareBuffer::getCounterBuffer()), bound by every dispatch next to the buffer it
+		// counts for. Copying it out is a 4-byte buffer copy on the upload command buffer.
+		void CVulkanDriver::copyStructureCount(scene::IComputeBuffer* dst, u32 dstByteOffset,
+			scene::IComputeBuffer* appendBuffer)
+		{
+			if (!dst || !appendBuffer)
+				return;
+
+			CVulkanHardwareBuffer* dstHardware = prepareComputeBuffer(dst);
+			CVulkanHardwareBuffer* srcHardware = prepareComputeBuffer(appendBuffer);
+			if (!dstHardware || !srcHardware)
+			{
+				os::Printer::log("CVulkanDriver::copyStructureCount: needs a real source and destination "
+					"buffer", ELL_ERROR);
+				return;
+			}
+			if (!(srcHardware->getFlags() & (EHBF_COMPUTE_APPEND | EHBF_COMPUTE_CONSUME)))
+			{
+				os::Printer::log("CVulkanDriver::copyStructureCount: source has no hidden counter - create "
+					"it with EHBF_COMPUTE_APPEND/CONSUME", ELL_ERROR);
+				return;
+			}
+			if (dstByteOffset + sizeof(u32) > dstHardware->getSize())
+			{
+				os::Printer::log("CVulkanDriver::copyStructureCount: dstByteOffset past the end of dst", ELL_ERROR);
+				return;
+			}
+
+			VkBuffer counter = srcHardware->getCounterBuffer(true);
+			if (counter == VK_NULL_HANDLE)
+				return;
+
+			VkCommandBuffer cmd = beginUpload();
+			if (cmd == VK_NULL_HANDLE)
+				return;
+
+			CVulkanCompute::bufferBarrier(cmd, counter, 0, VK_WHOLE_SIZE,
+				VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+			CVulkanCompute::bufferBarrier(cmd, dstHardware->getBuffer(), 0, VK_WHOLE_SIZE,
+				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT |
+				VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+				VK_ACCESS_TRANSFER_WRITE_BIT,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+				VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+			VkBufferCopy region = {};
+			region.srcOffset = 0;
+			region.dstOffset = dstByteOffset;
+			region.size = sizeof(u32);
+			vk::CmdCopyBuffer(cmd, counter, dstHardware->getBuffer(), 1, &region);
+
+			// Every consumer of the count: the next dispatch (as a param), an indirect dispatch (as
+			// its arguments), the read-back copy, and the host itself.
+			CVulkanCompute::bufferBarrier(cmd, dstHardware->getBuffer(), 0, VK_WHOLE_SIZE,
+				VK_ACCESS_TRANSFER_WRITE_BIT,
+				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT |
+				VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_HOST_READ_BIT,
+				VK_PIPELINE_STAGE_TRANSFER_BIT,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT |
+				VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_HOST_BIT);
+			endUploadAndWait(cmd);
+		}
+
+		// Applied at once rather than on the next bind as D3D11 does: every dispatch here has been
+		// waited on, so nothing can still be counting into it, and an unbound buffer is no problem.
+		void CVulkanDriver::resetStructureCount(scene::IComputeBuffer* appendBuffer, u32 value)
+		{
+			if (!appendBuffer)
+				return;
+
+			CVulkanHardwareBuffer* hardware = prepareComputeBuffer(appendBuffer);
+			if (!hardware)
+			{
+				os::Printer::log("CVulkanDriver::resetStructureCount: buffer has no device buffer", ELL_WARNING);
+				return;
+			}
+			if (!hardware->setCounterValue(value))
+				os::Printer::log("CVulkanDriver::resetStructureCount: no counter could be created", ELL_ERROR);
+		}
+
+		bool CVulkanDriver::beginComputeReadback(scene::IComputeBuffer* buffer, u32 slot)
+		{
+			if (!buffer || slot >= EMCS_MAX_READBACK_SLOTS)
+				return false;
+
+			CVulkanHardwareBuffer* hardware = prepareComputeBuffer(buffer);
+			if (!hardware)
+				return false;
+			return hardware->beginAsyncReadback(slot);
+		}
+
+		bool CVulkanDriver::tryReadComputeBuffer(scene::IComputeBuffer* buffer, u32 slot, void* dst,
+			u32 bytes, bool wait)
+		{
+			if (!buffer || slot >= EMCS_MAX_READBACK_SLOTS || !buffer->getHardwareBuffer())
+				return false;
+			if (buffer->getHardwareBuffer()->getDriverType() != EDT_VULKAN)
+				return false;
+
+			// Not prepareComputeBuffer(): a poll must never trigger an upload of a dirty CPU copy.
+			CVulkanHardwareBuffer* hardware = static_cast<CVulkanHardwareBuffer*>(buffer->getHardwareBuffer().get());
+			return hardware->tryAsyncReadback(slot, dst, bytes, wait);
+		}
+
+		void CVulkanDriver::drawMeshBufferInstancedIndirect(const scene::IMeshBuffer* mb,
+			scene::IComputeBuffer* instanceBuffer, u32 instanceStride,
+			scene::IComputeBuffer* argBuffer, u32 byteOffset)
+		{
+			if (!mb || !instanceBuffer || !argBuffer || !instanceStride)
+				return;
+			if (!SceneOpen || !RenderingActive)
+				return; // bindDrawState() would only warn; nothing can be recorded
+
+			IVertexDescriptor* descriptor = mb->getVertexDescriptor();
+			const u32 vbCount = mb->getVertexBufferCount();
+			if (!descriptor || vbCount == 0 || vbCount > kMaxVertexStreams ||
+				vbCount > Context.DeviceProperties.limits.maxVertexInputBindings)
+				return;
+
+			CVulkanHardwareBuffer* instances = prepareComputeBuffer(instanceBuffer);
+			CVulkanHardwareBuffer* args = prepareComputeBuffer(argBuffer);
+			if (!instances || !args)
+			{
+				os::Printer::log("CVulkanDriver::drawMeshBufferInstancedIndirect: instance or args buffer "
+					"has no device buffer", ELL_ERROR);
+				return;
+			}
+			if (!(instances->getFlags() & EHBF_VERTEX_ADDITIONAL_BIND))
+			{
+				os::Printer::log("CVulkanDriver::drawMeshBufferInstancedIndirect: the instance buffer "
+					"needs EHBF_VERTEX_ADDITIONAL_BIND to be fetched as vertex data", ELL_ERROR);
+				return;
+			}
+			if (!(args->getFlags() & EHBF_DRAW_INDIRECT_ARGS) || byteOffset % 4 != 0 ||
+				byteOffset + 5 * sizeof(u32) > args->getSize())
+			{
+				os::Printer::log("CVulkanDriver::drawMeshBufferInstancedIndirect: the args buffer needs "
+					"EHBF_DRAW_INDIRECT_ARGS and five u32 at byteOffset", ELL_ERROR);
+				return;
+			}
+			if (!vk::CmdDrawIndexedIndirect)
+				return;
+
+			scene::IIndexBuffer* ib = mb->getIndexBuffer();
+			if (!ib || ib->getIndexCount() == 0)
+			{
+				os::Printer::log("CVulkanDriver::drawMeshBufferInstancedIndirect: an indexed mesh buffer "
+					"is required", ELL_ERROR);
+				return;
+			}
+
+			// The per-instance stream comes from `instanceBuffer`, every other one from the mesh, as
+			// in drawMeshBuffer(). The stride is baked into the pipeline from the descriptor, so the
+			// caller's has to agree with it.
+			VkBuffer vertexBuffers[kMaxVertexStreams] = {};
+			VkDeviceSize vertexOffsets[kMaxVertexStreams] = {};
+			for (u32 i = 0; i < vbCount; ++i)
+			{
+				if (descriptor->getInstanceDataStepRate(i) == EIDSR_PER_INSTANCE)
+				{
+					if (descriptor->getVertexSize(i) != instanceStride)
+						os::Printer::log("CVulkanDriver::drawMeshBufferInstancedIndirect: instanceStride "
+							"differs from the descriptor's per-instance vertex size, the descriptor's is "
+							"used", ELL_WARNING);
+					vertexBuffers[i] = instances->getBuffer();
+					continue;
+				}
+
+				scene::IVertexBuffer* streamVb = mb->getVertexBuffer(i);
+				if (!streamVb || streamVb->getVertexCount() == 0)
+					return;
+
+				auto streamHardware = streamVb->getHardwareBuffer();
+				if (!streamHardware || streamHardware->getDriverType() != EDT_VULKAN)
+					streamHardware = createHardwareBuffer(streamVb);
+				else if (streamHardware->isRequiredUpdate())
+					streamHardware->update(streamVb->getHardwareMappingHint(),
+						streamVb->getVertexCount() * streamVb->getVertexSize(), streamVb->getVertices());
+				if (!streamHardware)
+					return;
+
+				vertexBuffers[i] = static_cast<CVulkanHardwareBuffer*>(streamHardware.get())->getBuffer();
+				if (vertexBuffers[i] == VK_NULL_HANDLE)
+					return;
+			}
+
+			auto ibHardware = ib->getHardwareBuffer();
+			if (!ibHardware || ibHardware->getDriverType() != EDT_VULKAN)
+				ibHardware = createHardwareBuffer(ib);
+			else if (ibHardware->isRequiredUpdate())
+			{
+				const u32 indexSize = (ib->getType() == EIT_32BIT) ? 4 : 2;
+				ibHardware->update(ib->getHardwareMappingHint(), ib->getIndexCount() * indexSize, ib->getIndices());
+			}
+			if (!ibHardware)
+				return;
+			CVulkanHardwareBuffer* nativeIb = static_cast<CVulkanHardwareBuffer*>(ibHardware.get());
+			if (nativeIb->getBuffer() == VK_NULL_HANDLE)
+				return;
+
+			const VkPrimitiveTopology topology = mapPrimitiveType(mb->getPrimitiveType());
+			SVulkanVertexInputState vertexInput;
+			resolveVulkanVertexInputState(descriptor, vertexInput);
+			if (!bindDrawState(Material, Matrices[ETS_WORLD], Matrices[ETS_VIEW], Matrices[ETS_PROJECTION],
+				descriptor, vertexInput, topology))
+				return;
+
+			SVulkanFrameContext& frame = Frames[CurrentFrameIndex];
+			vk::CmdBindVertexBuffers(frame.CommandBuffer, 0, vbCount, vertexBuffers, vertexOffsets);
+			vk::CmdBindIndexBuffer(frame.CommandBuffer, nativeIb->getBuffer(), 0,
+				(ib->getType() == EIT_32BIT) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16);
+			// The five D3D arguments (IndexCountPerInstance, InstanceCount, StartIndexLocation,
+			// BaseVertexLocation, StartInstanceLocation) are VkDrawIndexedIndirectCommand in order.
+			vk::CmdDrawIndexedIndirect(frame.CommandBuffer, args->getBuffer(), byteOffset, 1, 0);
+		}
+
+		s32 CVulkanDriver::addComputeShader(const c8* computeShaderProgram,
+			const c8* computeShaderEntryPointName, E_COMPUTE_SHADER_TYPE csCompileTarget,
+			IShaderConstantSetCallBack* callback, s32 userData)
+		{
+			if (!Compute || !Compute->isReady())
+			{
+				os::Printer::log("CVulkanDriver::addComputeShader: compute is unavailable on this device",
+					ELL_ERROR);
+				return -1;
+			}
+
+			// The material compiles and reflects itself; the driver only registers it -- the same
+			// split as registerUserShaderMaterial(). The source is text in the build's default
+			// language: a bare pointer cannot carry a SPIR-V blob's length, see the file overload.
+			CVulkanComputeMaterial* material = new CVulkanComputeMaterial();
+			material->Name = "compute shader";
+			// An in-memory source has no directory of its own; its includes resolve against the
+			// working directory and media/shaders/, as on the D3D drivers.
+			if (!material->compileFromSource(Context, EGSL_DEFAULT, computeShaderProgram, 0,
+				computeShaderEntryPointName, FileSystem, nullptr))
+			{
+				material->drop();
+				return -1;
+			}
+
+			if (callback)
+			{
+				callback->grab();
+				material->CallBack = callback;
+			}
+			material->UserData = userData;
+
+			const s32 materialType = addMaterialRenderer(material, nullptr);
+			material->drop(); // addMaterialRenderer() grabbed it
+			return materialType;
+		}
+
+		s32 CVulkanDriver::addComputeShaderFromFile(const io::path& computeShaderProgramFileName,
+			const c8* computeShaderEntryPointName, E_COMPUTE_SHADER_TYPE csCompileTarget,
+			IShaderConstantSetCallBack* callback, s32 userData)
+		{
+			if (!Compute || !Compute->isReady())
+			{
+				os::Printer::log("CVulkanDriver::addComputeShaderFromFile: compute is unavailable on this "
+					"device", ELL_ERROR);
+				return -1;
+			}
+
+			SVulkanSourceBytes bytes;
+			if (!loadShaderSource(FileSystem, computeShaderProgramFileName, bytes) || bytes.size() < 2)
+				return -1;
+
+			// A file starting with the SPIR-V magic word is a pre-compiled module and goes in as
+			// such, length included (it contains zero bytes); anything else is source text.
+			E_GPU_SHADING_LANGUAGE lang = EGSL_DEFAULT;
+			u32 length = 0;
+			if (bytes.size() > SpirvHeaderSize)
+			{
+				u32 magic = 0;
+				memcpy(&magic, bytes.data(), sizeof(magic));
+				if (magic == SpirvMagicWord)
+				{
+					lang = EGSL_PCMP;
+					length = static_cast<u32>(bytes.size() - 1);
+				}
+			}
+
+			CVulkanComputeMaterial* material = new CVulkanComputeMaterial();
+			material->Name = computeShaderProgramFileName;
+			// Includes resolve against the file's own directory first.
+			const io::path includeDirectory = FileSystem ? FileSystem->getFileDir(computeShaderProgramFileName) : io::path();
+			if (!material->compileFromSource(Context, lang, bytes.data(), length, computeShaderEntryPointName,
+				FileSystem, includeDirectory.size() ? includeDirectory.c_str() : nullptr))
+			{
+				material->drop();
+				return -1;
+			}
+
+			if (callback)
+			{
+				callback->grab();
+				material->CallBack = callback;
+			}
+			material->UserData = userData;
+
+			const s32 materialType = addMaterialRenderer(material, nullptr);
+			material->drop();
+			return materialType;
+		}
+
+		s32 CVulkanDriver::getComputeShaderConstantID(const c8* name)
+		{
+			CVulkanComputeMaterial* material = getComputeMaterial(ActiveMaterialRendererIndex);
+			return (material && name) ? material->getVariableID(name) : -1;
+		}
+
+		bool CVulkanDriver::setComputeShaderConstant(s32 index, const f32* floats, int count)
+		{
+			CVulkanComputeMaterial* material = getComputeMaterial(ActiveMaterialRendererIndex);
+			return material ? material->setVariable(index, floats, count) : false;
+		}
+
+		bool CVulkanDriver::setComputeShaderConstant(s32 index, const s32* ints, int count)
+		{
+			CVulkanComputeMaterial* material = getComputeMaterial(ActiveMaterialRendererIndex);
+			return material ? material->setVariable(index, ints, count) : false;
+		}
+
+		bool CVulkanDriver::setComputeShaderConstant(s32 index, const u32* uints, int count)
+		{
+			CVulkanComputeMaterial* material = getComputeMaterial(ActiveMaterialRendererIndex);
+			return material ? material->setVariableRaw(index, uints, (u32)(count * sizeof(u32))) : false;
+		}
+
+		bool CVulkanDriver::setComputeShaderConstant(s32 index, const f64* doubles, int count)
+		{
+			CVulkanComputeMaterial* material = getComputeMaterial(ActiveMaterialRendererIndex);
+			return material ? material->setVariableRaw(index, doubles, (u32)(count * sizeof(f64))) : false;
+		}
+
+		bool CVulkanDriver::setComputeShaderConstant(s32 index, const s64* longs, int count)
+		{
+			CVulkanComputeMaterial* material = getComputeMaterial(ActiveMaterialRendererIndex);
+			return material ? material->setVariableRaw(index, longs, (u32)(count * sizeof(s64))) : false;
+		}
+
+		bool CVulkanDriver::setComputeShaderConstant(s32 index, const u64* ulongs, int count)
+		{
+			CVulkanComputeMaterial* material = getComputeMaterial(ActiveMaterialRendererIndex);
+			return material ? material->setVariableRaw(index, ulongs, (u32)(count * sizeof(u64))) : false;
+		}
+
+		// ============================ textures and render targets ============================
+
+		ITexture* CVulkanDriver::addUAVTexture(const core::dimension2d<u32>& size, const io::path& name,
+			const ECOLOR_FORMAT format)
+		{
+			CVulkanTexture* texture = new CVulkanTexture(Context, *this, size, format, false, name, 1, true);
+			if (!texture->hasDeviceResource() || !texture->isUnorderedAccess())
+			{
+				os::Printer::log("CVulkanDriver::addUAVTexture: image creation failed", name, ELL_ERROR);
+				texture->drop();
+				return nullptr;
+			}
+
+			CNullDriver::addTexture(texture);
+			texture->drop();
+			return texture;
+		}
+
+		// The array path of CNullDriver::getTexture(files, type): the slices are already textures of
+		// this driver, and the base adds the result to its cache itself.
+		ITexture* CVulkanDriver::createDeviceDependentTexture(const core::array<ITexture*>& surfaces,
+			const E_TEXTURE_TYPE Type, const io::path& name, void* mipmapData)
+		{
+			CVulkanTexture* texture = new CVulkanTexture(Context, *this, surfaces, Type, name);
+			if (!texture->hasDeviceResource())
+			{
+				os::Printer::log("CVulkanDriver: could not create the array texture", name, ELL_ERROR);
+				texture->drop();
+				return nullptr;
+			}
+			return texture;
+		}
+
+		ITexture* CVulkanDriver::addRenderTargetTexture(const core::dimension2d<u32>& size,
+			const io::path& name, const ECOLOR_FORMAT format, u32 sampleCount, u32 sampleQuality,
+			u32 arraySlices)
+		{
+			if (sampleCount > 1)
+				os::Printer::log("CVulkanDriver::addRenderTargetTexture: multisampled render targets are "
+					"not implemented on this driver (no resolve pass), a single-sample target is "
+					"created", name, ELL_WARNING);
+
+			const ECOLOR_FORMAT actual = (format == ECF_UNKNOWN) ? ECF_A8R8G8B8 : format;
+			CVulkanTexture* texture = new CVulkanTexture(Context, *this, size, actual, true, name,
+				arraySlices ? arraySlices : 1, false);
+			if (!texture->hasDeviceResource())
+			{
+				os::Printer::log("CVulkanDriver::addRenderTargetTexture: image creation failed", name, ELL_ERROR);
+				texture->drop();
+				return nullptr;
+			}
+
+			CNullDriver::addTexture(texture);
+			texture->drop();
+			return texture;
+		}
+
+		// One slice, no depth: slices are written by a full-screen blit, never depth-tested -- the
+		// same choice CD3D11Driver::setRenderTargetSlice() makes.
+		bool CVulkanDriver::setRenderTargetSlice(video::ITexture* texture, u32 arraySlice,
+			bool clearTarget, SColor color)
+		{
+			if (!texture || texture->getDriverType() != EDT_VULKAN || !texture->isRenderTarget())
+			{
+				os::Printer::log("CVulkanDriver::setRenderTargetSlice: not a Vulkan render target", ELL_ERROR);
+				return false;
+			}
+			if (!SceneOpen)
+			{
+				os::Printer::log("CVulkanDriver::setRenderTargetSlice: only valid between beginScene() "
+					"and endScene()", ELL_WARNING);
+				return false;
+			}
+
+			CVulkanTexture* colorTexture = static_cast<CVulkanTexture*>(texture);
+			if (arraySlice >= colorTexture->getLayerCount())
+			{
+				os::Printer::log("CVulkanDriver::setRenderTargetSlice: slice out of range", ELL_ERROR);
+				return false;
+			}
+
+			endRendering();
+			unbindRenderTarget();
+
+			if (!RenderTarget->setTarget(colorTexture, nullptr, nullptr, arraySlice))
+			{
+				activateRenderTarget(false, false, color);
+				return false;
+			}
+
+			RenderTargetActive = true;
+			return activateRenderTarget(clearTarget, false, color);
+		}
+
+		bool CVulkanDriver::setRenderTarget(E_RENDER_TARGET target, bool clearTarget, bool clearZBuffer,
+			SColor color)
+		{
+			if (target == ERT_FRAME_BUFFER)
+				return setRenderTarget(static_cast<video::ITexture*>(nullptr), clearTarget, clearZBuffer, color);
+
+			os::Printer::log("CVulkanDriver::setRenderTarget: only ERT_FRAME_BUFFER is supported (no "
+				"stereo/aux buffers)", ELL_WARNING);
+			return false;
+		}
+
+		bool CVulkanDriver::copyTexture(ITexture* dest, ITexture* source, u32 destSlice)
+		{
+			if (!dest || !source || dest == source)
+				return false;
+
+			if (dest->getDriverType() != EDT_VULKAN || source->getDriverType() != EDT_VULKAN)
+			{
+				os::Printer::log("CVulkanDriver::copyTexture: both textures must belong to this driver", ELL_ERROR);
+				return false;
+			}
+
+			CVulkanTexture* d = static_cast<CVulkanTexture*>(dest);
+			CVulkanTexture* s = static_cast<CVulkanTexture*>(source);
+			if (!d->hasDeviceResource() || !s->hasDeviceResource())
+				return false;
+
+			// vkCmdCopyImage moves texels without conversion: the VkFormats have to agree (not just
+			// the ECOLOR_FORMATs, ECF_R8G8B8 being promoted on upload) and so do the sizes.
+			if (d->getSize() != s->getSize() || d->getVkFormat() != s->getVkFormat())
+			{
+				os::Printer::log("CVulkanDriver::copyTexture: size or format mismatch", ELL_ERROR);
+				return false;
+			}
+			if (destSlice >= d->getLayerCount())
+			{
+				os::Printer::log("CVulkanDriver::copyTexture: destination slice out of range", ELL_ERROR);
+				return false;
+			}
+
+			// Inside a scene the copy joins the frame's command buffer, in order with the draws that
+			// produced the source; the rendering instance has to be suspended around it, transfer
+			// commands being illegal inside one. Outside a scene it goes on a one-shot buffer.
+			const bool onFrame = SceneOpen;
+			VkCommandBuffer cmd = VK_NULL_HANDLE;
+			if (onFrame)
+			{
+				suspendRendering();
+				cmd = Frames[CurrentFrameIndex].CommandBuffer;
+			}
+			else
+			{
+				cmd = beginUpload();
+				if (cmd == VK_NULL_HANDLE)
+					return false;
+			}
+
+			const VkImageLayout sourcePrevious = s->getImageLayout();
+			const VkImageLayout destPrevious = d->getImageLayout();
+			s->transitionTo(cmd, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+			d->transitionTo(cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+			// Every level both carry; layer 0 of the source into `destSlice`.
+			const u32 levels = core::min_(s->getMipLevelCount(), d->getMipLevelCount());
+			std::vector<VkImageCopy> regions(levels);
+			for (u32 level = 0; level < levels; ++level)
+			{
+				VkImageCopy& region = regions[level];
+				region = VkImageCopy();
+				region.srcSubresource.aspectMask = s->getAspectMask();
+				region.srcSubresource.mipLevel = level;
+				region.srcSubresource.layerCount = 1;
+				region.dstSubresource.aspectMask = d->getAspectMask();
+				region.dstSubresource.mipLevel = level;
+				region.dstSubresource.baseArrayLayer = destSlice;
+				region.dstSubresource.layerCount = 1;
+				region.extent.width = core::max_(1u, s->getSize().Width >> level);
+				region.extent.height = core::max_(1u, s->getSize().Height >> level);
+				region.extent.depth = 1;
+			}
+			vk::CmdCopyImage(cmd, s->getImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				d->getImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, levels, regions.data());
+
+			// Both go back where they were; nothing may transition back to UNDEFINED, so a texture
+			// that was never written lands in the sampled layout instead.
+			s->transitionTo(cmd, (sourcePrevious == VK_IMAGE_LAYOUT_UNDEFINED) ?
+				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : sourcePrevious);
+			d->transitionTo(cmd, (destPrevious == VK_IMAGE_LAYOUT_UNDEFINED) ?
+				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : destPrevious);
+
+			if (onFrame)
+				resumeRendering();
+			else
+				endUploadAndWait(cmd);
+			return true;
 		}
 
 		IVideoDriver* createVulkanDriver(const irr::SIrrlichtCreationParameters& params,

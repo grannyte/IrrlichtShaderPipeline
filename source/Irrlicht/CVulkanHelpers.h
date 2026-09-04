@@ -159,7 +159,9 @@ namespace irr
 			extern PFN_vkCmdBindIndexBuffer CmdBindIndexBuffer;
 			extern PFN_vkCmdDraw CmdDraw;
 			extern PFN_vkCmdDrawIndexed CmdDrawIndexed;
+			extern PFN_vkCmdDrawIndexedIndirect CmdDrawIndexedIndirect;
 			extern PFN_vkCmdDispatch CmdDispatch;
+			extern PFN_vkCmdDispatchIndirect CmdDispatchIndirect;
 			extern PFN_vkCmdSetViewport CmdSetViewport;
 			extern PFN_vkCmdSetScissor CmdSetScissor;
 			extern PFN_vkCmdPushConstants CmdPushConstants;

@@ -93,8 +93,11 @@ namespace irr
 			bool setTargets(CVulkanTexture* const* colorTextures, u32 colorCount,
 				CVulkanTexture* depthTexture, CVulkanDepthBufferPool* depthPool);
 
+			//! `layer` selects one slice of an array texture as the colour attachment (the
+			//! setRenderTargetSlice() case); WholeImage binds the texture's own view.
+			static const u32 WholeImage = ~0u;
 			bool setTarget(CVulkanTexture* colorTexture, CVulkanTexture* depthTexture,
-				CVulkanDepthBufferPool* depthPool);
+				CVulkanDepthBufferPool* depthPool, u32 layer = WholeImage);
 
 			void reset();
 
@@ -157,6 +160,8 @@ namespace irr
 			CVulkanTexture* ColorTextures[MaxColorAttachments] = {};
 			VkFormat ColorFormats[MaxColorAttachments] = {};
 			u32 ColorCount = 0;
+			//! Slice of ColorTextures[0] bound as the attachment, or WholeImage. Single-target only.
+			u32 ColorLayer = WholeImage;
 
 			CVulkanTexture* DepthTexture = 0;		//!< Explicit attachment, owned elsewhere.
 			SVulkanRTTDepthBuffer* PooledDepth = 0;	//!< Borrowed, owned by the pool.

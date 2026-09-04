@@ -314,6 +314,36 @@ namespace irr
 			virtual void dispatchComputeShaderToTexture(const core::vector3d<u32>& groupCount,
 				scene::IComputeBuffer* Src, ITexture* Dst) _IRR_OVERRIDE_;
 
+			//! The multi-slot compute path CD3D11Driver offers: buffers and textures bound to
+			//! numbered t#/u# registers, then one dispatch (direct or indirect) against the active
+			//! compute material. Every dispatch is synchronous on its own command list, like the two
+			//! above; the SRV/UAV/CBV descriptor tables live in a dedicated shader-visible heap
+			//! (ComputeDescriptorHeap) so a dispatch mid-scene never disturbs the frame's heap.
+			virtual void bindComputeBuffer(u32 slot, scene::IComputeBuffer* buffer,
+				E_HARDWARE_BUFFER_TYPE binding) _IRR_OVERRIDE_;
+			virtual void bindComputeTexture(u32 slot, ITexture* texture, bool asUAV) _IRR_OVERRIDE_;
+			virtual void dispatchComputeShaderBound(const core::vector3d<u32>& groupCount) _IRR_OVERRIDE_;
+			virtual void unbindComputeResources() _IRR_OVERRIDE_;
+			virtual void computeBarrier(scene::IComputeBuffer* buffer) _IRR_OVERRIDE_;
+			virtual void computeBarrierAll() _IRR_OVERRIDE_;
+			virtual void dispatchComputeShaderIndirect(scene::IComputeBuffer* argBuffer, u32 byteOffset) _IRR_OVERRIDE_;
+			//! The hidden counter of an EHBF_COMPUTE_APPEND/CONSUME buffer is a 4096-byte resource of
+			//! its own (CD3D12HardwareBuffer::getCounterResource()): a copy out, and a copy in from a
+			//! throwaway upload resource -- applied at once rather than on the next bind.
+			virtual void copyStructureCount(scene::IComputeBuffer* dst, u32 dstByteOffset,
+				scene::IComputeBuffer* appendBuffer) _IRR_OVERRIDE_;
+			virtual void resetStructureCount(scene::IComputeBuffer* appendBuffer, u32 value = 0) _IRR_OVERRIDE_;
+			virtual bool beginComputeReadback(scene::IComputeBuffer* buffer, u32 slot) _IRR_OVERRIDE_;
+			virtual bool tryReadComputeBuffer(scene::IComputeBuffer* buffer, u32 slot, void* dst,
+				u32 bytes, bool wait) _IRR_OVERRIDE_;
+			//! ExecuteIndirect with a DrawIndexedInstanced command signature on the frame's command
+			//! list; the per-instance stream comes from `instanceBuffer`. Both buffers are put back
+			//! into UNORDERED_ACCESS right after, so the compute dispatches (which run on their own
+			//! list, ahead of this frame's) keep seeing the resting state they track.
+			virtual void drawMeshBufferInstancedIndirect(const scene::IMeshBuffer* mb,
+				scene::IComputeBuffer* instanceBuffer, u32 instanceStride,
+				scene::IComputeBuffer* argBuffer, u32 byteOffset) _IRR_OVERRIDE_;
+
 			// --- IVideoDriver: transformations and current material ---
 			virtual void setTransform(E_TRANSFORMATION_STATE state, const core::matrix4& mat) _IRR_OVERRIDE_;
 			virtual const core::matrix4& getTransform(E_TRANSFORMATION_STATE state) const _IRR_OVERRIDE_;
@@ -1097,6 +1127,25 @@ namespace irr
 			//! blob, reuses it afterward.
 			ID3D12PipelineState* getOrCreateComputePSO(ID3DBlob* computeShader);
 
+			//! Brings a compute buffer's device copy up to date (creating it on first use) and returns
+			//! it; 0 (logged) when the buffer is empty or the allocation failed. Mirrors
+			//! CD3D11Driver::prepareComputeBuffer(). Must be called OUTSIDE an UploadScope: creating
+			//! or updating a buffer opens one of its own and UploadMutex is not recursive.
+			CD3D12HardwareBuffer* prepareComputeBuffer(scene::IComputeBuffer* buffer);
+
+			//! The shared tail of every compute dispatch: prepares the slots' buffers, transitions
+			//! them, fills the three descriptor tables (16 SRV, 16 UAV, 8 CBV) from
+			//! ComputeDescriptorHeap with null descriptors in the unbound slots, runs the material's
+			//! OnSetConstants(), then Dispatch()es -- or ExecuteIndirect()s with `indirectArgs` -- on
+			//! an UploadScope list, UAV barriers after, and waits.
+			void dispatchBoundResources(const core::vector3d<u32>& groupCount,
+				CD3D12HardwareBuffer* indirectArgs, u32 indirectOffset);
+
+			//! Creates ComputeDescriptorHeap and the two null buffer descriptors on first use.
+			bool ensureComputeDescriptorHeap();
+			//! Creates the two ID3D12CommandSignatures (dispatch, draw-indexed) on first use.
+			bool ensureCommandSignatures();
+
 			//! Copies a CPU-only descriptor (SRV or UAV, same CBV/SRV/UAV heap as the CBVs -- see
 			//! allocateUserCBVTable()) into the next free slot of the current frame's shader-visible
 			//! heap. Generalization of allocateSRVTableSlot() for an already-resolved handle
@@ -1652,6 +1701,38 @@ namespace irr
 			// pipeline's; a compute shader shares no state with a VS/PS.
 			ComPtr<ID3D12RootSignature> ComputeRootSignature;
 			std::unordered_map<size_t, ComPtr<ID3D12PipelineState>> ComputePSOCache;
+
+			//! The multi-slot bindings for dispatchComputeShaderBound(), valid until
+			//! unbindComputeResources(). A slot holds a buffer or a texture, never both.
+			struct SD3D12ComputeSlot
+			{
+				scene::IComputeBuffer* Buffer = nullptr;
+				ITexture* Texture = nullptr;
+			};
+			SD3D12ComputeSlot ComputeSRV[EMCS_MAX_COMPUTE_SRV_SLOTS];
+			SD3D12ComputeSlot ComputeUAV[EMCS_MAX_COMPUTE_UAV_SLOTS];
+
+			//! Shader-visible heap the compute dispatches take their tables from: a ring of
+			//! ComputeDescriptorsPerDispatch-sized blocks, rewound when full (safe, every dispatch
+			//! is waited on before the next). Separate from the per-frame heaps on purpose: growing
+			//! those mid-scene rebinds heaps behind the frame command list's back.
+			static const UINT ComputeDescriptorsPerDispatch =
+				EMCS_MAX_COMPUTE_SRV_SLOTS + EMCS_MAX_COMPUTE_UAV_SLOTS + MaxUserShaderCBVSlotsPerStage;
+			static const UINT ComputeDescriptorBlocks = 64;
+			ComPtr<ID3D12DescriptorHeap> ComputeDescriptorHeap;
+			D3D12_CPU_DESCRIPTOR_HANDLE ComputeDescriptorHeapStartCPU = {};
+			D3D12_GPU_DESCRIPTOR_HANDLE ComputeDescriptorHeapStartGPU = {};
+			UINT ComputeDescriptorNext = 0;
+			//! Null buffer SRV/UAV in the CPU-only heap, copied into every unbound slot: a shader
+			//! reading one gets zeros, writing one writes nowhere -- the D3D11 null-view semantics.
+			bool HasNullBufferViews = false;
+			UINT NullBufferSRVIndex = 0;
+			UINT NullBufferUAVIndex = 0;
+			CD3DX12_CPU_DESCRIPTOR_HANDLE NullBufferSRV;
+			CD3DX12_CPU_DESCRIPTOR_HANDLE NullBufferUAV;
+
+			ComPtr<ID3D12CommandSignature> DispatchIndirectSignature;
+			ComPtr<ID3D12CommandSignature> DrawIndexedIndirectSignature;
 
 			// --- Material registry (built-in types + user shaders) ---
 			// Each CD3D12MaterialRenderer compiles its own blobs (see createBuiltInMaterialRenderers()/

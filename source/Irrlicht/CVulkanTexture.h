@@ -2,10 +2,6 @@
 // This file is part of the "Irrlicht Engine".
 // For conditions of distribution and use, see copyright notice in irrlicht.h
 
-// Vulkan 2D textures and render target textures. One object owns the VkImage, its
-// VkDeviceMemory, the VkImageView used for binding and a VkSampler. VkImageLayout is
-// tracked per texture, valid as long as an image is not recorded on two buffers at once.
-
 #ifndef __C_VULKAN_TEXTURE_H_INCLUDED__
 #define __C_VULKAN_TEXTURE_H_INCLUDED__
 
@@ -14,8 +10,10 @@
 
 #include "ITexture.h"
 #include "IImage.h"
-#include "SMaterialLayer.h"
+#include "SMaterialLayer.h" // E_TEXTURE_CLAMP
+#include "irrArray.h"
 #include "CVulkanHelpers.h"
+#include <vector>
 
 namespace irr
 {
@@ -28,20 +26,29 @@ namespace irr
 			CVulkanTexture(const SVulkanContext& context, IVulkanUploadContext& upload,
 				IImage* image, u32 flags, const io::path& name);
 
-			//! Empty or render target texture, single mip. A depth format gives a
+			//! Empty, render target or storage texture, single mip. A depth format gives a
 			//! depth/stencil attachment, anything else a color one; both stay sampled.
+			//! `arrayLayers` > 1 makes an ETT_2D_ARRAY whose layers are reachable one at a time
+			//! through getLayerView(); `storage` adds STORAGE usage for compute writes
+			//! (isUnorderedAccess()).
 			CVulkanTexture(const SVulkanContext& context, IVulkanUploadContext& upload,
 				const core::dimension2d<u32>& size, ECOLOR_FORMAT format,
-				bool renderTarget, const io::path& name);
+				bool renderTarget, const io::path& name, u32 arrayLayers = 1, bool storage = false);
+
+			//! Cube map / 2D array / cube array built from already-uploaded Vulkan textures of one
+			//! size and format: every slice's mip chain is copied on the GPU into one layer. `type`
+			//! is ETT_CUBE (6 slices), ETT_CUBE_ARRAY (a multiple of 6) or ETT_2D_ARRAY.
+			CVulkanTexture(const SVulkanContext& context, IVulkanUploadContext& upload,
+				const core::array<ITexture*>& slices, E_TEXTURE_TYPE type, const io::path& name);
 
 			virtual ~CVulkanTexture();
 
-			//! Maps a staging buffer holding one mip level; the image itself is never mapped
-			//! (optimal tiling has no CPU layout). Returns 0 for a block-compressed format.
+			//! Maps a staging buffer holding one mip level of layer 0; the image itself is never
+			//! mapped (optimal tiling has no CPU layout). Returns 0 for a block-compressed format.
 			virtual void* lock(E_TEXTURE_LOCK_MODE mode = ETLM_READ_WRITE, u32 mipmapLevel = 0) _IRR_OVERRIDE_;
 			virtual void unlock() _IRR_OVERRIDE_;
 
-			//! Re-blits the chain from the current mip 0; `mipmapData` is ignored.
+			//! Re-blits the chain from the current mip 0 of every layer; `mipmapData` is ignored.
 			virtual void regenerateMipMapLevels(void* mipmapData = 0) _IRR_OVERRIDE_;
 
 			//! ECOLOR_FORMAT -> VkFormat, VK_FORMAT_UNDEFINED (logged) when unsupported.
@@ -51,18 +58,23 @@ namespace irr
 			static bool isDepthFormat(VkFormat format);
 
 			VkImage getImage() const { return Image; }
+			//! The view over every layer: 2D, 2D_ARRAY, CUBE or CUBE_ARRAY per getTextureType().
 			VkImageView getImageView() const { return View; }
+			//! A 2D view over one layer, created on first use, for binding a slice as an attachment
+			//! or copying into it. Layer 0 of a single-layer texture is getImageView() itself.
+			VkImageView getLayerView(u32 layer);
 			VkSampler getSampler() const { return Sampler; }
 			VkFormat getVkFormat() const { return Format; }
 			VkImageLayout getImageLayout() const { return CurrentLayout; }
 			VkImageAspectFlags getAspectMask() const { return Aspect; }
 			u32 getMipLevelCount() const { return MipLevelCount; }
+			u32 getLayerCount() const { return LayerCount; }
 
 			//! False when the image could not be created; a constructor cannot report that
 			//! otherwise, so the caller must check this and drop the object.
 			bool hasDeviceResource() const { return Image != VK_NULL_HANDLE; }
 
-			//! Barrier over every mip, then updates CurrentLayout. No-op if already there.
+			//! Barrier over every mip and layer, then updates CurrentLayout. No-op if already there.
 			void transitionTo(VkCommandBuffer commandBuffer, VkImageLayout newLayout);
 
 			//! For a layout change the texture did not record, e.g. a pass' finalLayout.
@@ -75,7 +87,7 @@ namespace irr
 			bool createImage(VkImageUsageFlags usage);
 			bool createImageView();
 
-			//! Staging buffer + copy into mip 0, ending in SHADER_READ_ONLY_OPTIMAL.
+			//! Staging buffer + copy into mip 0 of layer 0, ending in SHADER_READ_ONLY_OPTIMAL.
 			//! `expandR8G8B8` widens 24 bit source rows to 32 bit with alpha 0xFF.
 			bool uploadImageData(const void* data, u32 sourcePitchBytes, u32 dataSizeBytes,
 				bool expandR8G8B8);
@@ -99,11 +111,14 @@ namespace irr
 			VkImage Image = VK_NULL_HANDLE;
 			VkDeviceMemory Memory = VK_NULL_HANDLE;
 			VkImageView View = VK_NULL_HANDLE;
+			//! Per-layer 2D views, filled lazily by getLayerView(); empty for a single-layer image.
+			std::vector<VkImageView> LayerViews;
 			VkSampler Sampler = VK_NULL_HANDLE;
 			VkFormat Format = VK_FORMAT_UNDEFINED;
 			VkImageLayout CurrentLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 			VkImageAspectFlags Aspect = VK_IMAGE_ASPECT_COLOR_BIT;
 			u32 MipLevelCount = 1;
+			u32 LayerCount = 1;
 
 			// Settings the current sampler was built with, tested by createSampler().
 			bool SamplerBilinear = true;

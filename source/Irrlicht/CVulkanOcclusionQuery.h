@@ -106,6 +106,11 @@ namespace irr
 			//! whatever counter the driver already bumps per submitted frame.
 			void markPending(const std::shared_ptr<scene::ISceneNode>& node, u64 frameMarker);
 
+			//! The marker markPending() stored, 0 when nothing is in flight or the node is unknown.
+			//! The driver compares it with its current frame before blocking: waiting on a query
+			//! recorded in the frame still being recorded would never return.
+			u64 getPendingFrame(const std::shared_ptr<scene::ISceneNode>& node) const;
+
 			// --- Readback ---
 
 			//! vkGetQueryPoolResults with VK_QUERY_RESULT_64_BIT. Non-blocking by default: a result the

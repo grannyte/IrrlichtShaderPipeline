@@ -28,6 +28,11 @@
 
 namespace irr
 {
+	namespace io
+	{
+		class IFileSystem;
+	}
+
 	namespace video
 	{
 		//! First word of every SPIR-V module, in host byte order.
@@ -48,10 +53,16 @@ namespace irr
 			carries the full stage table.
 			\param outSpirv One entry per SPIR-V word. Cleared on entry, left empty on failure.
 			\param outError The front end's own diagnostics (glslang's info log, DXC's error blob) or
-			the reason the language is unavailable, for the driver to log. Always set on failure. */
+			the reason the language is unavailable, for the driver to log. Always set on failure.
+			\param includeFileSystem Where an HLSL `#include "x"` is looked up: `includeDirectory`/x
+			first (the including file's own directory), then x as given, then media/shaders/x -- the
+			same convention the D3D11/D3D12 drivers' include handlers use. 0 falls back to plain
+			fopen() on the same candidates. GLSL takes no includes.
+			\param includeDirectory Directory of the source file, or 0 for an in-memory source. */
 			static bool compileToSpirv(const c8* source, u32 sourceLength, const c8* entryPoint,
 				E_SHADER_TYPE stage, E_GPU_SHADING_LANGUAGE lang,
-				std::vector<u32>& outSpirv, core::stringc& outError);
+				std::vector<u32>& outSpirv, core::stringc& outError,
+				io::IFileSystem* includeFileSystem = 0, const c8* includeDirectory = 0);
 
 			//! Whether this build handles that language at all, so a caller can refuse a material up
 			//! front instead of compiling every stage only to find out on the first one.

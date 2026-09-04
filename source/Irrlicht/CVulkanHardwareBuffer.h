@@ -47,6 +47,26 @@ namespace irr
 
 			void unlock() _IRR_OVERRIDE_;
 
+			//! Readback slots behind IVideoDriver::beginComputeReadback()/tryReadComputeBuffer(). The
+			//! copy is recorded on the upload context, which waits for it, so a queued readback is
+			//! complete on return and tryAsyncReadback() never has to poll -- correct, if not
+			//! overlapped with GPU work the way the D3D11 staging copies are.
+			static const u32 ReadbackSlotCount = 4;
+			bool beginAsyncReadback(u32 slot);
+			//! Copies a completed readback into `dst` (at most `bytes`). False while nothing was
+			//! queued in that slot; `wait` is accepted for interface parity and changes nothing.
+			bool tryAsyncReadback(u32 slot, void* dst, u32 bytes, bool wait);
+
+			//! The hidden counter of an append/consume buffer: one uint in a host-visible buffer of its
+			//! own, created on first request (D3D11 keeps it inside the UAV; SPIR-V has no such thing,
+			//! DXC emits a separate one-uint buffer instead, see SVulkanComputeBinding::CounterOf).
+			//! VK_NULL_HANDLE when `create` is false and none exists yet.
+			VkBuffer getCounterBuffer(bool create);
+			//! CPU-side write/read of the counter. Only valid while no dispatch touching it is in
+			//! flight -- always the case here, every dispatch is submitted and waited on.
+			bool setCounterValue(u32 value);
+			bool getCounterValue(u32& outValue) const;
+
 			VkBuffer getBuffer() const { return Buffer; }
 			VkDeviceMemory getMemory() const { return Memory; }
 			u32 getSize() const { return Size; }
@@ -86,6 +106,23 @@ namespace irr
 			VkDeviceMemory StagingMemory = VK_NULL_HANDLE;
 			void* MappedStagingData = 0;
 			bool StagingIsReadback = false;
+
+			//! One host-visible copy per readback slot, sized to the buffer on first use.
+			struct SReadbackSlot
+			{
+				VkBuffer Buffer = VK_NULL_HANDLE;
+				VkDeviceMemory Memory = VK_NULL_HANDLE;
+				VkDeviceSize Size = 0;
+				bool Ready = false;
+			};
+			SReadbackSlot Readback[ReadbackSlotCount];
+			void releaseReadbackSlots();
+
+			//! See getCounterBuffer(); mapped for its whole lifetime.
+			VkBuffer CounterBuffer = VK_NULL_HANDLE;
+			VkDeviceMemory CounterMemory = VK_NULL_HANDLE;
+			u32* CounterMapped = nullptr;
+			void releaseCounterBuffer();
 
 			video::E_INDEX_TYPE IndexType = video::EIT_16BIT;
 		};

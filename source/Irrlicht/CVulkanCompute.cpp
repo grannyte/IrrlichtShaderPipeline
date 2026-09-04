@@ -11,6 +11,7 @@
 #include "matrix4.h"
 #include "os.h"
 #include <string.h>
+#include <algorithm>
 
 namespace irr
 {
@@ -23,7 +24,7 @@ namespace irr
 			// reflector CVulkanUserMaterial.cpp carries for the graphics stages. That one lives in an
 			// anonymous namespace (internal linkage, nothing declared in a header), so it cannot be
 			// called from here; the parsing helpers are duplicated instead, trimmed to what a compute
-			// shader declares -- uniform blocks and their members. No external reflection library.
+			// shader declares. No external reflection library.
 			enum
 			{
 				SpvOpName = 5, SpvOpMemberName = 6,
@@ -46,6 +47,10 @@ namespace irr
 				SpvStorageClassUniformConstant = 0, SpvStorageClassUniform = 2,
 				SpvStorageClassPushConstant = 9, SpvStorageClassStorageBuffer = 12
 			};
+
+			//! OpTypeImage operands this reflector reads: Dim 5 is a texel buffer, and the "Sampled"
+			//! operand says 1 for a texture that is sampled, 2 for a storage image.
+			enum { SpvDimBuffer = 5, SpvImageSampled = 1, SpvImageStorage = 2 };
 
 			//! SPIR-V majorness is the mirror of the source language's: a SPIR-V matrix is a list of
 			//! columns, an HLSL one a list of rows.
@@ -199,16 +204,47 @@ namespace irr
 					message += detail;
 				os::Printer::log(message.c_str(), level);
 			}
+
+			const c8* descriptorTypeName(VkDescriptorType type)
+			{
+				switch (type)
+				{
+				case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: return "storage buffer";
+				case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER: return "uniform block";
+				case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE: return "storage image";
+				case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE: return "sampled image";
+				case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER: return "combined image sampler";
+				case VK_DESCRIPTOR_TYPE_SAMPLER: return "sampler";
+				default: return "descriptor";
+				}
+			}
+
+			bool bindingLess(const SVulkanComputeBinding& a, const SVulkanComputeBinding& b)
+			{
+				return a.Binding < b.Binding;
+			}
 		}
 
 		// ============================== CVulkanComputeMaterial ==============================
 
-		//! The module is this object's own, so it dies with it -- the driver must drop() its compute
-		//! materials before the device goes.
+		//! The module and the objects built on it are this object's own, so they die with it -- the
+		//! driver must drop() its compute materials before the device goes.
 		CVulkanComputeMaterial::~CVulkanComputeMaterial()
 		{
-			if (Device && Module != VK_NULL_HANDLE && vk::DestroyShaderModule)
-				vk::DestroyShaderModule(Device, Module, nullptr);
+			if (Device)
+			{
+				if (Pipeline != VK_NULL_HANDLE && vk::DestroyPipeline)
+					vk::DestroyPipeline(Device, Pipeline, nullptr);
+				if (PipelineLayout != VK_NULL_HANDLE && vk::DestroyPipelineLayout)
+					vk::DestroyPipelineLayout(Device, PipelineLayout, nullptr);
+				if (SetLayout != VK_NULL_HANDLE && vk::DestroyDescriptorSetLayout)
+					vk::DestroyDescriptorSetLayout(Device, SetLayout, nullptr);
+				if (Module != VK_NULL_HANDLE && vk::DestroyShaderModule)
+					vk::DestroyShaderModule(Device, Module, nullptr);
+			}
+			Pipeline = VK_NULL_HANDLE;
+			PipelineLayout = VK_NULL_HANDLE;
+			SetLayout = VK_NULL_HANDLE;
 			Module = VK_NULL_HANDLE;
 
 			if (CallBack)
@@ -223,13 +259,35 @@ namespace irr
 			return EntryPoint.size() ? EntryPoint.c_str() : "main";
 		}
 
-		const SVulkanComputeUniformBlock* CVulkanComputeMaterial::getBoundBlock() const
+		const SVulkanComputeBinding* CVulkanComputeMaterial::findBinding(u32 binding) const
 		{
-			return Blocks.empty() ? nullptr : &Blocks[0];
+			for (size_t i = 0; i < Bindings.size(); ++i)
+				if (Bindings[i].Binding == binding)
+					return &Bindings[i];
+			return nullptr;
+		}
+
+		const SVulkanComputeBinding* CVulkanComputeMaterial::findBindingByName(const c8* name) const
+		{
+			if (!name)
+				return nullptr;
+			for (size_t i = 0; i < Bindings.size(); ++i)
+				if (Bindings[i].CounterOf.size() == 0 && Bindings[i].Name == name)
+					return &Bindings[i];
+			return nullptr;
+		}
+
+		const SVulkanComputeUniformBlock* CVulkanComputeMaterial::findBlock(u32 binding) const
+		{
+			for (size_t i = 0; i < Blocks.size(); ++i)
+				if (Blocks[i].Binding == binding)
+					return &Blocks[i];
+			return nullptr;
 		}
 
 		bool CVulkanComputeMaterial::compileFromSource(const SVulkanContext& context,
-			E_GPU_SHADING_LANGUAGE lang, const c8* source, u32 sourceLength, const c8* entryPoint)
+			E_GPU_SHADING_LANGUAGE lang, const c8* source, u32 sourceLength, const c8* entryPoint,
+			io::IFileSystem* includeFileSystem, const c8* includeDirectory)
 		{
 			if (!source || (sourceLength == 0 && source[0] == 0))
 			{
@@ -259,7 +317,7 @@ namespace irr
 			core::stringc compileError;
 
 			if (!CVulkanShaderCompiler::compileToSpirv(source, sourceLength, name,
-				EST_COMPUTE_SHADER, lang, spirv, compileError))
+				EST_COMPUTE_SHADER, lang, spirv, compileError, includeFileSystem, includeDirectory))
 			{
 				core::stringc message = "compute shader compilation failed (";
 				message += CVulkanShaderCompiler::getLanguageName(lang);
@@ -269,8 +327,8 @@ namespace irr
 				return false;
 			}
 
-			// Reflect first: a module whose declarations cannot be served by the fixed compute
-			// layout is worth rejecting before it costs a VkShaderModule.
+			// Reflect first: a module whose declarations no layout can express is worth rejecting
+			// before it costs a VkShaderModule.
 			if (!reflectSpirv(spirv))
 				return false;
 
@@ -369,10 +427,19 @@ namespace irr
 					}
 					break;
 				case SpvOpTypeBool:
-				case SpvOpTypeImage:
 				case SpvOpTypeSampler:
 					if (wordCount >= 2 && words[1] < bound)
 						ids[words[1]].Op = opcode;
+					break;
+				case SpvOpTypeImage:
+					// Result, sampled type, Dim, Depth, Arrayed, MS, Sampled, Format: Dim and Sampled
+					// are what decide the descriptor type.
+					if (wordCount >= 9 && words[1] < bound)
+					{
+						ids[words[1]].Op = opcode;
+						ids[words[1]].Word0 = words[3]; // Dim
+						ids[words[1]].Word1 = words[7]; // Sampled
+					}
 					break;
 				case SpvOpTypeInt:
 				case SpvOpTypeFloat:
@@ -436,7 +503,9 @@ namespace irr
 				offset += wordCount;
 			}
 
-			// Pass two: every variable is complete now, whatever order its parts appeared in.
+			// Pass two: every variable is complete now, whatever order its parts appeared in. Each
+			// descriptor becomes one SVulkanComputeBinding; a uniform block additionally gets its
+			// scratch mirror and member table.
 			for (size_t v = 0; v < variables.size(); ++v)
 			{
 				const SSpirvVariable& variable = variables[v];
@@ -446,9 +515,14 @@ namespace irr
 				u32 typeId = ids[variable.TypeId].Word0;
 
 				// An array of descriptors is declared as an array of the resource type; peel it off.
-				// The length is not kept: every binding in the fixed layout has descriptorCount 1.
+				// The length is not kept: the layout gives every binding descriptorCount 1, so an
+				// array of textures only has its first element served.
+				bool isDescriptorArray = false;
 				while (typeId < ids.size() && ids[typeId].Op == SpvOpTypeArray)
+				{
+					isDescriptorArray = true;
 					typeId = ids[typeId].Word0;
+				}
 
 				if (typeId >= ids.size())
 					continue;
@@ -466,42 +540,102 @@ namespace irr
 					continue;
 				}
 
+				VkDescriptorType descriptorType = VK_DESCRIPTOR_TYPE_MAX_ENUM;
+				bool isUniformBlock = false;
+
 				if (variable.StorageClass == SpvStorageClassUniformConstant)
 				{
-					// Nothing is bound by name, so a misplaced declaration can only be warned about:
-					// the dispatch writes the fixed slots and no others. A storage image is the
-					// dispatchToTexture() output; anything else has no slot at all.
-					if (type.Op == SpvOpTypeImage && binding != VulkanComputeDstImageBinding)
-						logCompute("storage image declared outside the fixed destination binding 3, "
-							"the dispatch will not write it: ", self.Name.c_str(), ELL_WARNING);
-					continue;
+					if (type.Op == SpvOpTypeImage)
+					{
+						if (type.Word0 == SpvDimBuffer)
+						{
+							logCompute("texel buffers (HLSL Buffer<T>/RWBuffer<T>) are not served by "
+								"this driver, use a structured buffer instead: ", self.Name.c_str(), ELL_ERROR);
+							return false;
+						}
+						descriptorType = (type.Word1 == SpvImageStorage) ?
+							VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+					}
+					else if (type.Op == SpvOpTypeSampledImage)
+						descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+					else if (type.Op == SpvOpTypeSampler)
+						descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+					else
+						continue; // an opaque type this reflector does not know; nothing to bind
 				}
-
-				if (variable.StorageClass == SpvStorageClassStorageBuffer ||
+				else if (variable.StorageClass == SpvStorageClassStorageBuffer ||
 					(variable.StorageClass == SpvStorageClassUniform && type.IsBufferBlock))
 				{
-					if (binding != VulkanComputeSrcBufferBinding && binding != VulkanComputeDstBufferBinding)
-						logCompute("storage buffer declared outside the fixed bindings 0 (source) and "
-							"1 (destination), the dispatch will not bind it: ", type.Name.c_str(), ELL_WARNING);
-					continue;
+					descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 				}
-
-				if (variable.StorageClass != SpvStorageClassUniform || type.Op != SpvOpTypeStruct || !type.IsBlock)
-					continue;
+				else if (variable.StorageClass == SpvStorageClassUniform && type.Op == SpvOpTypeStruct && type.IsBlock)
+				{
+					descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+					isUniformBlock = true;
+				}
+				else
+				{
+					continue; // inputs, outputs, workgroup memory, private variables
+				}
 
 				if (binding == SpirvNoValue)
 				{
-					logCompute("uniform block without a binding decoration, skipped: ",
-						type.Name.c_str(), ELL_WARNING);
-					continue;
+					logCompute("a resource has no binding decoration and cannot be laid out: ",
+						(self.Name.size() ? self.Name : type.Name).c_str(), ELL_ERROR);
+					return false;
 				}
 
-				if (set != VulkanComputeDescriptorSetIndex || binding != VulkanComputeUniformBinding)
+				if (set != VulkanComputeDescriptorSetIndex)
 				{
-					logCompute("uniform block outside the fixed compute slot (set 0, binding 2), it will "
-						"never be written: ", type.Name.c_str(), ELL_WARNING);
-					continue;
+					logCompute("compute resources must live in descriptor set 0 (register space 0): ",
+						(self.Name.size() ? self.Name : type.Name).c_str(), ELL_ERROR);
+					return false;
 				}
+
+				if (binding >= VulkanComputeMaxBindings)
+				{
+					logCompute("binding number past the 64 the compute slot convention covers: ",
+						(self.Name.size() ? self.Name : type.Name).c_str(), ELL_ERROR);
+					return false;
+				}
+
+				if (isDescriptorArray)
+					logCompute("descriptor arrays get only their first element bound: ",
+						self.Name.c_str(), ELL_WARNING);
+
+				if (const SVulkanComputeBinding* existing = findBinding(binding))
+				{
+					core::stringc message = "two resources share binding ";
+					message += core::stringc(binding);
+					message += " (";
+					message += existing->Name;
+					message += " and ";
+					message += self.Name.size() ? self.Name : type.Name;
+					message += "); give them distinct [[vk::binding]]/layout(binding) numbers";
+					logCompute(message.c_str(), nullptr, ELL_ERROR);
+					return false;
+				}
+
+				SVulkanComputeBinding entry;
+				entry.Binding = binding;
+				entry.Type = descriptorType;
+				entry.Name = self.Name.size() ? self.Name : type.Name;
+				// DXC's hidden append/consume counter: "counter.var.<buffer>", a one-uint storage
+				// buffer on a binding of its own. Remembered by the buffer it belongs to, so the
+				// dispatch can bind that buffer's counter rather than treating it as a slot.
+				static const c8* const counterPrefix = "counter.var.";
+				static const u32 counterPrefixLength = 12;
+				if (descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER &&
+					entry.Name.size() > counterPrefixLength &&
+					entry.Name.subString(0, counterPrefixLength) == counterPrefix)
+				{
+					entry.CounterOf = entry.Name.subString(counterPrefixLength,
+						(s32)entry.Name.size() - counterPrefixLength);
+				}
+				Bindings.push_back(entry);
+
+				if (!isUniformBlock)
+					continue;
 
 				// The block name is the struct's: the cbuffer name on the HLSL side (DXC prefixes it
 				// with "type.") and the block name on the GLSL one.
@@ -521,13 +655,7 @@ namespace irr
 				{
 					logCompute("uniform block with no laid-out member, skipped: ",
 						blockName.c_str(), ELL_WARNING);
-					continue;
-				}
-
-				if (!Blocks.empty())
-				{
-					logCompute("only one uniform block fits the fixed compute layout, ignoring: ",
-						blockName.c_str(), ELL_WARNING);
+					Bindings.pop_back();
 					continue;
 				}
 
@@ -556,6 +684,7 @@ namespace irr
 				}
 			}
 
+			std::sort(Bindings.begin(), Bindings.end(), bindingLess);
 			return true;
 		}
 
@@ -677,72 +806,32 @@ namespace irr
 				return false;
 			}
 
-			// The four fixed slots, documented at the top of CVulkanCompute.h. Every binding is
-			// visible to the compute stage only -- there is no other stage in this layout.
-			// Compute visibility only -- no other stage exists in this layout.
-			VkDescriptorSetLayoutBinding bindings[4] = {};
-			bindings[0].binding = VulkanComputeSrcBufferBinding;
-			bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-			bindings[0].descriptorCount = 1;
-			bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-			bindings[1].binding = VulkanComputeDstBufferBinding;
-			bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-			bindings[1].descriptorCount = 1;
-			bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-			bindings[2].binding = VulkanComputeUniformBinding;
-			bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-			bindings[2].descriptorCount = 1;
-			bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-			bindings[3].binding = VulkanComputeDstImageBinding;
-			bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-			bindings[3].descriptorCount = 1;
-			bindings[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-			VkDescriptorSetLayoutCreateInfo layoutInfo = {};
-			layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-			layoutInfo.bindingCount = 4;
-			layoutInfo.pBindings = bindings;
-
-			if (vulkanFailed("CVulkanCompute: vkCreateDescriptorSetLayout",
-				vk::CreateDescriptorSetLayout(Context.Device, &layoutInfo, nullptr, &SetLayout)))
-				return false;
-
-			// One set and no push constant range: the whole compute interface is the four bindings.
-			VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
-			pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-			pipelineLayoutInfo.setLayoutCount = 1;
-			pipelineLayoutInfo.pSetLayouts = &SetLayout;
-
-			if (vulkanFailed("CVulkanCompute: vkCreatePipelineLayout",
-				vk::CreatePipelineLayout(Context.Device, &pipelineLayoutInfo, nullptr, &Layout)))
-			{
-				clear();
-				return false;
-			}
-
-			// Sized for VulkanComputeMaxDescriptorSets dispatches before the pool has to recycle;
-			// two storage buffers per set, since bindings 0 and 1 are both of that type.
-			VkDescriptorPoolSize poolSizes[3] = {};
+			// Sized for VulkanComputeMaxDescriptorSets dispatches before the pool has to recycle,
+			// each with as many descriptors of a kind as the slot convention allows.
+			VkDescriptorPoolSize poolSizes[6] = {};
 			poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-			poolSizes[0].descriptorCount = 2 * VulkanComputeMaxDescriptorSets;
+			poolSizes[0].descriptorCount = 32 * VulkanComputeMaxDescriptorSets;
 			poolSizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-			poolSizes[1].descriptorCount = VulkanComputeMaxDescriptorSets;
+			poolSizes[1].descriptorCount = 16 * VulkanComputeMaxDescriptorSets;
 			poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-			poolSizes[2].descriptorCount = VulkanComputeMaxDescriptorSets;
+			poolSizes[2].descriptorCount = 16 * VulkanComputeMaxDescriptorSets;
+			poolSizes[3].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+			poolSizes[3].descriptorCount = 16 * VulkanComputeMaxDescriptorSets;
+			poolSizes[4].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			poolSizes[4].descriptorCount = 16 * VulkanComputeMaxDescriptorSets;
+			poolSizes[5].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+			poolSizes[5].descriptorCount = 16 * VulkanComputeMaxDescriptorSets;
 
 			VkDescriptorPoolCreateInfo poolInfo = {};
 			poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 			poolInfo.maxSets = VulkanComputeMaxDescriptorSets;
-			poolInfo.poolSizeCount = 3;
+			poolInfo.poolSizeCount = 6;
 			poolInfo.pPoolSizes = poolSizes;
 
 			if (vulkanFailed("CVulkanCompute: vkCreateDescriptorPool",
 				vk::CreateDescriptorPool(Context.Device, &poolInfo, nullptr, &Pool)))
 			{
-				clear();
+				Pool = VK_NULL_HANDLE;
 				return false;
 			}
 
@@ -754,20 +843,47 @@ namespace irr
 				vk::CreatePipelineCache(Context.Device, &cacheInfo, nullptr, &PipelineCache);
 			}
 
+			if (!createNullBuffers())
+			{
+				clear();
+				return false;
+			}
+
 			return true;
 		}
 
-		// Pipelines first, then what they were built against: destroying a layout still referenced by
-		// a live pipeline is undefined.
+		bool CVulkanCompute::createNullBuffers()
+		{
+			// Host-visible so they can be zeroed by a memset, and big enough that a kernel indexing
+			// an unbound buffer by thread id stays inside them (past the end robustBufferAccess
+			// returns zeros anyway, which is the same answer).
+			const VkMemoryPropertyFlags hostFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+				VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+			const VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+				VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+
+			VkBuffer* buffers[2] = { &NullReadBuffer, &NullWriteBuffer };
+			VkDeviceMemory* memories[2] = { &NullReadMemory, &NullWriteMemory };
+			for (u32 i = 0; i < 2; ++i)
+			{
+				if (!createVulkanBuffer(Context, NullBufferSize, usage, hostFlags, *buffers[i], *memories[i]))
+					return false;
+				void* mapped = nullptr;
+				if (vulkanFailed("CVulkanCompute: vkMapMemory (null buffer)",
+					vk::MapMemory(Context.Device, *memories[i], 0, VK_WHOLE_SIZE, 0, &mapped)))
+					return false;
+				memset(mapped, 0, (size_t)NullBufferSize);
+				vk::UnmapMemory(Context.Device, *memories[i]);
+			}
+			return true;
+		}
+
+		// The per-material pipelines and layouts belong to the materials (see the destructor of
+		// CVulkanComputeMaterial); only the shared objects are released here.
 		void CVulkanCompute::clear()
 		{
 			if (!Context.Device)
 				return;
-
-			for (auto& entry : Pipelines)
-				if (entry.second != VK_NULL_HANDLE && vk::DestroyPipeline)
-					vk::DestroyPipeline(Context.Device, entry.second, nullptr);
-			Pipelines.clear();
 
 			if (PipelineCache != VK_NULL_HANDLE && vk::DestroyPipelineCache)
 			{
@@ -779,18 +895,6 @@ namespace irr
 			{
 				vk::DestroyDescriptorPool(Context.Device, Pool, nullptr);
 				Pool = VK_NULL_HANDLE;
-			}
-
-			if (Layout != VK_NULL_HANDLE && vk::DestroyPipelineLayout)
-			{
-				vk::DestroyPipelineLayout(Context.Device, Layout, nullptr);
-				Layout = VK_NULL_HANDLE;
-			}
-
-			if (SetLayout != VK_NULL_HANDLE && vk::DestroyDescriptorSetLayout)
-			{
-				vk::DestroyDescriptorSetLayout(Context.Device, SetLayout, nullptr);
-				SetLayout = VK_NULL_HANDLE;
 			}
 
 			if (UniformMapped && vk::UnmapMemory)
@@ -810,49 +914,102 @@ namespace irr
 			}
 
 			UniformCapacity = 0;
-			UniformRange = 0;
+
+			VkBuffer* buffers[2] = { &NullReadBuffer, &NullWriteBuffer };
+			VkDeviceMemory* memories[2] = { &NullReadMemory, &NullWriteMemory };
+			for (u32 i = 0; i < 2; ++i)
+			{
+				if (*buffers[i] != VK_NULL_HANDLE && vk::DestroyBuffer)
+					vk::DestroyBuffer(Context.Device, *buffers[i], nullptr);
+				if (*memories[i] != VK_NULL_HANDLE && vk::FreeMemory)
+					vk::FreeMemory(Context.Device, *memories[i], nullptr);
+				*buffers[i] = VK_NULL_HANDLE;
+				*memories[i] = VK_NULL_HANDLE;
+			}
 		}
 
-		VkPipeline CVulkanCompute::getOrCreatePipeline(VkShaderModule module, const c8* entryPoint)
+		bool CVulkanCompute::ensurePipeline(CVulkanComputeMaterial* material)
 		{
-			if (module == VK_NULL_HANDLE || Layout == VK_NULL_HANDLE)
-				return VK_NULL_HANDLE;
+			if (!material || material->getModule() == VK_NULL_HANDLE)
+				return false;
+			if (material->Pipeline != VK_NULL_HANDLE)
+				return true;
+			if (!Context.Device)
+				return false;
 
-			// The module handle is the whole key -- there is no vertex input, blend or attachment
-			// state in a compute pipeline, so nothing else can make two of them differ.
-			const size_t key = vulkanHandleHash(module);
-			auto it = Pipelines.find(key);
-			if (it != Pipelines.end())
-				return it->second;
+			if (material->SetLayout == VK_NULL_HANDLE)
+			{
+				// One VkDescriptorSetLayoutBinding per reflected descriptor, compute visibility only:
+				// there is no other stage in this layout. Duplicates were rejected at reflection.
+				std::vector<VkDescriptorSetLayoutBinding> bindings;
+				bindings.reserve(material->Bindings.size());
+				for (size_t i = 0; i < material->Bindings.size(); ++i)
+				{
+					VkDescriptorSetLayoutBinding binding = {};
+					binding.binding = material->Bindings[i].Binding;
+					binding.descriptorType = material->Bindings[i].Type;
+					binding.descriptorCount = 1;
+					binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+					bindings.push_back(binding);
+				}
+
+				VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+				layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+				layoutInfo.bindingCount = (u32)bindings.size();
+				layoutInfo.pBindings = bindings.empty() ? nullptr : bindings.data();
+
+				if (vulkanFailed("CVulkanCompute: vkCreateDescriptorSetLayout",
+					vk::CreateDescriptorSetLayout(Context.Device, &layoutInfo, nullptr, &material->SetLayout)))
+				{
+					material->SetLayout = VK_NULL_HANDLE;
+					return false;
+				}
+			}
+
+			if (material->PipelineLayout == VK_NULL_HANDLE)
+			{
+				// One set and no push constant range: the whole compute interface is the bindings.
+				VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
+				pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+				pipelineLayoutInfo.setLayoutCount = 1;
+				pipelineLayoutInfo.pSetLayouts = &material->SetLayout;
+
+				if (vulkanFailed("CVulkanCompute: vkCreatePipelineLayout",
+					vk::CreatePipelineLayout(Context.Device, &pipelineLayoutInfo, nullptr, &material->PipelineLayout)))
+				{
+					material->PipelineLayout = VK_NULL_HANDLE;
+					return false;
+				}
+			}
 
 			VkComputePipelineCreateInfo info = {};
 			info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
 			info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 			info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-			info.stage.module = module;
-			info.stage.pName = (entryPoint && entryPoint[0]) ? entryPoint : "main";
-			info.layout = Layout;
+			info.stage.module = material->getModule();
+			info.stage.pName = material->getEntryPointName();
+			info.layout = material->PipelineLayout;
 			info.basePipelineIndex = -1;
 
 			VkPipeline pipeline = VK_NULL_HANDLE;
 			if (vulkanFailed("CVulkanCompute: vkCreateComputePipelines",
 				vk::CreateComputePipelines(Context.Device, PipelineCache, 1, &info, nullptr, &pipeline)))
-				return VK_NULL_HANDLE;
+				return false;
 
-			Pipelines[key] = pipeline;
-			return pipeline;
+			material->Pipeline = pipeline;
+			return true;
 		}
 
-		VkDescriptorSet CVulkanCompute::allocateDescriptorSet()
+		VkDescriptorSet CVulkanCompute::allocateDescriptorSet(VkDescriptorSetLayout layout)
 		{
-			if (Pool == VK_NULL_HANDLE || SetLayout == VK_NULL_HANDLE)
+			if (Pool == VK_NULL_HANDLE || layout == VK_NULL_HANDLE)
 				return VK_NULL_HANDLE;
 
 			VkDescriptorSetAllocateInfo allocInfo = {};
 			allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
 			allocInfo.descriptorPool = Pool;
 			allocInfo.descriptorSetCount = 1;
-			allocInfo.pSetLayouts = &SetLayout;
+			allocInfo.pSetLayouts = &layout;
 
 			// Sets are never freed individually: the pool is recycled whole when it runs out.
 			VkDescriptorSet set = VK_NULL_HANDLE;
@@ -892,7 +1049,6 @@ namespace irr
 			UniformMemory = VK_NULL_HANDLE;
 			UniformCapacity = 0;
 
-			// Rounded up so a block growing a few bytes at a time does not reallocate every dispatch.
 			// Powers of two from 256: a block growing a few bytes at a time then costs no realloc.
 			VkDeviceSize capacity = 256;
 			while (capacity < size)
@@ -914,178 +1070,345 @@ namespace irr
 			return true;
 		}
 
-		bool CVulkanCompute::uploadUniformBlock(CVulkanComputeMaterial* material)
+		bool CVulkanCompute::uploadUniformBlocks(CVulkanComputeMaterial* material,
+			std::vector<VkDeviceSize>& outOffsets)
 		{
-			const SVulkanComputeUniformBlock* block = material->getBoundBlock();
-			if (!block || block->Scratch.empty())
-				return false;
+			outOffsets.clear();
+			if (material->Blocks.empty())
+				return true;
 
-			if (!ensureUniformCapacity((VkDeviceSize)block->Scratch.size()))
+			// Every block at an offset the device accepts for a uniform descriptor.
+			const VkDeviceSize alignment = Context.DeviceProperties.limits.minUniformBufferOffsetAlignment
+				? Context.DeviceProperties.limits.minUniformBufferOffsetAlignment : 16;
+			VkDeviceSize total = 0;
+			for (size_t b = 0; b < material->Blocks.size(); ++b)
+			{
+				outOffsets.push_back(total);
+				total += (material->Blocks[b].Scratch.size() + alignment - 1) & ~(alignment - 1);
+			}
+
+			if (!ensureUniformCapacity(total))
+			{
+				outOffsets.clear();
 				return false;
+			}
 
 			// HOST_COHERENT memory, so no explicit flush is needed before the queue reads it.
-			memcpy(UniformMapped, block->Scratch.data(), block->Scratch.size());
-			UniformRange = (VkDeviceSize)block->Scratch.size();
+			for (size_t b = 0; b < material->Blocks.size(); ++b)
+				memcpy(static_cast<u8*>(UniformMapped) + outOffsets[b], material->Blocks[b].Scratch.data(),
+					material->Blocks[b].Scratch.size());
 			return true;
 		}
 
-		bool CVulkanCompute::prepareDispatch(CVulkanComputeMaterial* material, CVulkanHardwareBuffer* src,
-			const core::vector3d<u32>& groupCount, const c8* what,
-			VkPipeline& outPipeline, VkDescriptorSet& outSet, bool& outHasUniform)
+		void CVulkanCompute::findOrdinalBindings(const CVulkanComputeMaterial* material,
+			u32& outFirstBuffer, u32& outSecondBuffer, u32& outImage) const
 		{
-			if (Layout == VK_NULL_HANDLE)
+			outFirstBuffer = outSecondBuffer = outImage = VulkanComputeMaxBindings;
+			// Bindings are sorted by number, so the first two storage buffers met are the lowest.
+			for (size_t i = 0; i < material->Bindings.size(); ++i)
 			{
-				logCompute(what, ": compute was never initialised", ELL_ERROR);
+				const SVulkanComputeBinding& binding = material->Bindings[i];
+				if (binding.Type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+				{
+					if (outFirstBuffer == VulkanComputeMaxBindings)
+						outFirstBuffer = binding.Binding;
+					else if (outSecondBuffer == VulkanComputeMaxBindings)
+						outSecondBuffer = binding.Binding;
+				}
+				else if (binding.Type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE && outImage == VulkanComputeMaxBindings)
+					outImage = binding.Binding;
+			}
+		}
+
+		bool CVulkanCompute::dispatchBound(VkCommandBuffer cmd, CVulkanComputeMaterial* material,
+			const SVulkanComputeResources& resources, const core::vector3d<u32>& groupCount,
+			VkBuffer indirectBuffer, VkDeviceSize indirectOffset)
+		{
+			if (Pool == VK_NULL_HANDLE)
+			{
+				logCompute("dispatch: compute was never initialised", nullptr, ELL_ERROR);
+				return false;
+			}
+			if (!cmd || !material || material->getModule() == VK_NULL_HANDLE)
+			{
+				logCompute("dispatch: no command buffer or no compute material", nullptr, ELL_ERROR);
 				return false;
 			}
 
-			if (!material || material->getModule() == VK_NULL_HANDLE || !src)
+			if (indirectBuffer == VK_NULL_HANDLE)
 			{
-				logCompute(what, ": no compute material, or no source buffer", ELL_ERROR);
+				if (groupCount.X == 0 || groupCount.Y == 0 || groupCount.Z == 0)
+					return false;
+
+				// Over the limit the dispatch is a validation error and the device may be lost, so
+				// it is worth one check here rather than a driver crash later.
+				const u32* limit = Context.DeviceProperties.limits.maxComputeWorkGroupCount;
+				if (groupCount.X > limit[0] || groupCount.Y > limit[1] || groupCount.Z > limit[2])
+				{
+					logCompute("dispatch: group count exceeds maxComputeWorkGroupCount", nullptr, ELL_ERROR);
+					return false;
+				}
+			}
+			else if (!vk::CmdDispatchIndirect)
+			{
+				logCompute("dispatch: vkCmdDispatchIndirect was never resolved", nullptr, ELL_ERROR);
 				return false;
 			}
 
-			if (groupCount.X == 0 || groupCount.Y == 0 || groupCount.Z == 0)
+			if (!ensurePipeline(material))
 				return false;
 
-			// Over the limit the dispatch is a validation error and the device may be lost, so it is
-			// worth one check here rather than a driver crash later.
-			const u32* limit = Context.DeviceProperties.limits.maxComputeWorkGroupCount;
-			if (groupCount.X > limit[0] || groupCount.Y > limit[1] || groupCount.Z > limit[2])
-			{
-				logCompute(what, ": group count exceeds maxComputeWorkGroupCount", ELL_ERROR);
+			std::vector<VkDeviceSize> uniformOffsets;
+			if (!uploadUniformBlocks(material, uniformOffsets))
 				return false;
+
+			VkDescriptorSet set = allocateDescriptorSet(material->SetLayout);
+			if (set == VK_NULL_HANDLE)
+				return false;
+
+			// Reserved up front: the write structs point into these two.
+			const size_t bindingCount = material->Bindings.size();
+			std::vector<VkDescriptorBufferInfo> buffers;
+			std::vector<VkDescriptorImageInfo> images;
+			std::vector<VkWriteDescriptorSet> writes;
+			std::vector<VkBuffer> counters; //!< append counters this dispatch touches, for the barriers
+			buffers.reserve(bindingCount);
+			images.reserve(bindingCount);
+			writes.reserve(bindingCount);
+
+			for (size_t i = 0; i < bindingCount; ++i)
+			{
+				const SVulkanComputeBinding& binding = material->Bindings[i];
+				const SVulkanComputeResources::SEntry& entry = resources.ByBinding[binding.Binding];
+
+				VkWriteDescriptorSet write = {};
+				write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+				write.dstSet = set;
+				write.dstBinding = binding.Binding;
+				write.descriptorCount = 1;
+				write.descriptorType = binding.Type;
+
+				switch (binding.Type)
+				{
+				case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+				{
+					// Uniform blocks come from the material's own scratch, never from the slots.
+					size_t blockIndex = material->Blocks.size();
+					for (size_t b = 0; b < material->Blocks.size(); ++b)
+						if (material->Blocks[b].Binding == binding.Binding)
+							blockIndex = b;
+					if (blockIndex >= material->Blocks.size() || blockIndex >= uniformOffsets.size())
+						continue; // a block the reflector skipped (no laid-out member)
+
+					VkDescriptorBufferInfo info = {};
+					info.buffer = UniformBuffer;
+					info.offset = uniformOffsets[blockIndex];
+					info.range = material->Blocks[blockIndex].Scratch.size();
+					buffers.push_back(info);
+					write.pBufferInfo = &buffers.back();
+					break;
+				}
+				case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+				{
+					VkBuffer target = VK_NULL_HANDLE;
+					if (binding.CounterOf.size())
+					{
+						// The hidden counter of an append/consume buffer: the counter of whatever is
+						// bound where that buffer is declared. Unbound, it counts into the scratch.
+						const SVulkanComputeBinding* owner = material->findBindingByName(binding.CounterOf.c_str());
+						CVulkanHardwareBuffer* ownerBuffer = owner ? resources.ByBinding[owner->Binding].Buffer : nullptr;
+						target = ownerBuffer ? ownerBuffer->getCounterBuffer(true) : VK_NULL_HANDLE;
+						if (target != VK_NULL_HANDLE)
+						{
+							counters.push_back(target);
+						}
+						else
+							target = NullWriteBuffer;
+					}
+					else if (entry.Buffer && entry.Buffer->getBuffer() != VK_NULL_HANDLE)
+					{
+						target = entry.Buffer->getBuffer();
+					}
+					else
+					{
+						// Declared but not bound: the D3D11 null-view semantics, zeros on read and
+						// discarded writes, through the two stand-in buffers.
+						target = (binding.Binding >= VulkanComputeUavBindingBase &&
+							binding.Binding < VulkanComputeCbvBindingBase) ? NullWriteBuffer : NullReadBuffer;
+					}
+
+					// VK_WHOLE_SIZE rather than the tracked size: a storage buffer's length is
+					// whatever the shader's runtime array finds, and the buffer may have been grown
+					// by an update().
+					VkDescriptorBufferInfo info = {};
+					info.buffer = target;
+					info.range = VK_WHOLE_SIZE;
+					buffers.push_back(info);
+					write.pBufferInfo = &buffers.back();
+					break;
+				}
+				case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+				{
+					if (!entry.Texture || !entry.Texture->hasDeviceResource() ||
+						entry.Texture->getImageView() == VK_NULL_HANDLE || !entry.Texture->isUnorderedAccess())
+					{
+						core::stringc message = "dispatch: no UAV texture (see addUAVTexture()) bound for "
+							"storage image '";
+						message += binding.Name;
+						message += "' at binding ";
+						message += core::stringc(binding.Binding);
+						logCompute(message.c_str(), nullptr, ELL_ERROR);
+						return false;
+					}
+
+					// A storage image descriptor is only valid in GENERAL.
+					barrierImageToStorage(cmd, entry.Texture);
+
+					VkDescriptorImageInfo info = {};
+					info.imageView = entry.Texture->getImageView();
+					info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+					images.push_back(info);
+					write.pImageInfo = &images.back();
+					break;
+				}
+				case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+				case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+				{
+					if (!entry.Texture || !entry.Texture->hasDeviceResource() ||
+						entry.Texture->getImageView() == VK_NULL_HANDLE)
+					{
+						core::stringc message = "dispatch: no texture bound for sampled image '";
+						message += binding.Name;
+						message += "' at binding ";
+						message += core::stringc(binding.Binding);
+						logCompute(message.c_str(), nullptr, ELL_ERROR);
+						return false;
+					}
+
+					// A texture a previous dispatch wrote is still in GENERAL; sampling wants the
+					// read-only layout.
+					barrierImageToShaderRead(cmd, entry.Texture);
+
+					VkDescriptorImageInfo info = {};
+					info.imageView = entry.Texture->getImageView();
+					info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+					info.sampler = entry.Texture->getSampler();
+					images.push_back(info);
+					write.pImageInfo = &images.back();
+					break;
+				}
+				case VK_DESCRIPTOR_TYPE_SAMPLER:
+				{
+					// s# has no resource of its own: it borrows the sampler of the SRV texture at
+					// the same slot number, or failing that of the first SRV texture bound at all.
+					const u32 slot = binding.Binding - VulkanComputeSamplerBindingBase;
+					CVulkanTexture* source = (binding.Binding >= VulkanComputeSamplerBindingBase &&
+						slot < VulkanComputeUavBindingBase - VulkanComputeSrvBindingBase) ?
+						resources.ByBinding[VulkanComputeSrvBindingBase + slot].Texture : nullptr;
+					for (u32 s = VulkanComputeSrvBindingBase; !source && s < VulkanComputeUavBindingBase; ++s)
+						source = resources.ByBinding[s].Texture;
+					if (!source || source->getSampler() == VK_NULL_HANDLE)
+					{
+						core::stringc message = "dispatch: no SRV texture bound to lend a sampler to '";
+						message += binding.Name;
+						message += "'";
+						logCompute(message.c_str(), nullptr, ELL_ERROR);
+						return false;
+					}
+
+					VkDescriptorImageInfo info = {};
+					info.sampler = source->getSampler();
+					images.push_back(info);
+					write.pImageInfo = &images.back();
+					break;
+				}
+				default:
+					continue;
+				}
+
+				writes.push_back(write);
 			}
 
-			outPipeline = getOrCreatePipeline(material->getModule(), material->getEntryPointName());
-			if (outPipeline == VK_NULL_HANDLE)
-				return false;
+			if (!writes.empty())
+				vk::UpdateDescriptorSets(Context.Device, (u32)writes.size(), writes.data(), 0, nullptr);
 
-			// False here just means the shader declared no block, so binding 2 stays unwritten.
-			outHasUniform = uploadUniformBlock(material);
+			// The counters are host-visible and reset from the CPU (resetStructureCount()), read by
+			// copies (copyStructureCount()) and bumped by every dispatch: the barriers around them
+			// are this function's, the caller only knows about the buffers it bound.
+			for (size_t i = 0; i < counters.size(); ++i)
+				bufferBarrier(cmd, counters[i], 0, VK_WHOLE_SIZE,
+					VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+					VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+					VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
 
-			outSet = allocateDescriptorSet();
-			return outSet != VK_NULL_HANDLE;
+			// COMPUTE bind point, so none of this disturbs the graphics state the driver has bound --
+			// but the command buffer must still be outside a rendering instance, see the header.
+			vk::CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, material->Pipeline);
+			vk::CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, material->PipelineLayout,
+				VulkanComputeDescriptorSetIndex, 1, &set, 0, nullptr);
+			if (indirectBuffer != VK_NULL_HANDLE)
+				vk::CmdDispatchIndirect(cmd, indirectBuffer, indirectOffset);
+			else
+				vk::CmdDispatch(cmd, groupCount.X, groupCount.Y, groupCount.Z);
+
+			for (size_t i = 0; i < counters.size(); ++i)
+				bufferBarrier(cmd, counters[i], 0, VK_WHOLE_SIZE,
+					VK_ACCESS_SHADER_WRITE_BIT,
+					VK_ACCESS_HOST_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_READ_BIT,
+					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+					VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+			return true;
 		}
 
 		bool CVulkanCompute::dispatch(VkCommandBuffer cmd, CVulkanComputeMaterial* material,
 			CVulkanHardwareBuffer* src, CVulkanHardwareBuffer* dst,
 			const core::vector3d<u32>& groupCount)
 		{
-			VkPipeline pipeline = VK_NULL_HANDLE;
-			VkDescriptorSet set = VK_NULL_HANDLE;
-			bool hasUniform = false;
-
-			if (!cmd || !dst || dst->getBuffer() == VK_NULL_HANDLE ||
-				!prepareDispatch(material, src, groupCount, "dispatch", pipeline, set, hasUniform))
-				return false;
-
-			// VK_WHOLE_SIZE rather than the tracked size: a storage buffer's length is whatever the
-			// shader's runtime array finds, and the buffer may have been grown by an update().
-			VkDescriptorBufferInfo buffers[3] = {};
-			buffers[0].buffer = src->getBuffer();
-			buffers[0].range = VK_WHOLE_SIZE;
-			buffers[1].buffer = dst->getBuffer();
-			buffers[1].range = VK_WHOLE_SIZE;
-			buffers[2].buffer = UniformBuffer;
-			buffers[2].range = UniformRange;
-
-			VkWriteDescriptorSet writes[3] = {};
-			u32 writeCount = 0;
-
-			for (u32 i = 0; i < 3; ++i)
+			if (!material || !src || !dst)
 			{
-				// The uniform slot is skipped when the shader declared no block: Vulkan only requires
-				// a descriptor the pipeline statically uses to be written.
-				if (i == 2 && !hasUniform)
-					continue;
-
-				writes[writeCount].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-				writes[writeCount].dstSet = set;
-				writes[writeCount].dstBinding = i;
-				writes[writeCount].descriptorCount = 1;
-				writes[writeCount].descriptorType = (i == 2) ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER :
-					VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-				writes[writeCount].pBufferInfo = &buffers[i];
-				++writeCount;
+				logCompute("dispatch: no compute material, or no source/destination buffer", nullptr, ELL_ERROR);
+				return false;
 			}
 
-			vk::UpdateDescriptorSets(Context.Device, writeCount, writes, 0, nullptr);
+			u32 srcBinding = 0, dstBinding = 0, imageBinding = 0;
+			findOrdinalBindings(material, srcBinding, dstBinding, imageBinding);
+			if (srcBinding == VulkanComputeMaxBindings || dstBinding == VulkanComputeMaxBindings)
+			{
+				logCompute("dispatch: the shader must declare two storage buffers (source, destination): ",
+					material->Name.c_str(), ELL_ERROR);
+				return false;
+			}
 
-			// COMPUTE bind point, so none of this disturbs the graphics state the driver has bound --
-			// but the command buffer must still be outside a rendering instance, see the header.
-			vk::CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-			vk::CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, Layout,
-				VulkanComputeDescriptorSetIndex, 1, &set, 0, nullptr);
-			vk::CmdDispatch(cmd, groupCount.X, groupCount.Y, groupCount.Z);
-			return true;
+			SVulkanComputeResources resources;
+			resources.setBuffer(srcBinding, src);
+			resources.setBuffer(dstBinding, dst);
+			return dispatchBound(cmd, material, resources, groupCount);
 		}
 
 		bool CVulkanCompute::dispatchToTexture(VkCommandBuffer cmd, CVulkanComputeMaterial* material,
 			CVulkanHardwareBuffer* src, CVulkanTexture* dst, const core::vector3d<u32>& groupCount)
 		{
-			VkPipeline pipeline = VK_NULL_HANDLE;
-			VkDescriptorSet set = VK_NULL_HANDLE;
-			bool hasUniform = false;
-
-			if (!cmd || !dst || !dst->hasDeviceResource() || dst->getImageView() == VK_NULL_HANDLE ||
-				!prepareDispatch(material, src, groupCount, "dispatchToTexture", pipeline, set, hasUniform))
-				return false;
-
-			// A storage image descriptor is only valid in GENERAL, and only this call knows the image
-			// is about to be used as one -- hence the single barrier this class issues on its own.
-			// Everything else around the dispatch stays the driver's, see CVulkanCompute.h.
-			barrierImageToStorage(cmd, dst);
-
-			// Binding 3 instead of binding 1: same output, the other shape. Binding 1 is left
-			// unwritten, which is legal as long as this shader does not declare it.
-			VkDescriptorImageInfo imageInfo = {};
-			imageInfo.imageView = dst->getImageView();
-			imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-			VkDescriptorBufferInfo buffers[2] = {};
-			buffers[0].buffer = src->getBuffer();
-			buffers[0].range = VK_WHOLE_SIZE;
-			buffers[1].buffer = UniformBuffer;
-			buffers[1].range = UniformRange;
-
-			VkWriteDescriptorSet writes[3] = {};
-			u32 writeCount = 0;
-
-			writes[writeCount].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			writes[writeCount].dstSet = set;
-			writes[writeCount].dstBinding = VulkanComputeSrcBufferBinding;
-			writes[writeCount].descriptorCount = 1;
-			writes[writeCount].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-			writes[writeCount].pBufferInfo = &buffers[0];
-			++writeCount;
-
-			writes[writeCount].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			writes[writeCount].dstSet = set;
-			writes[writeCount].dstBinding = VulkanComputeDstImageBinding;
-			writes[writeCount].descriptorCount = 1;
-			writes[writeCount].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-			writes[writeCount].pImageInfo = &imageInfo;
-			++writeCount;
-
-			if (hasUniform)
+			if (!material || !src || !dst)
 			{
-				writes[writeCount].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-				writes[writeCount].dstSet = set;
-				writes[writeCount].dstBinding = VulkanComputeUniformBinding;
-				writes[writeCount].descriptorCount = 1;
-				writes[writeCount].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-				writes[writeCount].pBufferInfo = &buffers[1];
-				++writeCount;
+				logCompute("dispatchToTexture: no compute material, source buffer or destination texture",
+					nullptr, ELL_ERROR);
+				return false;
 			}
 
-			vk::UpdateDescriptorSets(Context.Device, writeCount, writes, 0, nullptr);
+			u32 srcBinding = 0, secondBinding = 0, imageBinding = 0;
+			findOrdinalBindings(material, srcBinding, secondBinding, imageBinding);
+			if (srcBinding == VulkanComputeMaxBindings || imageBinding == VulkanComputeMaxBindings)
+			{
+				logCompute("dispatchToTexture: the shader must declare a storage buffer (source) and a "
+					"storage image (destination): ", material->Name.c_str(), ELL_ERROR);
+				return false;
+			}
 
-			vk::CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-			vk::CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, Layout,
-				VulkanComputeDescriptorSetIndex, 1, &set, 0, nullptr);
-			vk::CmdDispatch(cmd, groupCount.X, groupCount.Y, groupCount.Z);
-			return true;
+			SVulkanComputeResources resources;
+			resources.setBuffer(srcBinding, src);
+			resources.setTexture(imageBinding, dst);
+			return dispatchBound(cmd, material, resources, groupCount);
 		}
 
 		// ==================================== Barriers ====================================
@@ -1132,26 +1455,30 @@ namespace irr
 
 		void CVulkanCompute::barrierAfterDispatch(VkCommandBuffer cmd, VkBuffer dst)
 		{
-			// Both consumers at once: another dispatch or a draw reading the result, and the
-			// read-back copy the download path records.
+			// Every consumer at once: another dispatch or a draw reading the result, an indirect
+			// draw/dispatch reading its arguments from it, a vertex fetch, and the read-back copy
+			// the download path records.
 			bufferBarrier(cmd, dst, 0, VK_WHOLE_SIZE,
 				VK_ACCESS_SHADER_WRITE_BIT,
-				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_HOST_READ_BIT,
+				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_HOST_READ_BIT |
+				VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT |
+				VK_ACCESS_INDEX_READ_BIT,
 				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |
 				VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT |
-				VK_PIPELINE_STAGE_HOST_BIT);
+				VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT |
+				VK_PIPELINE_STAGE_VERTEX_INPUT_BIT);
 		}
 
 		void CVulkanCompute::imageBarrier(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspect,
-			u32 mipLevels, VkImageLayout oldLayout, VkImageLayout newLayout,
+			u32 mipLevels, u32 layerCount, VkImageLayout oldLayout, VkImageLayout newLayout,
 			VkAccessFlags srcAccess, VkAccessFlags dstAccess,
 			VkPipelineStageFlags srcStage, VkPipelineStageFlags dstStage)
 		{
 			if (!cmd || image == VK_NULL_HANDLE || !vk::CmdPipelineBarrier)
 				return;
 
-			// Whole image, every mip, one layer: nothing here targets an array or a single level.
+			// Whole image: every mip and every layer, the granularity CVulkanTexture tracks.
 			VkImageMemoryBarrier barrier = {};
 			barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
 			barrier.oldLayout = oldLayout;
@@ -1165,13 +1492,14 @@ namespace irr
 			barrier.subresourceRange.baseMipLevel = 0;
 			barrier.subresourceRange.levelCount = mipLevels ? mipLevels : 1;
 			barrier.subresourceRange.baseArrayLayer = 0;
-			barrier.subresourceRange.layerCount = 1;
+			barrier.subresourceRange.layerCount = layerCount ? layerCount : 1;
 
 			vk::CmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
 		}
 
-		// TOP_OF_PIPE in the source stage covers a texture still in UNDEFINED, which has no prior
-		// access to wait on; the read stages cover one that was being sampled.
+		// The source side is deliberately broad: the texture may have been sampled by a draw, written
+		// by a previous dispatch, filled by a copy, or never touched (UNDEFINED); every dispatch here
+		// is submitted on its own and waited on, so the coarse masks cost nothing measurable.
 		void CVulkanCompute::barrierImageToStorage(VkCommandBuffer cmd, CVulkanTexture* texture)
 		{
 			if (!texture || !texture->hasDeviceResource())
@@ -1182,11 +1510,10 @@ namespace irr
 				return;
 
 			imageBarrier(cmd, texture->getImage(), texture->getAspectMask(), texture->getMipLevelCount(),
-				current, VK_IMAGE_LAYOUT_GENERAL,
-				VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
-				VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
-				VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+				texture->getLayerCount(), current, VK_IMAGE_LAYOUT_GENERAL,
+				VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+				VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+				VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
 
 			// Keeps the layout the texture tracks in step with what was just recorded.
 			texture->setImageLayout(VK_IMAGE_LAYOUT_GENERAL);
@@ -1204,9 +1531,9 @@ namespace irr
 				return;
 
 			imageBarrier(cmd, texture->getImage(), texture->getAspectMask(), texture->getMipLevelCount(),
-				current, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-				VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
-				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+				texture->getLayerCount(), current, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+				VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+				VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
 				VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
 				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
 

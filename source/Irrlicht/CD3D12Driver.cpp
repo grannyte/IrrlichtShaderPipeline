@@ -1145,21 +1145,25 @@ namespace irr
 			// Milestone D: compute root signature, distinct from RootSignature (graphics) --
 			// a compute shader has no VS/PS/blend/etc to share, just its input/output
 			// resources and its user cbuffer.
-			//   [0] Descriptor table, 1 SRV t0 -- Src buffer (read), see dispatchComputeShader().
-			//   [1] Descriptor table, 1 UAV u0 -- Dst buffer (write).
+			//   [0] Descriptor table, SRV t0..t15 -- the EMCS_MAX_COMPUTE_SRV_SLOTS read slots of
+			//       bindComputeBuffer()/bindComputeTexture(); dispatchComputeShader()'s Src is t0.
+			//   [1] Descriptor table, UAV u0..u15 -- the write slots; dispatchComputeShader()'s Dst is u0.
 			//   [2] Descriptor table, CBV b0..b7 in space0 (UserShaderRegisterSpace) -- user cbuffer(s),
 			//       same MaxUserShaderCBVSlotsPerStage-wide table shape buildMaterialRootSignature()
 			//       emits on the graphics side. Unlike graphics, this signature stays driver-wide and
 			//       hardcodes space0: see the MaxUserShaderRegisterSpaces comment
 			//       (CD3D12MaterialRenderer.h) on compute not being covered by the per-space handling.
+			// The SRV/UAV ranges are DESCRIPTORS_VOLATILE as well: a slot the shader never declares
+			// need not hold a valid descriptor then, although dispatchBoundResources() fills every
+			// unbound slot with a null view anyway so an undeclared-but-read slot yields zeros.
 			D3D12_ROOT_PARAMETER1 rootParams[3] = {};
 
 			D3D12_DESCRIPTOR_RANGE1 srvRange = {};
 			srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-			srvRange.NumDescriptors = 1;
+			srvRange.NumDescriptors = EMCS_MAX_COMPUTE_SRV_SLOTS;
 			srvRange.BaseShaderRegister = 0;
 			srvRange.RegisterSpace = 0;
-			srvRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE;
+			srvRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE | D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE;
 			srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
 			rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
@@ -1169,10 +1173,10 @@ namespace irr
 
 			D3D12_DESCRIPTOR_RANGE1 uavRange = {};
 			uavRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
-			uavRange.NumDescriptors = 1;
+			uavRange.NumDescriptors = EMCS_MAX_COMPUTE_UAV_SLOTS;
 			uavRange.BaseShaderRegister = 0;
 			uavRange.RegisterSpace = 0;
-			uavRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE;
+			uavRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE | D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE;
 			uavRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
 			rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
@@ -5066,6 +5070,9 @@ namespace irr
 				return true; // generated via a pixel-shader blit, see createMipGenPipeline()
 			case EVDF_POLYGON_OFFSET:
 				return true; // D3D12_RASTERIZER_DESC::DepthBias/SlopeScaledDepthBias, always available
+			case EVDF_COMPUTING_SHADER_5_0:
+			case EVDF_BOUND_COMPUTE_PIPELINE:
+				return ComputeRootSignature != nullptr; // see createComputeRootSignature()
 			default:
 				return false;
 			}
@@ -5287,158 +5294,503 @@ namespace irr
 			return buffer;
 		}
 
+		// The two legacy entry points are the slot-based path with Src on t0 and Dst on u0, the
+		// same reading CD3D11Driver::dispatchComputeShader() gives them. The caller's own slot
+		// bindings are set aside for the call and restored after it.
 		void CD3D12Driver::dispatchComputeShader(const core::vector3d<u32>& groupCount,
 			scene::IComputeBuffer* Src, scene::IComputeBuffer* Dst)
 		{
 			if (!Src || !Dst || Src->getStructureCount() == 0 || Dst->getStructureCount() == 0)
 				return;
 
-			// getNativeRenderer() borne deja sur le registre du proprietaire et renvoie nullptr
-			// pour un index hors bornes -- le test explicite juste apres suffit.
-			CD3D12MaterialRenderer* renderer = getNativeRenderer(Material.MaterialType);
-			if (!renderer || !renderer->CS)
-			{
-				os::Printer::log("CD3D12Driver::dispatchComputeShader: le materiau actif n'a pas "
-					"de compute shader", ELL_ERROR);
-				return;
-			}
-			ID3D12PipelineState* pso = getOrCreateComputePSO(renderer->CS.Get());
-			if (!pso)
-				return;
-
-			// Cree/rafraichit les CD3D12HardwareBuffer de Src/Dst si besoin — meme sequence que
-			// CD3D11Driver::dispatchComputeShader().
-			if (!Src->getHardwareBuffer())
-				createHardwareBuffer(Src);
-			else if (Src->getHardwareBuffer()->isRequiredUpdate())
-				Src->getHardwareBuffer()->update(Src->getHardwareMappingHint(),
-					Src->getStructureCount() * Src->getStructureStride(), Src->getBufferPointer());
-
-			if (!Dst->getHardwareBuffer())
-				createHardwareBuffer(Dst);
-			else if (Dst->getHardwareBuffer()->isRequiredUpdate())
-				Dst->getHardwareBuffer()->update(Dst->getHardwareMappingHint(),
-					Dst->getStructureCount() * Dst->getStructureStride(), Dst->getBufferPointer());
-
-			CD3D12HardwareBuffer* srcBuf = static_cast<CD3D12HardwareBuffer*>(Src->getHardwareBuffer().get());
-			CD3D12HardwareBuffer* dstBuf = static_cast<CD3D12HardwareBuffer*>(Dst->getHardwareBuffer().get());
-			if (!srcBuf || !srcBuf->hasShaderResourceView() || !dstBuf || !dstBuf->hasUnorderedAccessView())
-			{
-				os::Printer::log("CD3D12Driver::dispatchComputeShader: Src/Dst sans vue SRV/UAV "
-					"(pas cree par ce driver ?)", ELL_ERROR);
-				return;
-			}
-
-			// Milestone D (fix) : dispatchComputeShader() ne peut pas s'appuyer sur le CommandList
-			// par-frame — il n'est ouvert (Reset()) qu'entre beginScene()/endScene() (voir
-			// beginScene()), et l'API generique IVideoDriver::dispatchComputeShader() (ainsi que
-			// CD3D11Driver's, immediate-context) n'exige pas d'etre appelee dans cette fenetre —
-			// voir les tests ComputeShaderTests*/TerrainShaderTests*, qui dispatchent sans jamais
-			// appeler beginScene(). Enregistrer sur un CommandList ferme ne plante pas mais ne
-			// soumet rien au GPU (Dispatch() silencieusement perdu). Utilise donc le meme
-			// mecanisme synchrone hors-frame que les uploads de texture (beginUpload()/
-			// endUploadAndWait()) : ouvre sa propre command list, execute, attend le GPU avant de
-			// retourner — coherent avec le fait que l'appelant lit le resultat juste apres via
-			// IComputeBuffer::downloadFromGPU().
-			UploadScope upload(this);
-			ID3D12GraphicsCommandList* cmdList = upload.commandList();
-			if (!cmdList)
-				return;
-
-			// Reserve everything this dispatch can possibly consume (SRV + UAV descriptor tables
-			// plus the CBV table) BEFORE binding the heap to cmdList: if the reserve grows the
-			// heap, growShaderVisibleSRVHeap() rebinds the new heap to the per-frame CommandList
-			// (rebindShaderVisibleHeaps()), never to this dedicated cmdList -- any growth AFTER
-			// the SetDescriptorHeaps() below would leave cmdList bound to a retired heap while
-			// the descriptor handles it's given point into the new one. Same reservation pattern
-			// as bindDrawState() for the graphics path (see reserveShaderVisibleSRVDescriptors()).
-			SD3D12FrameContext& frame = Frames[CurrentFrameIndex];
-			if (!reserveShaderVisibleSRVDescriptors(frame, MaxShaderVisibleSRVDescriptorsPerDraw))
-				return;
-
-			// SetDescriptorHeaps() is per command list (not per device): the per-frame CommandList
-			// does it once per beginScene(), but this dedicated command list never had it.
-			ID3D12DescriptorHeap* shaderVisibleHeaps[] = { frame.ShaderVisibleSRVHeap.Get() };
-			cmdList->SetDescriptorHeaps(1, shaderVisibleHeaps);
-
-			// createStaticOrComputeResource() cree tout buffer de compute avec les deux
-			// vues (UAV+SRV, voir CD3D12HardwareBuffer.h) mais un seul etat de repos —
-			// transitionTo() est un no-op si l'etat demande est deja le bon (ex. Dst reste souvent
-			// UNORDERED_ACCESS d'un dispatch au suivant).
-			srcBuf->transitionTo(cmdList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-			dstBuf->transitionTo(cmdList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-
-			cmdList->SetComputeRootSignature(ComputeRootSignature.Get());
-			cmdList->SetPipelineState(pso);
-
-			// Milestone D : meme convention que bindDrawState() pour le pipeline graphique —
-			// ActiveMaterialRendererIndex avant le callback pour que
-			// getComputeShaderConstantID()/setComputeShaderConstant() (appeles par
-			// OnSetConstants()) sachent quel renderer est actif.
-			ActiveMaterialRendererIndex = Material.MaterialType;
-			if (renderer->CallBack)
-			{
-				renderer->CallBack->OnSetMaterial(Material);
-				renderer->CallBack->OnSetConstants(this, renderer->UserData);
-			}
-
-			D3D12_GPU_DESCRIPTOR_HANDLE srvTable = allocateDescriptorTableSlot(srcBuf->getShaderResourceView());
-			if (srvTable.ptr != 0)
-				cmdList->SetComputeRootDescriptorTable(0, srvTable);
-
-			D3D12_GPU_DESCRIPTOR_HANDLE uavTable = allocateDescriptorTableSlot(dstBuf->getUnorderedAccessView());
-			if (uavTable.ptr != 0)
-				cmdList->SetComputeRootDescriptorTable(1, uavTable);
-
-			// Compute stays space0-only -- see the "COMPUTE root signature" note on
-			// MaxUserShaderRegisterSpaces and compileComputeFromHLSL()'s space0 guard, which already
-			// rejected compilation if CSBuffers contained anything else.
-			D3D12_GPU_DESCRIPTOR_HANDLE cbvTable = allocateUserCBVTable(renderer->CSBuffers, UserShaderRegisterSpace);
-			if (cbvTable.ptr != 0)
-				cmdList->SetComputeRootDescriptorTable(2, cbvTable);
-
-			cmdList->Dispatch(groupCount.X, groupCount.Y, groupCount.Z);
-
-			upload.endAndWait();
+			const SD3D12ComputeSlot savedSRV0 = ComputeSRV[0];
+			const SD3D12ComputeSlot savedUAV0 = ComputeUAV[0];
+			ComputeSRV[0].Buffer = Src;
+			ComputeSRV[0].Texture = nullptr;
+			ComputeUAV[0].Buffer = Dst;
+			ComputeUAV[0].Texture = nullptr;
+			dispatchBoundResources(groupCount, nullptr, 0);
+			ComputeSRV[0] = savedSRV0;
+			ComputeUAV[0] = savedUAV0;
 		}
 
-		// Same shape as dispatchComputeShader() above, but the UAV target is a texture
-		// (created via addUAVTexture()) instead of a structured buffer, so the result can
-		// be sampled afterward by ordinary Texture2D/Texture2DArray shader code (e.g. an
-		// FFT displacement/normal map consumed by WaterDomainShader/pixelMain) rather than
-		// read back to the CPU. Still fully synchronous (endAndWait()): the texture is left
-		// in PIXEL_SHADER_RESOURCE state before returning, so the very next draw call - on
-		// the per-frame CommandList, a different list than this dispatch's own UploadScope -
-		// can safely sample it without further synchronization.
+		// Same with the UAV target a texture (created via addUAVTexture()) rather than a
+		// structured buffer, so the result can be sampled afterward by ordinary Texture2D shader
+		// code (e.g. an FFT displacement/normal map). dispatchBoundResources() leaves a UAV texture
+		// in PIXEL_SHADER_RESOURCE, so the very next draw can sample it without more synchronisation.
 		void CD3D12Driver::dispatchComputeShaderToTexture(const core::vector3d<u32>& groupCount,
 			scene::IComputeBuffer* Src, ITexture* Dst)
 		{
-			if (!Src || !Dst || Src->getStructureCount() == 0 || !Dst->isUnorderedAccess())
+			if (!Src || !Dst || Src->getStructureCount() == 0)
+				return;
+			if (Dst->getDriverType() != EDT_DIRECT3D12 || !Dst->isUnorderedAccess())
+			{
+				os::Printer::log("CD3D12Driver::dispatchComputeShaderToTexture: Dst is not a UAV texture "
+					"of this driver (see addUAVTexture())", ELL_ERROR);
+				return;
+			}
+
+			const SD3D12ComputeSlot savedSRV0 = ComputeSRV[0];
+			const SD3D12ComputeSlot savedUAV0 = ComputeUAV[0];
+			ComputeSRV[0].Buffer = Src;
+			ComputeSRV[0].Texture = nullptr;
+			ComputeUAV[0].Buffer = nullptr;
+			ComputeUAV[0].Texture = Dst;
+			dispatchBoundResources(groupCount, nullptr, 0);
+			ComputeSRV[0] = savedSRV0;
+			ComputeUAV[0] = savedUAV0;
+		}
+
+		// ======================= the slot-based compute path (D3D11 family) =======================
+
+		CD3D12HardwareBuffer* CD3D12Driver::prepareComputeBuffer(scene::IComputeBuffer* buffer)
+		{
+			if (!buffer || buffer->getStructureCount() == 0)
+				return nullptr;
+
+			// Same sequence as CD3D11Driver::prepareComputeBuffer(): created on first use, re-uploaded
+			// when the CPU copy was marked dirty since.
+			auto hardware = buffer->getHardwareBuffer();
+			if (!hardware || hardware->getDriverType() != EDT_DIRECT3D12)
+				hardware = createHardwareBuffer(buffer);
+			else if (hardware->isRequiredUpdate())
+				hardware->update(buffer->getHardwareMappingHint(),
+					buffer->getStructureCount() * buffer->getStructureStride(), buffer->getBufferPointer());
+			if (!hardware)
+				return nullptr;
+
+			CD3D12HardwareBuffer* native = static_cast<CD3D12HardwareBuffer*>(hardware.get());
+			return native->getResource() ? native : nullptr;
+		}
+
+		bool CD3D12Driver::ensureComputeDescriptorHeap()
+		{
+			if (ComputeDescriptorHeap && HasNullBufferViews)
+				return true;
+			if (!Device)
+				return false;
+
+			if (!ComputeDescriptorHeap)
+			{
+				D3D12_DESCRIPTOR_HEAP_DESC desc = {};
+				desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+				desc.NumDescriptors = ComputeDescriptorsPerDispatch * ComputeDescriptorBlocks;
+				desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+				HRESULT hr = Device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&ComputeDescriptorHeap));
+				if (FAILED(hr))
+				{
+					logD3D12Failure("CD3D12Driver: CreateDescriptorHeap (compute)", hr, Device.Get());
+					ComputeDescriptorHeap.Reset();
+					return false;
+				}
+				ComputeDescriptorHeapStartCPU = ComputeDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+				ComputeDescriptorHeapStartGPU = ComputeDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
+				ComputeDescriptorNext = 0;
+			}
+
+			if (!HasNullBufferViews)
+			{
+				// Typed R32_UINT buffer views over no resource: reads give zeros, writes go nowhere,
+				// whatever the shader declared at that register -- the D3D11 null-view semantics.
+				if (!CBVSRVUAVHeap.allocate(NullBufferSRVIndex, NullBufferSRV) ||
+					!CBVSRVUAVHeap.allocate(NullBufferUAVIndex, NullBufferUAV))
+				{
+					os::Printer::log("CD3D12Driver: CBV/SRV/UAV heap full (null compute views)", ELL_ERROR);
+					return false;
+				}
+
+				D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+				srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+				srvDesc.Format = DXGI_FORMAT_R32_UINT;
+				srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+				srvDesc.Buffer.NumElements = 1;
+				Device->CreateShaderResourceView(nullptr, &srvDesc, NullBufferSRV);
+
+				D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+				uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+				uavDesc.Format = DXGI_FORMAT_R32_UINT;
+				uavDesc.Buffer.NumElements = 1;
+				Device->CreateUnorderedAccessView(nullptr, nullptr, &uavDesc, NullBufferUAV);
+				HasNullBufferViews = true;
+			}
+			return true;
+		}
+
+		bool CD3D12Driver::ensureCommandSignatures()
+		{
+			if (DispatchIndirectSignature && DrawIndexedIndirectSignature)
+				return true;
+			if (!Device)
+				return false;
+
+			// Neither signature changes root arguments, so no root signature is attached: the
+			// arguments are exactly D3D12_DISPATCH_ARGUMENTS / D3D12_DRAW_INDEXED_ARGUMENTS -- the
+			// three and five u32 IVideoDriver.h documents.
+			if (!DispatchIndirectSignature)
+			{
+				D3D12_INDIRECT_ARGUMENT_DESC argument = {};
+				argument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH;
+				D3D12_COMMAND_SIGNATURE_DESC desc = {};
+				desc.ByteStride = sizeof(D3D12_DISPATCH_ARGUMENTS);
+				desc.NumArgumentDescs = 1;
+				desc.pArgumentDescs = &argument;
+				HRESULT hr = Device->CreateCommandSignature(&desc, nullptr, IID_PPV_ARGS(&DispatchIndirectSignature));
+				if (FAILED(hr))
+				{
+					logD3D12Failure("CD3D12Driver: CreateCommandSignature (dispatch)", hr, Device.Get());
+					DispatchIndirectSignature.Reset();
+					return false;
+				}
+			}
+			if (!DrawIndexedIndirectSignature)
+			{
+				D3D12_INDIRECT_ARGUMENT_DESC argument = {};
+				argument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED;
+				D3D12_COMMAND_SIGNATURE_DESC desc = {};
+				desc.ByteStride = sizeof(D3D12_DRAW_INDEXED_ARGUMENTS);
+				desc.NumArgumentDescs = 1;
+				desc.pArgumentDescs = &argument;
+				HRESULT hr = Device->CreateCommandSignature(&desc, nullptr, IID_PPV_ARGS(&DrawIndexedIndirectSignature));
+				if (FAILED(hr))
+				{
+					logD3D12Failure("CD3D12Driver: CreateCommandSignature (draw indexed)", hr, Device.Get());
+					DrawIndexedIndirectSignature.Reset();
+					return false;
+				}
+			}
+			return true;
+		}
+
+		void CD3D12Driver::bindComputeBuffer(u32 slot, scene::IComputeBuffer* buffer, E_HARDWARE_BUFFER_TYPE binding)
+		{
+			const bool asUAV = (binding == EHBT_COMPUTE);
+			const u32 maxSlot = asUAV ? (u32)EMCS_MAX_COMPUTE_UAV_SLOTS : (u32)EMCS_MAX_COMPUTE_SRV_SLOTS;
+			if (slot >= maxSlot)
+			{
+				os::Printer::log("CD3D12Driver::bindComputeBuffer: slot out of range", ELL_ERROR);
+				return;
+			}
+
+			SD3D12ComputeSlot& target = asUAV ? ComputeUAV[slot] : ComputeSRV[slot];
+			target.Buffer = buffer;
+			target.Texture = nullptr;
+		}
+
+		void CD3D12Driver::bindComputeTexture(u32 slot, ITexture* texture, bool asUAV)
+		{
+			const u32 maxSlot = asUAV ? (u32)EMCS_MAX_COMPUTE_UAV_SLOTS : (u32)EMCS_MAX_COMPUTE_SRV_SLOTS;
+			if (slot >= maxSlot)
+			{
+				os::Printer::log("CD3D12Driver::bindComputeTexture: slot out of range", ELL_ERROR);
+				return;
+			}
+			if (texture && texture->getDriverType() != EDT_DIRECT3D12)
+			{
+				os::Printer::log("CD3D12Driver::bindComputeTexture: texture is not a D3D12 one", ELL_ERROR);
+				return;
+			}
+			if (asUAV && texture && !texture->isUnorderedAccess())
+			{
+				os::Printer::log("CD3D12Driver::bindComputeTexture: texture has no UAV - use addUAVTexture()", ELL_ERROR);
+				return;
+			}
+
+			SD3D12ComputeSlot& target = asUAV ? ComputeUAV[slot] : ComputeSRV[slot];
+			target.Buffer = nullptr;
+			target.Texture = texture;
+		}
+
+		void CD3D12Driver::dispatchComputeShaderBound(const core::vector3d<u32>& groupCount)
+		{
+			dispatchBoundResources(groupCount, nullptr, 0);
+		}
+
+		void CD3D12Driver::dispatchComputeShaderIndirect(scene::IComputeBuffer* argBuffer, u32 byteOffset)
+		{
+			if (!argBuffer)
 				return;
 
+			CD3D12HardwareBuffer* args = prepareComputeBuffer(argBuffer);
+			if (!args)
+			{
+				os::Printer::log("CD3D12Driver::dispatchComputeShaderIndirect: args buffer has no device "
+					"buffer", ELL_ERROR);
+				return;
+			}
+			if (!(args->getFlags() & EHBF_DRAW_INDIRECT_ARGS))
+			{
+				os::Printer::log("CD3D12Driver::dispatchComputeShaderIndirect: the args buffer needs "
+					"EHBF_DRAW_INDIRECT_ARGS", ELL_ERROR);
+				return;
+			}
+			if (byteOffset % 4 != 0 || byteOffset + sizeof(D3D12_DISPATCH_ARGUMENTS) > args->size())
+			{
+				os::Printer::log("CD3D12Driver::dispatchComputeShaderIndirect: byteOffset must be a "
+					"multiple of 4 and leave room for three u32", ELL_ERROR);
+				return;
+			}
+
+			dispatchBoundResources(core::vector3d<u32>(1, 1, 1), args, byteOffset);
+		}
+
+		void CD3D12Driver::dispatchBoundResources(const core::vector3d<u32>& groupCount,
+			CD3D12HardwareBuffer* indirectArgs, u32 indirectOffset)
+		{
+			// getNativeRenderer() bounds-checks the index itself and returns null for a type that is
+			// not a compute material.
 			CD3D12MaterialRenderer* renderer = getNativeRenderer(Material.MaterialType);
 			if (!renderer || !renderer->CS)
 			{
-				os::Printer::log("CD3D12Driver::dispatchComputeShaderToTexture: le materiau actif n'a pas "
-					"de compute shader", ELL_ERROR);
+				os::Printer::log("CD3D12Driver::dispatchComputeShaderBound: the active material has no "
+					"compute shader", ELL_ERROR);
 				return;
 			}
 			ID3D12PipelineState* pso = getOrCreateComputePSO(renderer->CS.Get());
-			if (!pso)
+			if (!pso || !ensureComputeDescriptorHeap())
+				return;
+			if (indirectArgs && !ensureCommandSignatures())
+				return;
+			if (!indirectArgs && (groupCount.X == 0 || groupCount.Y == 0 || groupCount.Z == 0))
 				return;
 
-			if (!Src->getHardwareBuffer())
-				createHardwareBuffer(Src);
-			else if (Src->getHardwareBuffer()->isRequiredUpdate())
-				Src->getHardwareBuffer()->update(Src->getHardwareMappingHint(),
-					Src->getStructureCount() * Src->getStructureStride(), Src->getBufferPointer());
+			// Pass one, OUTSIDE the upload scope (creating a buffer opens one of its own): every
+			// bound buffer brought up to date, every texture checked.
+			CD3D12HardwareBuffer* srvBuffers[EMCS_MAX_COMPUTE_SRV_SLOTS] = {};
+			CD3D12Texture* srvTextures[EMCS_MAX_COMPUTE_SRV_SLOTS] = {};
+			CD3D12HardwareBuffer* uavBuffers[EMCS_MAX_COMPUTE_UAV_SLOTS] = {};
+			CD3D12Texture* uavTextures[EMCS_MAX_COMPUTE_UAV_SLOTS] = {};
 
-			CD3D12HardwareBuffer* srcBuf = static_cast<CD3D12HardwareBuffer*>(Src->getHardwareBuffer().get());
-			CD3D12Texture* dstTex = static_cast<CD3D12Texture*>(Dst);
-			if (!srcBuf || !srcBuf->hasShaderResourceView() || !dstTex->hasUnorderedAccessView())
+			for (u32 s = 0; s < EMCS_MAX_COMPUTE_SRV_SLOTS; ++s)
 			{
-				os::Printer::log("CD3D12Driver::dispatchComputeShaderToTexture: Src/Dst sans vue SRV/UAV "
-					"(pas cree par ce driver ?)", ELL_ERROR);
+				if (ComputeSRV[s].Buffer)
+				{
+					srvBuffers[s] = prepareComputeBuffer(ComputeSRV[s].Buffer);
+					if (!srvBuffers[s] || !srvBuffers[s]->hasShaderResourceView())
+					{
+						os::Printer::log("CD3D12Driver::dispatchComputeShaderBound: an SRV buffer has no "
+							"device buffer", ELL_ERROR);
+						return;
+					}
+				}
+				else if (ComputeSRV[s].Texture)
+				{
+					CD3D12Texture* texture = static_cast<CD3D12Texture*>(ComputeSRV[s].Texture);
+					if (texture->hasShaderResourceView())
+						srvTextures[s] = texture;
+				}
+			}
+			for (u32 u = 0; u < EMCS_MAX_COMPUTE_UAV_SLOTS; ++u)
+			{
+				if (ComputeUAV[u].Buffer)
+				{
+					uavBuffers[u] = prepareComputeBuffer(ComputeUAV[u].Buffer);
+					if (!uavBuffers[u] || !uavBuffers[u]->hasUnorderedAccessView())
+					{
+						os::Printer::log("CD3D12Driver::dispatchComputeShaderBound: a UAV buffer has no "
+							"device buffer", ELL_ERROR);
+						return;
+					}
+				}
+				else if (ComputeUAV[u].Texture)
+				{
+					CD3D12Texture* texture = static_cast<CD3D12Texture*>(ComputeUAV[u].Texture);
+					if (texture->hasUnorderedAccessView())
+						uavTextures[u] = texture;
+				}
+			}
+
+			// Synchronous and on its own command list, like the texture uploads: IVideoDriver's
+			// compute entry points may be called outside beginScene()/endScene(), and the caller
+			// reads the result back right after through IComputeBuffer::downloadFromGPU().
+			UploadScope upload(this);
+			ID3D12GraphicsCommandList* cmdList = upload.commandList();
+			if (!cmdList)
+				return;
+
+			// A block of the dedicated heap, rewound when the ring is out: the previous blocks were
+			// consumed by dispatches that have completed.
+			if (ComputeDescriptorNext + ComputeDescriptorsPerDispatch > ComputeDescriptorsPerDispatch * ComputeDescriptorBlocks)
+				ComputeDescriptorNext = 0;
+			const UINT baseSlot = ComputeDescriptorNext;
+			ComputeDescriptorNext += ComputeDescriptorsPerDispatch;
+
+			ID3D12DescriptorHeap* heaps[] = { ComputeDescriptorHeap.Get() };
+			cmdList->SetDescriptorHeaps(1, heaps);
+
+			D3D12_CPU_DESCRIPTOR_HANDLE destCPU = ComputeDescriptorHeapStartCPU;
+			destCPU.ptr += static_cast<SIZE_T>(baseSlot) * CBVSRVUAVDescriptorSize;
+			D3D12_GPU_DESCRIPTOR_HANDLE srvTable = ComputeDescriptorHeapStartGPU;
+			srvTable.ptr += static_cast<UINT64>(baseSlot) * CBVSRVUAVDescriptorSize;
+			D3D12_GPU_DESCRIPTOR_HANDLE uavTable = srvTable;
+			uavTable.ptr += static_cast<UINT64>(EMCS_MAX_COMPUTE_SRV_SLOTS) * CBVSRVUAVDescriptorSize;
+			D3D12_GPU_DESCRIPTOR_HANDLE cbvTable = uavTable;
+			cbvTable.ptr += static_cast<UINT64>(EMCS_MAX_COMPUTE_UAV_SLOTS) * CBVSRVUAVDescriptorSize;
+
+			// SRV slots: state, then descriptor (a null view for an empty slot).
+			for (u32 s = 0; s < EMCS_MAX_COMPUTE_SRV_SLOTS; ++s)
+			{
+				D3D12_CPU_DESCRIPTOR_HANDLE source = NullBufferSRV;
+				if (srvBuffers[s])
+				{
+					srvBuffers[s]->transitionTo(cmdList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+					source = srvBuffers[s]->getShaderResourceView();
+				}
+				else if (srvTextures[s])
+				{
+					srvTextures[s]->transitionTo(cmdList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE |
+						D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+					source = srvTextures[s]->getShaderResourceView();
+				}
+				Device->CopyDescriptorsSimple(1, destCPU, source, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+				destCPU.ptr += CBVSRVUAVDescriptorSize;
+			}
+
+			// UAV slots, the append counters along with their buffers.
+			for (u32 u = 0; u < EMCS_MAX_COMPUTE_UAV_SLOTS; ++u)
+			{
+				D3D12_CPU_DESCRIPTOR_HANDLE source = NullBufferUAV;
+				if (uavBuffers[u])
+				{
+					uavBuffers[u]->transitionTo(cmdList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+					uavBuffers[u]->transitionCounterTo(cmdList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+					source = uavBuffers[u]->getUnorderedAccessView();
+				}
+				else if (uavTextures[u])
+				{
+					uavTextures[u]->transitionTo(cmdList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+					source = uavTextures[u]->getUnorderedAccessView();
+				}
+				Device->CopyDescriptorsSimple(1, destCPU, source, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+				destCPU.ptr += CBVSRVUAVDescriptorSize;
+			}
+
+			if (indirectArgs)
+				indirectArgs->transitionTo(cmdList, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+
+			cmdList->SetComputeRootSignature(ComputeRootSignature.Get());
+			cmdList->SetPipelineState(pso);
+
+			// Same convention as bindDrawState(): ActiveMaterialRendererIndex is set before the
+			// callback so getComputeShaderConstantID()/setComputeShaderConstant() (called from
+			// OnSetConstants()) know which renderer is active -- and before the CBVs below are
+			// filled from the scratch that callback writes.
+			ActiveMaterialRendererIndex = Material.MaterialType;
+			if (renderer->CallBack)
+			{
+				renderer->CallBack->OnSetMaterial(Material);
+				renderer->CallBack->OnSetConstants(this, renderer->UserData);
+			}
+
+			// CBV b0..b7 of space0, the same table allocateUserCBVTable() builds, in this heap. A
+			// register the shader does not declare gets a null CBV; the whole table must be valid.
+			for (UINT slot = 0; slot < MaxUserShaderCBVSlotsPerStage; ++slot)
+			{
+				const SD3D12UserShaderCBuffer* match = nullptr;
+				for (const SD3D12UserShaderCBuffer& buf : renderer->CSBuffers)
+				{
+					if (buf.BindPoint == slot && buf.Space == UserShaderRegisterSpace)
+					{
+						match = &buf;
+						break;
+					}
+				}
+
+				D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc = {};
+				if (match && !match->Scratch.empty())
+				{
+					const D3D12_GPU_VIRTUAL_ADDRESS va = allocateConstant(match->Scratch.data(), match->Scratch.size());
+					const UINT64 alignment = D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT;
+					cbvDesc.BufferLocation = va;
+					cbvDesc.SizeInBytes = static_cast<UINT>((match->Scratch.size() + alignment - 1) & ~(alignment - 1));
+				}
+				Device->CreateConstantBufferView(&cbvDesc, destCPU);
+				destCPU.ptr += CBVSRVUAVDescriptorSize;
+			}
+
+			cmdList->SetComputeRootDescriptorTable(0, srvTable);
+			cmdList->SetComputeRootDescriptorTable(1, uavTable);
+			cmdList->SetComputeRootDescriptorTable(2, cbvTable);
+
+			if (indirectArgs)
+				cmdList->ExecuteIndirect(DispatchIndirectSignature.Get(), 1, indirectArgs->getResource(),
+					indirectOffset, nullptr, 0);
+			else
+				cmdList->Dispatch(groupCount.X, groupCount.Y, groupCount.Z);
+
+			// UAV barriers after the dispatch, so a later dispatch or copy on this queue sees the
+			// writes whatever state it asks for next; a UAV texture goes back to being sampleable
+			// by the next draw, since endAndWait() below blocks until the dispatch has finished.
+			std::vector<D3D12_RESOURCE_BARRIER> barriers;
+			for (u32 u = 0; u < EMCS_MAX_COMPUTE_UAV_SLOTS; ++u)
+			{
+				if (uavBuffers[u])
+				{
+					barriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(uavBuffers[u]->getResource()));
+					if (uavBuffers[u]->hasCounterResource())
+						barriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(uavBuffers[u]->getCounterResource()));
+				}
+				else if (uavTextures[u])
+					barriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(uavTextures[u]->getResource()));
+			}
+			if (!barriers.empty())
+				cmdList->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
+			for (u32 u = 0; u < EMCS_MAX_COMPUTE_UAV_SLOTS; ++u)
+				if (uavTextures[u])
+					uavTextures[u]->transitionTo(cmdList, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+			upload.endAndWait();
+			ActiveMaterialRendererIndex = -1;
+		}
+
+		void CD3D12Driver::unbindComputeResources()
+		{
+			for (u32 i = 0; i < EMCS_MAX_COMPUTE_SRV_SLOTS; ++i)
+				ComputeSRV[i] = SD3D12ComputeSlot();
+			for (u32 i = 0; i < EMCS_MAX_COMPUTE_UAV_SLOTS; ++i)
+				ComputeUAV[i] = SD3D12ComputeSlot();
+		}
+
+		// Every dispatch here is submitted and waited on with UAV barriers after it, so there is no
+		// GPU hazard left to order. What remains is the D3D11 meaning of the call: the buffer stops
+		// being a UAV, so the next dispatch may read it through an SRV slot.
+		void CD3D12Driver::computeBarrier(scene::IComputeBuffer* buffer)
+		{
+			if (!buffer)
+				return;
+			for (u32 i = 0; i < EMCS_MAX_COMPUTE_UAV_SLOTS; ++i)
+				if (ComputeUAV[i].Buffer == buffer)
+					ComputeUAV[i] = SD3D12ComputeSlot();
+		}
+
+		void CD3D12Driver::computeBarrierAll()
+		{
+			for (u32 i = 0; i < EMCS_MAX_COMPUTE_UAV_SLOTS; ++i)
+				ComputeUAV[i] = SD3D12ComputeSlot();
+		}
+
+		void CD3D12Driver::copyStructureCount(scene::IComputeBuffer* dst, u32 dstByteOffset,
+			scene::IComputeBuffer* appendBuffer)
+		{
+			if (!dst || !appendBuffer)
+				return;
+
+			CD3D12HardwareBuffer* dstHardware = prepareComputeBuffer(dst);
+			CD3D12HardwareBuffer* srcHardware = prepareComputeBuffer(appendBuffer);
+			if (!dstHardware || !srcHardware)
+			{
+				os::Printer::log("CD3D12Driver::copyStructureCount: needs a real source and destination "
+					"buffer", ELL_ERROR);
+				return;
+			}
+			if (!srcHardware->hasCounterResource())
+			{
+				os::Printer::log("CD3D12Driver::copyStructureCount: source has no hidden counter - create "
+					"it with EHBF_COMPUTE_APPEND/CONSUME", ELL_ERROR);
+				return;
+			}
+			if (dstByteOffset + sizeof(u32) > dstHardware->size())
+			{
+				os::Printer::log("CD3D12Driver::copyStructureCount: dstByteOffset past the end of dst", ELL_ERROR);
 				return;
 			}
 
@@ -5447,45 +5799,202 @@ namespace irr
 			if (!cmdList)
 				return;
 
-			SD3D12FrameContext& frame = Frames[CurrentFrameIndex];
-			if (!reserveShaderVisibleSRVDescriptors(frame, MaxShaderVisibleSRVDescriptorsPerDraw))
+			const D3D12_RESOURCE_STATES dstPrevious = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+			srcHardware->transitionCounterTo(cmdList, D3D12_RESOURCE_STATE_COPY_SOURCE);
+			dstHardware->transitionTo(cmdList, D3D12_RESOURCE_STATE_COPY_DEST);
+			cmdList->CopyBufferRegion(dstHardware->getResource(), dstByteOffset,
+				srcHardware->getCounterResource(), 0, sizeof(u32));
+			// Both back to the resting state every dispatch expects to find them in.
+			srcHardware->transitionCounterTo(cmdList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+			dstHardware->transitionTo(cmdList, dstPrevious);
+			upload.endAndWait();
+		}
+
+		// Applied at once rather than on the next bind as D3D11 does: every dispatch here has been
+		// waited on, so nothing can still be counting into it, and an unbound buffer is no problem.
+		void CD3D12Driver::resetStructureCount(scene::IComputeBuffer* appendBuffer, u32 value)
+		{
+			if (!appendBuffer)
 				return;
 
-			ID3D12DescriptorHeap* shaderVisibleHeaps[] = { frame.ShaderVisibleSRVHeap.Get() };
-			cmdList->SetDescriptorHeaps(1, shaderVisibleHeaps);
-
-			srcBuf->transitionTo(cmdList, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-			dstTex->transitionTo(cmdList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-
-			cmdList->SetComputeRootSignature(ComputeRootSignature.Get());
-			cmdList->SetPipelineState(pso);
-
-			ActiveMaterialRendererIndex = Material.MaterialType;
-			if (renderer->CallBack)
+			CD3D12HardwareBuffer* hardware = prepareComputeBuffer(appendBuffer);
+			if (!hardware)
 			{
-				renderer->CallBack->OnSetMaterial(Material);
-				renderer->CallBack->OnSetConstants(this, renderer->UserData);
+				os::Printer::log("CD3D12Driver::resetStructureCount: buffer has no device buffer", ELL_WARNING);
+				return;
+			}
+			if (!hardware->hasCounterResource())
+			{
+				os::Printer::log("CD3D12Driver::resetStructureCount: buffer has no hidden counter - create "
+					"it with EHBF_COMPUTE_APPEND/CONSUME", ELL_WARNING);
+				return;
 			}
 
-			D3D12_GPU_DESCRIPTOR_HANDLE srvTable = allocateDescriptorTableSlot(srcBuf->getShaderResourceView());
-			if (srvTable.ptr != 0)
-				cmdList->SetComputeRootDescriptorTable(0, srvTable);
+			// A throwaway upload resource holding the value; the copy is waited on, and the resource
+			// retired through the fenced queue like every other short-lived one.
+			D3D12_HEAP_PROPERTIES heapProps = {};
+			heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+			D3D12_RESOURCE_DESC desc = {};
+			desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+			desc.Width = 256;
+			desc.Height = 1;
+			desc.DepthOrArraySize = 1;
+			desc.MipLevels = 1;
+			desc.Format = DXGI_FORMAT_UNKNOWN;
+			desc.SampleDesc = { 1, 0 };
+			desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
-			D3D12_GPU_DESCRIPTOR_HANDLE uavTable = allocateDescriptorTableSlot(dstTex->getUnorderedAccessView());
-			if (uavTable.ptr != 0)
-				cmdList->SetComputeRootDescriptorTable(1, uavTable);
+			ComPtr<ID3D12Resource> source;
+			HRESULT hr = Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc,
+				D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&source));
+			if (FAILED(hr))
+			{
+				logD3D12Failure("CD3D12Driver::resetStructureCount: CreateCommittedResource (upload)", hr, Device.Get());
+				return;
+			}
+			void* mapped = nullptr;
+			D3D12_RANGE noRead = { 0, 0 };
+			if (FAILED(source->Map(0, &noRead, &mapped)) || !mapped)
+				return;
+			memcpy(mapped, &value, sizeof(value));
+			source->Unmap(0, nullptr);
 
-			D3D12_GPU_DESCRIPTOR_HANDLE cbvTable = allocateUserCBVTable(renderer->CSBuffers, UserShaderRegisterSpace);
-			if (cbvTable.ptr != 0)
-				cmdList->SetComputeRootDescriptorTable(2, cbvTable);
+			UploadScope upload(this);
+			ID3D12GraphicsCommandList* cmdList = upload.commandList();
+			if (!cmdList)
+				return;
 
-			cmdList->Dispatch(groupCount.X, groupCount.Y, groupCount.Z);
-
-			// Leave the texture ready to be sampled by the next draw, since endAndWait()
-			// below blocks until the GPU has actually finished this dispatch.
-			dstTex->transitionTo(cmdList, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-
+			hardware->transitionCounterTo(cmdList, D3D12_RESOURCE_STATE_COPY_DEST);
+			cmdList->CopyBufferRegion(hardware->getCounterResource(), 0, source.Get(), 0, sizeof(u32));
+			hardware->transitionCounterTo(cmdList, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 			upload.endAndWait();
+			retireResource(std::move(source));
+		}
+
+		bool CD3D12Driver::beginComputeReadback(scene::IComputeBuffer* buffer, u32 slot)
+		{
+			if (!buffer || slot >= EMCS_MAX_READBACK_SLOTS)
+				return false;
+
+			CD3D12HardwareBuffer* hardware = prepareComputeBuffer(buffer);
+			if (!hardware)
+				return false;
+			return hardware->beginAsyncReadback(slot);
+		}
+
+		bool CD3D12Driver::tryReadComputeBuffer(scene::IComputeBuffer* buffer, u32 slot, void* dst,
+			u32 bytes, bool wait)
+		{
+			if (!buffer || slot >= EMCS_MAX_READBACK_SLOTS || !buffer->getHardwareBuffer())
+				return false;
+			if (buffer->getHardwareBuffer()->getDriverType() != EDT_DIRECT3D12)
+				return false;
+
+			// Not prepareComputeBuffer(): a poll must never trigger an upload of a dirty CPU copy.
+			CD3D12HardwareBuffer* hardware = static_cast<CD3D12HardwareBuffer*>(buffer->getHardwareBuffer().get());
+			return hardware->tryAsyncReadback(slot, dst, bytes, wait);
+		}
+
+		void CD3D12Driver::drawMeshBufferInstancedIndirect(const scene::IMeshBuffer* mb,
+			scene::IComputeBuffer* instanceBuffer, u32 instanceStride,
+			scene::IComputeBuffer* argBuffer, u32 byteOffset)
+		{
+			if (!mb || !instanceBuffer || !argBuffer || !instanceStride)
+				return;
+			if (!SceneOpen)
+				return; // bindDrawState() would only warn; the command list is not recording
+
+			IVertexDescriptor* descriptor = mb->getVertexDescriptor();
+			const u32 vbCount = mb->getVertexBufferCount();
+			if (!descriptor || vbCount == 0 || vbCount > D3D12_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT)
+				return;
+
+			CD3D12HardwareBuffer* instances = prepareComputeBuffer(instanceBuffer);
+			CD3D12HardwareBuffer* args = prepareComputeBuffer(argBuffer);
+			if (!instances || !args)
+			{
+				os::Printer::log("CD3D12Driver::drawMeshBufferInstancedIndirect: instance or args buffer "
+					"has no device buffer", ELL_ERROR);
+				return;
+			}
+			if (!(args->getFlags() & EHBF_DRAW_INDIRECT_ARGS) || byteOffset % 4 != 0 ||
+				byteOffset + sizeof(D3D12_DRAW_INDEXED_ARGUMENTS) > args->size())
+			{
+				os::Printer::log("CD3D12Driver::drawMeshBufferInstancedIndirect: the args buffer needs "
+					"EHBF_DRAW_INDIRECT_ARGS and five u32 at byteOffset", ELL_ERROR);
+				return;
+			}
+			if (!ensureCommandSignatures())
+				return;
+
+			scene::IIndexBuffer* ib = mb->getIndexBuffer();
+			if (!ib || ib->getIndexCount() == 0)
+			{
+				os::Printer::log("CD3D12Driver::drawMeshBufferInstancedIndirect: an indexed mesh buffer "
+					"is required", ELL_ERROR);
+				return;
+			}
+
+			// The per-instance stream comes from `instanceBuffer`, every other one from the mesh, as
+			// in drawMeshBuffer().
+			D3D12_VERTEX_BUFFER_VIEW vbViews[D3D12_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
+			for (u32 i = 0; i < vbCount; ++i)
+			{
+				if (descriptor->getInstanceDataStepRate(i) == EIDSR_PER_INSTANCE)
+				{
+					vbViews[i].BufferLocation = instances->getResource()->GetGPUVirtualAddress();
+					vbViews[i].SizeInBytes = instances->size();
+					vbViews[i].StrideInBytes = instanceStride;
+					continue;
+				}
+
+				scene::IVertexBuffer* streamVb = mb->getVertexBuffer(i);
+				if (!streamVb || streamVb->getVertexCount() == 0)
+					return;
+
+				auto streamHardware = streamVb->getHardwareBuffer();
+				if (!streamHardware || streamHardware->getDriverType() != EDT_DIRECT3D12)
+					streamHardware = createHardwareBuffer(streamVb);
+				else if (streamHardware->isRequiredUpdate())
+					streamHardware->update(streamVb->getHardwareMappingHint(),
+						streamVb->getVertexCount() * streamVb->getVertexSize(), streamVb->getVertices());
+				if (!streamHardware)
+					return;
+				vbViews[i] = static_cast<CD3D12HardwareBuffer*>(streamHardware.get())->getVertexBufferView();
+			}
+
+			auto ibHardware = ib->getHardwareBuffer();
+			if (!ibHardware || ibHardware->getDriverType() != EDT_DIRECT3D12)
+				ibHardware = createHardwareBuffer(ib);
+			else if (ibHardware->isRequiredUpdate())
+			{
+				const u32 indexSize = (ib->getType() == EIT_32BIT) ? 4 : 2;
+				ibHardware->update(ib->getHardwareMappingHint(), ib->getIndexCount() * indexSize, ib->getIndices());
+			}
+			if (!ibHardware)
+				return;
+
+			const D3D_PRIMITIVE_TOPOLOGY topology = mapMeshPrimitiveTypeToTopology(mb->getPrimitiveType());
+			if (topology == D3D_PRIMITIVE_TOPOLOGY_UNDEFINED)
+				return;
+			if (!bindDrawState(Material, Matrices[ETS_WORLD], Matrices[ETS_VIEW], Matrices[ETS_PROJECTION],
+				descriptor, mb->getPrimitiveType()))
+				return;
+
+			// Both compute-written buffers step into the input assembler for this draw and are put
+			// straight back, so their tracked resting state stays true for the dispatches recorded
+			// on the upload list (which the GPU runs ahead of this frame's list).
+			instances->transitionTo(CommandList.Get(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+			args->transitionTo(CommandList.Get(), D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+
+			CommandList->IASetPrimitiveTopology(Material.PointCloud ? D3D_PRIMITIVE_TOPOLOGY_POINTLIST : topology);
+			CommandList->IASetVertexBuffers(0, vbCount, vbViews);
+			D3D12_INDEX_BUFFER_VIEW ibView = static_cast<CD3D12HardwareBuffer*>(ibHardware.get())->getIndexBufferView();
+			CommandList->IASetIndexBuffer(&ibView);
+			CommandList->ExecuteIndirect(DrawIndexedIndirectSignature.Get(), 1, args->getResource(), byteOffset, nullptr, 0);
+
+			instances->transitionTo(CommandList.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+			args->transitionTo(CommandList.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 		}
 
 		// ================================ Phase 2 : textures ================================

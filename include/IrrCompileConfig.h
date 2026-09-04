@@ -359,9 +359,12 @@ to provide the user with the proper DLL. That's why it's disabled by default. */
 #endif
 
 //! Define _IRR_COMPILE_WITH_VULKAN_DXC_ to let the Vulkan driver compile HLSL shader sources at
-//! runtime, so the same HLSL the Direct3D backends use also feeds Vulkan. Requires the Khronos
-//! build of DXC (dxcompiler.dll) -- the copy shipped in the Windows SDK has no SPIR-V backend.
-//#define _IRR_COMPILE_WITH_VULKAN_DXC_
+//! runtime, so the same HLSL the Direct3D backends use also feeds Vulkan. The header it needs
+//! (dxcapi.h) is vendored under source/Irrlicht/dxc, and dxcompiler.dll is opened with
+//! LoadLibrary at run time -- ship the GitHub/Khronos build of it beside the executable; the copy
+//! in the Windows SDK has no SPIR-V back end. Without the DLL the driver still runs, it just
+//! refuses HLSL sources (pre-compiled SPIR-V via EGSL_PCMP keeps working).
+#define _IRR_COMPILE_WITH_VULKAN_DXC_
 #ifdef NO_IRR_COMPILE_WITH_VULKAN_DXC_
 #undef _IRR_COMPILE_WITH_VULKAN_DXC_
 #endif

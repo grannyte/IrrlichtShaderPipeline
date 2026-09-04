@@ -495,6 +495,10 @@ namespace irr
 #ifdef _DEBUG
 			compileFlags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 #endif
+			// Same opt-in the D3D11 driver honours: a kernel whose branches must survive (per-body
+			// selects, traversal loops) says so with this marker in its top-level source.
+			if (strstr(computeShaderProgram, "PREFER_FLOW_CONTROL") != nullptr)
+				compileFlags |= D3DCOMPILE_PREFER_FLOW_CONTROL;
 
 			ComPtr<ID3DBlob> cs, errors;
 			HRESULT hr = D3DCompile(computeShaderProgram, strlen(computeShaderProgram), "user_compute_shader",

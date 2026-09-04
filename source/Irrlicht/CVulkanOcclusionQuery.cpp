@@ -32,7 +32,7 @@ namespace irr
 				return true;
 			if (Context.Device == VK_NULL_HANDLE || !vk::CreateQueryPool)
 			{
-				os::Printer::log("CVulkanOcclusionQuery: pas de device Vulkan pour creer le query pool", ELL_ERROR);
+				os::Printer::log("CVulkanOcclusionQuery: no Vulkan device to create the query pool on", ELL_ERROR);
 				return false;
 			}
 
@@ -78,8 +78,8 @@ namespace irr
 				return;
 			if (!mesh)
 			{
-				os::Printer::log("CVulkanOcclusionQuery::addQuery: mesh nul non supporte"
-					" (pas de recherche automatique via le noeud)", ELL_WARNING);
+				os::Printer::log("CVulkanOcclusionQuery::addQuery: a null mesh is not supported"
+					" (the node's mesh is not looked up automatically)", ELL_WARNING);
 				return;
 			}
 			if (Queries.find(node) != Queries.end())
@@ -87,8 +87,8 @@ namespace irr
 
 			if (FreeSlots.empty())
 			{
-				os::Printer::log("CVulkanOcclusionQuery::addQuery: capacite d'occlusion queries"
-					" atteinte (voir QueryCapacity)", ELL_WARNING);
+				os::Printer::log("CVulkanOcclusionQuery::addQuery: occlusion query capacity reached"
+					" (see QueryCapacity)", ELL_WARNING);
 				return;
 			}
 
@@ -226,6 +226,12 @@ namespace irr
 			if (it == Queries.end())
 				return;
 			it->second.PendingFrame = frameMarker ? frameMarker : 1; // 0 is reserved for "not in flight"
+		}
+
+		u64 CVulkanOcclusionQuery::getPendingFrame(const std::shared_ptr<scene::ISceneNode>& node) const
+		{
+			auto it = Queries.find(node);
+			return (it == Queries.end()) ? 0 : it->second.PendingFrame;
 		}
 
 		// ================================ Readback ================================

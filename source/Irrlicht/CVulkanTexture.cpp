@@ -165,11 +165,12 @@ namespace irr
 
 		CVulkanTexture::CVulkanTexture(const SVulkanContext& context, IVulkanUploadContext& upload,
 			const core::dimension2d<u32>& size, ECOLOR_FORMAT format, bool renderTarget,
-			const io::path& name)
+			const io::path& name, u32 arrayLayers, bool storage)
 			: ITexture(name), Context(context), Upload(upload)
 		{
 			DriverType = EDT_VULKAN;
-			TextureType = ETT_2D;
+			LayerCount = arrayLayers ? arrayLayers : 1;
+			TextureType = (LayerCount > 1) ? ETT_2D_ARRAY : ETT_2D;
 			Source = ETS_UNKNOWN;
 
 			OriginalSize = Size = size;
@@ -202,6 +203,22 @@ namespace irr
 				Aspect = VK_IMAGE_ASPECT_COLOR_BIT;
 			}
 
+			// STORAGE is what a compute shader's image store needs; the format has to support it in
+			// optimal tiling, which every float and 8 bit UNORM colour format does on real hardware.
+			if (storage && !IsDepthStencil)
+			{
+				VkFormatProperties properties = {};
+				vk::GetPhysicalDeviceFormatProperties(Context.PhysicalDevice, Format, &properties);
+				if (!(properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT))
+				{
+					os::Printer::log("CVulkanTexture: this format cannot be a storage image on this "
+						"device", name, ELL_ERROR);
+					return;
+				}
+				usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+				IsUnorderedAccess = true;
+			}
+
 			if (!createImage(usage) || !createImageView())
 				return;
 
@@ -216,6 +233,129 @@ namespace irr
 			}
 
 			createSampler(true, false, 0, ETC_CLAMP_TO_EDGE);
+		}
+
+		// The slices are the ETT_2D textures CNullDriver::getTexture(files, type) loaded one by one;
+		// each one's whole mip chain is copied into its layer, so the array carries the same mips
+		// its slices did (all of them, or none when any slice lacks a chain).
+		CVulkanTexture::CVulkanTexture(const SVulkanContext& context, IVulkanUploadContext& upload,
+			const core::array<ITexture*>& slices, E_TEXTURE_TYPE type, const io::path& name)
+			: ITexture(name), Context(context), Upload(upload)
+		{
+			DriverType = EDT_VULKAN;
+			Source = ETS_UNKNOWN;
+			TextureType = type;
+
+			const u32 count = slices.size();
+			if (count == 0)
+			{
+				os::Printer::log("CVulkanTexture: an array texture needs at least one slice", name, ELL_ERROR);
+				return;
+			}
+			if (type == ETT_CUBE && count != 6)
+			{
+				os::Printer::log("CVulkanTexture: a cube map needs exactly 6 slices", name, ELL_ERROR);
+				return;
+			}
+			if (type == ETT_CUBE_ARRAY && (count % 6) != 0)
+			{
+				os::Printer::log("CVulkanTexture: a cube array needs a multiple of 6 slices", name, ELL_ERROR);
+				return;
+			}
+			if (type != ETT_CUBE && type != ETT_CUBE_ARRAY && type != ETT_2D_ARRAY)
+			{
+				os::Printer::log("CVulkanTexture: only ETT_2D_ARRAY, ETT_CUBE and ETT_CUBE_ARRAY can be "
+					"built from slices", name, ELL_ERROR);
+				return;
+			}
+
+			// Every slice has to be one of ours, of one size and one format: vkCmdCopyImage moves
+			// texels without conversion.
+			CVulkanTexture* first = nullptr;
+			for (u32 i = 0; i < count; ++i)
+			{
+				ITexture* slice = slices[i];
+				if (!slice || slice->getDriverType() != EDT_VULKAN ||
+					!static_cast<CVulkanTexture*>(slice)->hasDeviceResource())
+				{
+					os::Printer::log("CVulkanTexture: array slice is not a usable Vulkan texture", name, ELL_ERROR);
+					return;
+				}
+				CVulkanTexture* native = static_cast<CVulkanTexture*>(slice);
+				if (!first)
+					first = native;
+				else if (native->getSize() != first->getSize() || native->getVkFormat() != first->getVkFormat())
+				{
+					os::Printer::log("CVulkanTexture: array slices differ in size or format", name, ELL_ERROR);
+					return;
+				}
+			}
+
+			LayerCount = count;
+			OriginalSize = Size = first->getSize();
+			ColorFormat = first->getColorFormat();
+			Format = first->getVkFormat();
+			Aspect = first->getAspectMask();
+			HasAlpha = first->hasAlpha();
+			Pitch = first->getPitch();
+			IsDepthStencil = isDepthFormat(Format);
+
+			// The chain is copied, not rebuilt, so the array has exactly the levels every slice has.
+			MipLevelCount = first->getMipLevelCount();
+			for (u32 i = 1; i < count; ++i)
+				MipLevelCount = core::min_(MipLevelCount, static_cast<CVulkanTexture*>(slices[i])->getMipLevelCount());
+			MipMaps = MipLevelCount > 1;
+
+			if (!createImage(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+				VK_IMAGE_USAGE_TRANSFER_SRC_BIT) || !createImageView())
+				return;
+
+			VkCommandBuffer commandBuffer = Upload.beginUpload();
+			if (commandBuffer == VK_NULL_HANDLE)
+				return;
+
+			transitionImageLayout(commandBuffer, Image, VK_IMAGE_LAYOUT_UNDEFINED,
+				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, Aspect, MipLevelCount, LayerCount);
+
+			std::vector<VkImageCopy> regions(MipLevelCount);
+			for (u32 layer = 0; layer < count; ++layer)
+			{
+				CVulkanTexture* slice = static_cast<CVulkanTexture*>(slices[layer]);
+				const VkImageLayout previous = slice->getImageLayout();
+				slice->transitionTo(commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+
+				for (u32 level = 0; level < MipLevelCount; ++level)
+				{
+					u32 width = 0, height = 0;
+					getMipDimension(Size, level, width, height);
+
+					VkImageCopy& region = regions[level];
+					region = VkImageCopy();
+					region.srcSubresource.aspectMask = Aspect;
+					region.srcSubresource.mipLevel = level;
+					region.srcSubresource.baseArrayLayer = 0;
+					region.srcSubresource.layerCount = 1;
+					region.dstSubresource = region.srcSubresource;
+					region.dstSubresource.baseArrayLayer = layer;
+					region.extent.width = width;
+					region.extent.height = height;
+					region.extent.depth = 1;
+				}
+				vk::CmdCopyImage(commandBuffer, slice->getImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+					Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, MipLevelCount, regions.data());
+
+				// The slice goes back to where it was; a never-written one lands in the sampled
+				// layout, nothing may transition back to UNDEFINED.
+				slice->transitionTo(commandBuffer, (previous == VK_IMAGE_LAYOUT_UNDEFINED) ?
+					VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : previous);
+			}
+
+			transitionImageLayout(commandBuffer, Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, Aspect, MipLevelCount, LayerCount);
+			CurrentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			Upload.endUploadAndWait(commandBuffer);
+
+			createSampler(true, MipLevelCount > 1, 0, (type == ETT_2D_ARRAY) ? ETC_REPEAT : ETC_CLAMP_TO_EDGE);
 		}
 
 		CVulkanTexture::~CVulkanTexture()
@@ -234,8 +374,12 @@ namespace irr
 			}
 			destroyStagingBuffer();
 
-			// View before image, and memory last: the image still owns its binding until
+			// Views before image, and memory last: the image still owns its binding until
 			// vkDestroyImage returns.
+			for (size_t i = 0; i < LayerViews.size(); ++i)
+				if (LayerViews[i] != VK_NULL_HANDLE && LayerViews[i] != View)
+					vk::DestroyImageView(Context.Device, LayerViews[i], nullptr);
+			LayerViews.clear();
 			if (View != VK_NULL_HANDLE)
 				vk::DestroyImageView(Context.Device, View, nullptr);
 			if (Sampler != VK_NULL_HANDLE)
@@ -261,12 +405,15 @@ namespace irr
 			imageInfo.extent.height = Size.Height;
 			imageInfo.extent.depth = 1;
 			imageInfo.mipLevels = MipLevelCount;
-			imageInfo.arrayLayers = 1;
+			imageInfo.arrayLayers = LayerCount;
 			imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
 			imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
 			imageInfo.usage = usage;
 			imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 			imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+			// A cube view can only be created over an image that was declared cube compatible.
+			if (TextureType == ETT_CUBE || TextureType == ETT_CUBE_ARRAY)
+				imageInfo.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
 
 			if (vulkanFailed("vkCreateImage", vk::CreateImage(Context.Device, &imageInfo, nullptr, &Image)))
 			{
@@ -309,14 +456,20 @@ namespace irr
 			VkImageViewCreateInfo viewInfo = {};
 			viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 			viewInfo.image = Image;
-			viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+			switch (TextureType)
+			{
+			case ETT_CUBE:       viewInfo.viewType = VK_IMAGE_VIEW_TYPE_CUBE; break;
+			case ETT_CUBE_ARRAY: viewInfo.viewType = VK_IMAGE_VIEW_TYPE_CUBE_ARRAY; break;
+			case ETT_2D_ARRAY:   viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY; break;
+			default:             viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D; break;
+			}
 			viewInfo.format = Format;
 			// A stencil aspect is never sampled here, so a combined depth/stencil view
 			// exposes depth only - the shader reads a single channel.
 			viewInfo.subresourceRange.aspectMask = (Aspect & VK_IMAGE_ASPECT_DEPTH_BIT) ?
 				VK_IMAGE_ASPECT_DEPTH_BIT : Aspect;
 			viewInfo.subresourceRange.levelCount = MipLevelCount;
-			viewInfo.subresourceRange.layerCount = 1;
+			viewInfo.subresourceRange.layerCount = LayerCount;
 
 			if (vulkanFailed("vkCreateImageView", vk::CreateImageView(Context.Device, &viewInfo, nullptr, &View)))
 			{
@@ -324,6 +477,38 @@ namespace irr
 				return false;
 			}
 			return true;
+		}
+
+		VkImageView CVulkanTexture::getLayerView(u32 layer)
+		{
+			if (Image == VK_NULL_HANDLE || layer >= LayerCount)
+				return VK_NULL_HANDLE;
+			if (LayerCount == 1)
+				return View;
+
+			if (LayerViews.size() < LayerCount)
+				LayerViews.resize(LayerCount, VK_NULL_HANDLE);
+			if (LayerViews[layer] != VK_NULL_HANDLE)
+				return LayerViews[layer];
+
+			// A single-layer 2D view: what a colour attachment or a per-slice copy wants. The
+			// depth-only aspect rule of createImageView() applies to a sampled view; an attachment
+			// view over a combined format must name both aspects.
+			VkImageViewCreateInfo viewInfo = {};
+			viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+			viewInfo.image = Image;
+			viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+			viewInfo.format = Format;
+			viewInfo.subresourceRange.aspectMask = Aspect;
+			viewInfo.subresourceRange.levelCount = MipLevelCount;
+			viewInfo.subresourceRange.baseArrayLayer = layer;
+			viewInfo.subresourceRange.layerCount = 1;
+
+			VkImageView view = VK_NULL_HANDLE;
+			if (vulkanFailed("vkCreateImageView (layer)", vk::CreateImageView(Context.Device, &viewInfo, nullptr, &view)))
+				return VK_NULL_HANDLE;
+			LayerViews[layer] = view;
+			return view;
 		}
 
 		bool CVulkanTexture::createSampler(bool bilinear, bool trilinear, u8 anisotropic, E_TEXTURE_CLAMP wrap)
@@ -433,7 +618,7 @@ namespace irr
 			// chain must leave this function in one uniform layout, and generateMips()
 			// re-transitions it anyway.
 			transitionImageLayout(commandBuffer, Image, VK_IMAGE_LAYOUT_UNDEFINED,
-				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, Aspect, MipLevelCount, 1);
+				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, Aspect, MipLevelCount, LayerCount);
 
 			VkBufferImageCopy region = {};
 			region.imageSubresource.aspectMask = Aspect;
@@ -445,7 +630,7 @@ namespace irr
 				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
 			transitionImageLayout(commandBuffer, Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, Aspect, MipLevelCount, 1);
+				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, Aspect, MipLevelCount, LayerCount);
 			CurrentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
 			Upload.endUploadAndWait(commandBuffer);
@@ -462,7 +647,7 @@ namespace irr
 			if (Image == VK_NULL_HANDLE || newLayout == CurrentLayout)
 				return;
 
-			transitionImageLayout(commandBuffer, Image, CurrentLayout, newLayout, Aspect, MipLevelCount, 1);
+			transitionImageLayout(commandBuffer, Image, CurrentLayout, newLayout, Aspect, MipLevelCount, LayerCount);
 			CurrentLayout = newLayout;
 		}
 
@@ -659,6 +844,8 @@ namespace irr
 
 			transitionTo(commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
+			// Every layer at once: the barriers and blits below name all of them, so an array
+			// texture gets its chain rebuilt layer by layer in the same pass.
 			VkImageMemoryBarrier barrier = {};
 			barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
 			barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -670,7 +857,7 @@ namespace irr
 			barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 			barrier.subresourceRange.aspectMask = Aspect;
 			barrier.subresourceRange.levelCount = 1;
-			barrier.subresourceRange.layerCount = 1;
+			barrier.subresourceRange.layerCount = LayerCount;
 
 			s32 levelWidth = static_cast<s32>(Size.Width);
 			s32 levelHeight = static_cast<s32>(Size.Height);
@@ -689,7 +876,7 @@ namespace irr
 				VkImageBlit blit = {};
 				blit.srcSubresource.aspectMask = Aspect;
 				blit.srcSubresource.mipLevel = level - 1;
-				blit.srcSubresource.layerCount = 1;
+				blit.srcSubresource.layerCount = LayerCount;
 				blit.srcOffsets[1].x = levelWidth;
 				blit.srcOffsets[1].y = levelHeight;
 				blit.srcOffsets[1].z = 1;
@@ -712,7 +899,7 @@ namespace irr
 				VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
 
 			transitionImageLayout(commandBuffer, Image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, Aspect, MipLevelCount, 1);
+				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, Aspect, MipLevelCount, LayerCount);
 			CurrentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
 			Upload.endUploadAndWait(commandBuffer);

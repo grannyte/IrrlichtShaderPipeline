@@ -95,7 +95,137 @@ namespace irr
 		CVulkanHardwareBuffer::~CVulkanHardwareBuffer()
 		{
 			releaseStagingBuffer();
+			releaseReadbackSlots();
+			releaseCounterBuffer();
 			destroyInternalBuffer();
+		}
+
+		VkBuffer CVulkanHardwareBuffer::getCounterBuffer(bool create)
+		{
+			if (CounterBuffer != VK_NULL_HANDLE || !create || Context.Device == VK_NULL_HANDLE)
+				return CounterBuffer;
+
+			// Host-visible: resetStructureCount() writes it from the CPU and the atomics a dispatch
+			// runs on it are few. 16 bytes rather than 4 keeps every minimum alignment happy.
+			if (!createVulkanBuffer(Context, 16,
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				HostMemoryFlags, CounterBuffer, CounterMemory))
+				return VK_NULL_HANDLE;
+
+			void* mapped = 0;
+			if (vulkanFailed("CVulkanHardwareBuffer: vkMapMemory (append counter)",
+				vk::MapMemory(Context.Device, CounterMemory, 0, VK_WHOLE_SIZE, 0, &mapped)))
+			{
+				releaseCounterBuffer();
+				return VK_NULL_HANDLE;
+			}
+			CounterMapped = static_cast<u32*>(mapped);
+			memset(CounterMapped, 0, 16);
+			return CounterBuffer;
+		}
+
+		bool CVulkanHardwareBuffer::setCounterValue(u32 value)
+		{
+			if (getCounterBuffer(true) == VK_NULL_HANDLE || !CounterMapped)
+				return false;
+			*CounterMapped = value;
+			return true;
+		}
+
+		bool CVulkanHardwareBuffer::getCounterValue(u32& outValue) const
+		{
+			if (!CounterMapped)
+				return false;
+			outValue = *CounterMapped;
+			return true;
+		}
+
+		void CVulkanHardwareBuffer::releaseCounterBuffer()
+		{
+			if (Context.Device == VK_NULL_HANDLE)
+				return;
+			if (CounterMapped)
+				vk::UnmapMemory(Context.Device, CounterMemory);
+			CounterMapped = nullptr;
+			if (CounterBuffer != VK_NULL_HANDLE)
+				vk::DestroyBuffer(Context.Device, CounterBuffer, 0);
+			if (CounterMemory != VK_NULL_HANDLE)
+				vk::FreeMemory(Context.Device, CounterMemory, 0);
+			CounterBuffer = VK_NULL_HANDLE;
+			CounterMemory = VK_NULL_HANDLE;
+		}
+
+		void CVulkanHardwareBuffer::releaseReadbackSlots()
+		{
+			if (Context.Device == VK_NULL_HANDLE)
+				return;
+
+			for (u32 i = 0; i < ReadbackSlotCount; ++i)
+			{
+				if (Readback[i].Buffer != VK_NULL_HANDLE)
+					vk::DestroyBuffer(Context.Device, Readback[i].Buffer, 0);
+				if (Readback[i].Memory != VK_NULL_HANDLE)
+					vk::FreeMemory(Context.Device, Readback[i].Memory, 0);
+				Readback[i] = SReadbackSlot();
+			}
+		}
+
+		bool CVulkanHardwareBuffer::beginAsyncReadback(u32 slot)
+		{
+			if (slot >= ReadbackSlotCount || Buffer == VK_NULL_HANDLE || Size == 0)
+				return false;
+
+			SReadbackSlot& readback = Readback[slot];
+			// A buffer grown by update() outgrows its slot copy; rebuild that one to match.
+			if (readback.Buffer != VK_NULL_HANDLE && readback.Size < Size)
+			{
+				vk::DestroyBuffer(Context.Device, readback.Buffer, 0);
+				vk::FreeMemory(Context.Device, readback.Memory, 0);
+				readback = SReadbackSlot();
+			}
+			if (readback.Buffer == VK_NULL_HANDLE)
+			{
+				if (!createVulkanBuffer(Context, Size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, HostMemoryFlags,
+					readback.Buffer, readback.Memory))
+					return false;
+				readback.Size = Size;
+			}
+
+			VkCommandBuffer commandBuffer = Upload.beginUpload();
+			if (commandBuffer == VK_NULL_HANDLE)
+				return false;
+
+			// The producer is a dispatch whose barrierAfterDispatch() already made its writes visible
+			// to TRANSFER; a host-written buffer needs nothing more than the copy itself.
+			VkBufferCopy region = {};
+			region.size = Size;
+			vk::CmdCopyBuffer(commandBuffer, Buffer, readback.Buffer, 1, &region);
+			recordCopyBarrier(commandBuffer, readback.Buffer, VK_ACCESS_HOST_READ_BIT,
+				VK_PIPELINE_STAGE_HOST_BIT);
+			Upload.endUploadAndWait(commandBuffer);
+
+			readback.Ready = true;
+			return true;
+		}
+
+		bool CVulkanHardwareBuffer::tryAsyncReadback(u32 slot, void* dst, u32 bytes, bool /*wait*/)
+		{
+			if (slot >= ReadbackSlotCount || !dst || bytes == 0)
+				return false;
+
+			SReadbackSlot& readback = Readback[slot];
+			if (!readback.Ready || readback.Buffer == VK_NULL_HANDLE)
+				return false;
+
+			void* mapped = 0;
+			if (vulkanFailed("CVulkanHardwareBuffer: vkMapMemory (readback)",
+				vk::MapMemory(Context.Device, readback.Memory, 0, VK_WHOLE_SIZE, 0, &mapped)))
+				return false;
+
+			const VkDeviceSize count = (bytes < readback.Size) ? bytes : readback.Size;
+			memcpy(dst, mapped, static_cast<size_t>(count));
+			vk::UnmapMemory(Context.Device, readback.Memory);
+			return true;
 		}
 
 		bool CVulkanHardwareBuffer::createInternalBuffer(const void* initialData)

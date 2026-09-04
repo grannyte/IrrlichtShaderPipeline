@@ -215,6 +215,7 @@ namespace irr
 				ColorFormats[i] = VK_FORMAT_UNDEFINED;
 			}
 			ColorCount = 0;
+			ColorLayer = WholeImage;
 
 			DepthTexture = 0;
 			PooledDepth = 0;
@@ -228,9 +229,22 @@ namespace irr
 		}
 
 		bool CVulkanRenderTarget::setTarget(CVulkanTexture* colorTexture,
-			CVulkanTexture* depthTexture, CVulkanDepthBufferPool* depthPool)
+			CVulkanTexture* depthTexture, CVulkanDepthBufferPool* depthPool, u32 layer)
 		{
-			return setTargets(&colorTexture, 1, depthTexture, depthPool);
+			if (!setTargets(&colorTexture, 1, depthTexture, depthPool))
+				return false;
+
+			if (layer != WholeImage)
+			{
+				if (layer >= colorTexture->getLayerCount() || colorTexture->getLayerView(layer) == VK_NULL_HANDLE)
+				{
+					os::Printer::log("CVulkanRenderTarget: render target slice out of range", ELL_ERROR);
+					reset();
+					return false;
+				}
+				ColorLayer = layer;
+			}
+			return true;
 		}
 
 		bool CVulkanRenderTarget::setTargets(CVulkanTexture* const* colorTextures, u32 colorCount,
@@ -409,7 +423,10 @@ namespace irr
 				VkRenderingAttachmentInfo& attachment = ColorAttachments[i];
 				attachment = VkRenderingAttachmentInfo();
 				attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-				attachment.imageView = ColorTextures[i]->getImageView();
+				// A whole array texture would need layerCount > 1 and layered rendering; one slice
+				// at a time, through its own 2D view, is what setRenderTargetSlice() asks for.
+				attachment.imageView = (i == 0 && ColorLayer != WholeImage) ?
+					ColorTextures[0]->getLayerView(ColorLayer) : ColorTextures[i]->getImageView();
 				attachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 				attachment.resolveMode = VK_RESOLVE_MODE_NONE;
 				attachment.loadOp = clearColor ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
