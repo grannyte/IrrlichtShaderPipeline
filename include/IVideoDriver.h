@@ -1769,7 +1769,13 @@ namespace irr
 
 			//! Map regions[i] to the tiles of pool starting at poolTileIndices[i] (consecutive, one
 			//! per tile of the region, row-major X then Y then Z), or unmap them when pool is 0.
-			/** Ordered after the draws issued so far and before the ones that follow. */
+			/** Ordered after the draws issued so far and before the ones that follow on D3D11 and
+			D3D12 (the latter flushes the open command list first). Vulkan binds on the queue too, but
+			the frame being recorded is submitted after the bind, so between beginScene() and
+			endScene() the draws recorded so far see the new mapping as well: remap between frames
+			there when that matters. The pool stays alive (grabbed) while any tile maps into it, and
+			it refuses to shrink under a mapped tile. Called on the driver that created the texture,
+			from its own thread. */
 			virtual bool updateTileMappings(ITexture* texture, const STileRegion* regions, u32 regionCount,
 				ITilePool* pool, const u32* poolTileIndices)
 			{
@@ -1777,7 +1783,10 @@ namespace irr
 			}
 
 			//! Upload the texels of one mapped region: regionTileCount * tileSizeInBytes bytes,
-			//! tile after tile in the region's row-major order, each tile tightly packed.
+			//! tile after tile in the region's row-major order, each tile a tightly packed
+			//! TexelsWide x TexelsHigh block (the clipped last row/column of tiles included).
+			/** Standard mips only: the packed mip tail has no per-tile layout on any API, so its
+			levels are written through lock() or a copy. Synchronous, like texture creation. */
 			virtual bool updateTiles(ITexture* texture, const STileRegion& region, const void* data) { return false; }
 		};
 

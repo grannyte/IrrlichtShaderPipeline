@@ -6,7 +6,10 @@
 #ifdef _IRR_COMPILE_WITH_DIRECT3D_12_
 
 #include <d3d12shader.h> // D3DReflect(), see reflectCBuffer()
+#include <dxcapi.h>      // Shader Model 6 through DXC, see compileStageShaderModel6()
+#include <windows.h>
 #include <cstring>
+#include <string>
 #include <algorithm> // std::min(), see setConstantBuffer()
 #include "os.h"
 #include "IFileSystem.h"
@@ -56,6 +59,231 @@ namespace irr
 		private:
 			io::IFileSystem* FileSystem;
 		};
+
+		// ---------------- Shader Model 6 through DXC ----------------
+		// dxcompiler.dll is resolved at run time (no import library), so a build always starts on a
+		// machine without it and PreferShaderModel6 simply falls back to FXC there.
+		namespace
+		{
+			HMODULE DxcModule = 0;
+			HMODULE DxilModule = 0;
+			DxcCreateInstanceProc DxcCreateInstanceFn = 0;
+			bool DxcProbed = false;
+
+			std::wstring widenUtf8(const c8* text)
+			{
+				const int needed = MultiByteToWideChar(CP_UTF8, 0, text, -1, 0, 0);
+				if (needed <= 1)
+					return std::wstring();
+				std::wstring result((size_t)(needed - 1), L'\0');
+				MultiByteToWideChar(CP_UTF8, 0, text, -1, &result[0], needed);
+				return result;
+			}
+
+			core::stringc narrowUtf8(const wchar_t* text)
+			{
+				const int needed = WideCharToMultiByte(CP_UTF8, 0, text, -1, 0, 0, 0, 0);
+				if (needed <= 1)
+					return core::stringc();
+				std::string result((size_t)(needed - 1), '\0');
+				WideCharToMultiByte(CP_UTF8, 0, text, -1, &result[0], needed, 0, 0);
+				return core::stringc(result.c_str());
+			}
+
+			//! The DXC counterpart of CD3D12ShaderInclude: media/shaders/<name> through the engine's
+			//! file system, then the name as written. Stack-allocated by its one caller, which holds
+			//! the initial reference, so Release() never deletes.
+			class CD3D12DxcInclude : public IDxcIncludeHandler
+			{
+			public:
+				CD3D12DxcInclude(IDxcUtils* utils, io::IFileSystem* fileSystem)
+					: Utils(utils), FileSystem(fileSystem), RefCount(1) {}
+
+				HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObject) override
+				{
+					if (!ppvObject)
+						return E_POINTER;
+					if (riid == __uuidof(IUnknown) || riid == __uuidof(IDxcIncludeHandler))
+					{
+						*ppvObject = static_cast<IDxcIncludeHandler*>(this);
+						AddRef();
+						return S_OK;
+					}
+					*ppvObject = 0;
+					return E_NOINTERFACE;
+				}
+				ULONG STDMETHODCALLTYPE AddRef() override { return (ULONG)InterlockedIncrement(&RefCount); }
+				ULONG STDMETHODCALLTYPE Release() override { return (ULONG)InterlockedDecrement(&RefCount); }
+
+				HRESULT STDMETHODCALLTYPE LoadSource(LPCWSTR pFilename, IDxcBlob** ppIncludeSource) override
+				{
+					if (!ppIncludeSource)
+						return E_POINTER;
+					*ppIncludeSource = 0;
+					if (!FileSystem || !Utils)
+						return E_FAIL;
+
+					// DXC hands over "./name" for a quoted include; only the name the shader wrote matters.
+					core::stringc name = narrowUtf8(pFilename);
+					name.replace('\\', '/');
+					while (name.size() > 2 && name[0] == '.' && name[1] == '/')
+						name = name.subString(2, (s32)name.size() - 2);
+					core::stringc baseName = name;
+					const s32 slash = name.findLast('/');
+					if (slash >= 0)
+						baseName = name.subString(slash + 1, (s32)name.size() - slash - 1);
+
+					const core::stringc candidates[2] = { core::stringc("media/shaders/") + baseName, name };
+					for (u32 i = 0; i < 2; ++i)
+					{
+						const io::path path(candidates[i].c_str());
+						if (!FileSystem->existFile(path))
+							continue;
+						io::IReadFile* file = FileSystem->createAndOpenFile(path);
+						if (!file)
+							continue;
+						std::vector<c8> bytes((size_t)core::max_(file->getSize(), 0L));
+						if (!bytes.empty() && file->read(bytes.data(), (u32)bytes.size()) != (s32)bytes.size())
+							bytes.clear();
+						file->drop();
+
+						IDxcBlobEncoding* blob = 0;
+						if (FAILED(Utils->CreateBlob(bytes.data(), (UINT32)bytes.size(), DXC_CP_UTF8, &blob)) || !blob)
+							return E_OUTOFMEMORY;
+						*ppIncludeSource = blob;
+						return S_OK;
+					}
+					os::Printer::log("CD3D12MaterialRenderer: could not open included shader file", name.c_str(), ELL_ERROR);
+					return E_FAIL;
+				}
+
+			private:
+				IDxcUtils* Utils;
+				io::IFileSystem* FileSystem;
+				LONG RefCount;
+			};
+		}
+
+		bool CD3D12MaterialRenderer::isShaderModel6Available()
+		{
+			if (DxcCreateInstanceFn)
+				return true;
+			if (DxcProbed)
+				return false;
+			DxcProbed = true;
+			// dxil.dll first: DXC signs its DXIL through the validator it finds loaded, and an unsigned
+			// blob is refused by the runtime outside developer mode.
+			DxilModule = LoadLibraryA("dxil.dll");
+			DxcModule = LoadLibraryA("dxcompiler.dll");
+			if (!DxilModule || !DxcModule)
+			{
+				os::Printer::log("CD3D12MaterialRenderer: dxcompiler.dll / dxil.dll not beside the executable, "
+					"Shader Model 6 unavailable", ELL_INFORMATION);
+				return false;
+			}
+			DxcCreateInstanceFn = (DxcCreateInstanceProc)GetProcAddress(DxcModule, "DxcCreateInstance");
+			return DxcCreateInstanceFn != 0;
+		}
+
+		bool CD3D12MaterialRenderer::compileStageShaderModel6(const c8* source, const c8* entryPoint, const wchar_t* profile,
+			const c8* stageName, io::IFileSystem* fileSystem, ComPtr<ID3DBlob>& outCode,
+			std::vector<SD3D12UserShaderCBuffer>& outBuffers, std::vector<SD3D12UserShaderVariable>& outVariables)
+		{
+			outCode.Reset();
+			outBuffers.clear();
+			outVariables.clear();
+			const core::stringc prefix = core::stringc("CD3D12MaterialRenderer: user ") + stageName + " shader (SM 6): ";
+			if (!isShaderModel6Available())
+			{
+				os::Printer::log(prefix.c_str(), "DXC unavailable", ELL_ERROR);
+				return false;
+			}
+
+			ComPtr<IDxcCompiler3> compiler;
+			ComPtr<IDxcUtils> utils;
+			if (FAILED(DxcCreateInstanceFn(CLSID_DxcCompiler, IID_PPV_ARGS(&compiler))) ||
+				FAILED(DxcCreateInstanceFn(CLSID_DxcUtils, IID_PPV_ARGS(&utils))))
+			{
+				os::Printer::log(prefix.c_str(), "DxcCreateInstance failed", ELL_ERROR);
+				return false;
+			}
+
+			DxcBuffer buffer = {};
+			buffer.Ptr = source;
+			buffer.Size = strlen(source);
+			buffer.Encoding = DXC_CP_UTF8;
+			const std::wstring entry = widenUtf8(entryPoint && entryPoint[0] ? entryPoint : "main");
+
+			// HLSL 2018: the closest dialect to what FXC parsed, so a shader written for SM 5 compiles
+			// unchanged (2021's stricter overload rules reject some of that code). IRR_SM6 lets a
+			// source opt into wave intrinsics and friends behind an #ifdef.
+			std::vector<LPCWSTR> arguments;
+			arguments.push_back(L"-E");
+			arguments.push_back(entry.c_str());
+			arguments.push_back(L"-T");
+			arguments.push_back(profile);
+			arguments.push_back(L"-HV");
+			arguments.push_back(L"2018");
+			arguments.push_back(L"-D");
+			arguments.push_back(L"IRR_SM6=1");
+#ifdef _DEBUG
+			arguments.push_back(L"-Zi");
+			arguments.push_back(L"-Od");
+			arguments.push_back(L"-Qembed_debug");
+#else
+			arguments.push_back(L"-O3");
+#endif
+
+			CD3D12DxcInclude include(utils.Get(), fileSystem);
+			ComPtr<IDxcResult> result;
+			if (FAILED(compiler->Compile(&buffer, arguments.data(), (UINT32)arguments.size(),
+				fileSystem ? &include : nullptr, IID_PPV_ARGS(&result))) || !result)
+			{
+				os::Printer::log(prefix.c_str(), "IDxcCompiler3::Compile failed before reporting diagnostics", ELL_ERROR);
+				return false;
+			}
+
+			HRESULT status = S_OK;
+			result->GetStatus(&status);
+			ComPtr<IDxcBlobUtf8> errors;
+			result->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&errors), nullptr);
+			if (FAILED(status))
+			{
+				os::Printer::log(prefix.c_str(), errors && errors->GetStringLength() ? errors->GetStringPointer() :
+					"rejected without diagnostics", ELL_ERROR);
+				return false;
+			}
+
+			ComPtr<IDxcBlob> object;
+			result->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&object), nullptr);
+			if (!object || object->GetBufferSize() == 0)
+			{
+				os::Printer::log(prefix.c_str(), "no DXIL object produced", ELL_ERROR);
+				return false;
+			}
+			if (FAILED(D3DCreateBlob(object->GetBufferSize(), &outCode)))
+				return false;
+			memcpy(outCode->GetBufferPointer(), object->GetBufferPointer(), object->GetBufferSize());
+
+			// D3DReflect() cannot read DXIL; the reflection part DXC emits goes through its own utils.
+			ComPtr<IDxcBlob> reflectionBlob;
+			result->GetOutput(DXC_OUT_REFLECTION, IID_PPV_ARGS(&reflectionBlob), nullptr);
+			if (!reflectionBlob)
+			{
+				os::Printer::log(prefix.c_str(), "no reflection data produced", ELL_ERROR);
+				return false;
+			}
+			DxcBuffer reflectionBuffer = {};
+			reflectionBuffer.Ptr = reflectionBlob->GetBufferPointer();
+			reflectionBuffer.Size = reflectionBlob->GetBufferSize();
+			ComPtr<ID3D12ShaderReflection> reflector;
+			if (FAILED(utils->CreateReflection(&reflectionBuffer, IID_PPV_ARGS(&reflector))))
+			{
+				os::Printer::log(prefix.c_str(), "IDxcUtils::CreateReflection failed", ELL_ERROR);
+				return false;
+			}
+			return reflectFromReflector(reflector.Get(), outBuffers, outVariables);
+		}
 
 		CD3D12MaterialRenderer::~CD3D12MaterialRenderer()
 		{
@@ -176,6 +404,7 @@ namespace irr
 			if (!code)
 				return true; // stage absent (PS/VS optional in the generic API) -- nothing to reflect
 
+			// FXC bytecode only: DXIL is reflected through IDxcUtils, see compileStageShaderModel6().
 			ComPtr<ID3D12ShaderReflection> reflector;
 			HRESULT hr = D3DReflect(code->GetBufferPointer(), code->GetBufferSize(),
 				IID_PPV_ARGS(&reflector));
@@ -184,6 +413,16 @@ namespace irr
 				os::Printer::log("CD3D12MaterialRenderer: D3DReflect failed on a user shader", ELL_ERROR);
 				return false;
 			}
+			return reflectFromReflector(reflector.Get(), outBuffers, outVariables);
+		}
+
+		bool CD3D12MaterialRenderer::reflectFromReflector(ID3D12ShaderReflection* reflector,
+			std::vector<SD3D12UserShaderCBuffer>& outBuffers, std::vector<SD3D12UserShaderVariable>& outVariables)
+		{
+			outBuffers.clear();
+			outVariables.clear();
+			if (!reflector)
+				return false;
 
 			D3D12_SHADER_DESC shaderDesc = {};
 			reflector->GetDesc(&shaderDesc);
@@ -305,6 +544,48 @@ namespace irr
 			// built-in "solid" PS when PS is empty (see its comment), so no change is needed on the
 			// PSO-building side.
 			bool hasPixel = pixelShaderProgram && pixelShaderProgram[0];
+
+			// Shader Model 6 (SIrrlichtCreationParameters::PreferShaderModel6): every stage through
+			// DXC at xs_6_0, the requested SM 4/5 targets ignored. Same stage rules as the FXC path.
+			if (UseShaderModel6)
+			{
+				ComPtr<ID3DBlob> vs6, ps6, gs6, hs6, ds6;
+				if (!compileStageShaderModel6(vertexShaderProgram, vertexShaderEntryPointName, L"vs_6_0", "vertex",
+					fileSystem, vs6, VSBuffers, VSVariables))
+					return false;
+				if (hasPixel && !compileStageShaderModel6(pixelShaderProgram, pixelShaderEntryPointName, L"ps_6_0", "pixel",
+					fileSystem, ps6, PSBuffers, PSVariables))
+					return false;
+				if (!hasPixel)
+				{
+					PSBuffers.clear();
+					PSVariables.clear();
+				}
+				if (geometryShaderProgram && geometryShaderProgram[0] &&
+					!compileStageShaderModel6(geometryShaderProgram, geometryShaderEntryPointName, L"gs_6_0", "geometry",
+						fileSystem, gs6, GSBuffers, GSVariables))
+					return false;
+				const bool hasHull6 = hullShaderProgram && hullShaderProgram[0];
+				const bool hasDomain6 = domainShaderProgram && domainShaderProgram[0];
+				if (hasHull6 != hasDomain6)
+				{
+					os::Printer::log("CD3D12MaterialRenderer::compileFromHLSL: hull and domain shader "
+						"must be supplied together (D3D12 tessellation requires both stages)", ELL_ERROR);
+					return false;
+				}
+				if (hasHull6 && (!compileStageShaderModel6(hullShaderProgram, hullShaderEntryPointName, L"hs_6_0", "hull",
+					fileSystem, hs6, HSBuffers, HSVariables) ||
+					!compileStageShaderModel6(domainShaderProgram, domainShaderEntryPointName, L"ds_6_0", "domain",
+						fileSystem, ds6, DSBuffers, DSVariables)))
+					return false;
+				VS = vs6;
+				PS = ps6;
+				GS = gs6;
+				HS = hs6;
+				DS = ds6;
+				BlendMode = SPSOKey::EBlendMode::None;
+				return true;
+			}
 
 			// D3D12 requires Shader Model 5.0 minimum (root signature 1.1) -- same fallback as
 			// CD3D11MaterialRenderer::init() for a target < 4.0, including the
@@ -501,19 +782,28 @@ namespace irr
 				compileFlags |= D3DCOMPILE_PREFER_FLOW_CONTROL;
 
 			ComPtr<ID3DBlob> cs, errors;
-			HRESULT hr = D3DCompile(computeShaderProgram, strlen(computeShaderProgram), "user_compute_shader",
-				nullptr, pInclude, computeShaderEntryPointName && computeShaderEntryPointName[0] ? computeShaderEntryPointName : "main",
-				COMPUTE_SHADER_TYPE_NAMES[csCompileTarget], compileFlags, 0, &cs, &errors);
-			if (FAILED(hr))
+			if (UseShaderModel6)
 			{
-				if (errors)
-					os::Printer::log("CD3D12MaterialRenderer: user compute shader compilation: ",
-						static_cast<const char*>(errors->GetBufferPointer()), ELL_ERROR);
-				return false;
+				if (!compileStageShaderModel6(computeShaderProgram, computeShaderEntryPointName, L"cs_6_0", "compute",
+					fileSystem, cs, CSBuffers, CSVariables))
+					return false;
 			}
+			else
+			{
+				HRESULT hr = D3DCompile(computeShaderProgram, strlen(computeShaderProgram), "user_compute_shader",
+					nullptr, pInclude, computeShaderEntryPointName && computeShaderEntryPointName[0] ? computeShaderEntryPointName : "main",
+					COMPUTE_SHADER_TYPE_NAMES[csCompileTarget], compileFlags, 0, &cs, &errors);
+				if (FAILED(hr))
+				{
+					if (errors)
+						os::Printer::log("CD3D12MaterialRenderer: user compute shader compilation: ",
+							static_cast<const char*>(errors->GetBufferPointer()), ELL_ERROR);
+					return false;
+				}
 
-			if (!reflectCBuffer(cs.Get(), CSBuffers, CSVariables))
-				return false;
+				if (!reflectCBuffer(cs.Get(), CSBuffers, CSVariables))
+					return false;
+			}
 
 			// Unlike the graphics stages (VS/PS/GS/HS/DS), createComputeRootSignature() still only
 			// reserves ONE user-cbuffer table, hardcoded to UserShaderRegisterSpace (space0) -- it

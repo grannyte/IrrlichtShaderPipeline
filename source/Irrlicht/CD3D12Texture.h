@@ -83,6 +83,7 @@
 #include <irrArray.h>
 #include "ITexture.h"
 #include "IImage.h"
+#include "CTiledResourceHelpers.h"
 
 namespace irr
 {
@@ -148,7 +149,16 @@ namespace irr
 			CD3D12Texture(const core::array<ITexture*>& surfaces, CD3D12Driver* driver,
 				E_TEXTURE_TYPE type, const io::path& name);
 
+			//! Tiled texture: a reserved resource (CreateReservedResource, 64KB_UNDEFINED_SWIZZLE) whose
+			//! tiles CD3D12Driver::updateTileMappings() binds to a heap. mipLevels 0 = the full chain.
+			//! Mips are never generated for it (the caller streams them in tile by tile).
+			CD3D12Texture(CD3D12Driver* driver, const core::dimension2d<u32>& size, const io::path& name,
+				ECOLOR_FORMAT format, u32 mipLevels, u32 arraySlices, bool renderTarget, STiledTextureTag);
+
 			virtual ~CD3D12Texture();
+
+			//! Created by the tiled constructor: no backing until its tiles are mapped.
+			bool isTiled() const { return Tiled; }
 
 			virtual void* lock(E_TEXTURE_LOCK_MODE mode = ETLM_READ_WRITE, u32 mipmapLevel = 0) _IRR_OVERRIDE_;
 			virtual void unlock() _IRR_OVERRIDE_;
@@ -255,6 +265,7 @@ namespace irr
 
 			CD3D12Driver* Driver;
 			ComPtr<ID3D12Resource> Resource;
+			bool Tiled = false;
 			D3D12_RESOURCE_STATES CurrentState = D3D12_RESOURCE_STATE_COMMON;
 			DXGI_FORMAT DxgiFormat = DXGI_FORMAT_UNKNOWN;
 			//! 1 if no mipmaps, otherwise computeMipLevels(Size.Width, Size.Height).

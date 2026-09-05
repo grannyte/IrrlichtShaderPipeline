@@ -454,6 +454,16 @@ namespace irr
 					for (size_t i = 0; i < sizeof(shifts) / sizeof(shifts[0]); ++i)
 						arguments.push_back(shifts[i]);
 				}
+				else
+				{
+					// Graphics stages keep t#/b#/s# where they are; only the UAV registers move, to
+					// 16 + u#, so a pixel-stage RWTexture/RWStructuredBuffer never collides with a
+					// texture at the same number and maps straight onto the driver's UAV slot table
+					// (bindPixelShaderBuffer()/bindPixelShaderTexture(): slot s = binding 16 + s).
+					static const wchar_t* const uavShift[] = { L"-fvk-u-shift", L"16", L"all" };
+					for (size_t i = 0; i < sizeof(uavShift) / sizeof(uavShift[0]); ++i)
+						arguments.push_back(uavShift[i]);
+				}
 
 				IDxcResult* result = 0;
 				const HRESULT compiled = compiler->Compile(&sourceBuffer, arguments.data(),

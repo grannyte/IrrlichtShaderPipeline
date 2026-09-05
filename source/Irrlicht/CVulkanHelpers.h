@@ -276,7 +276,8 @@ namespace irr
 			bool HasSamplerFilterMinmax = false;	//!< samplerFilterMinmax (1.2 core feature / EXT)
 			bool HasConditionalRendering = false;	//!< VK_EXT_conditional_rendering: predication
 			bool HasPipelineStatistics = false;	//!< pipelineStatisticsQuery feature
-			bool HasSparseResidency = false;	//!< sparseBinding + sparseResidencyImage2D: tiled textures
+			bool HasFragmentStores = false;	//!< fragmentStoresAndAtomics: pixel-stage UAVs
+			bool HasSparseResidency = false;	//!< sparseBinding + sparseResidencyImage2D on a sparse-capable queue: tiled textures
 			bool HasSparseResidencyStrict = false;	//!< residencyNonResidentStrict: unmapped tiles read zero
 			bool HasShaderResourceResidency = false;	//!< shaderResourceResidency: sparse feedback in the shader
 		};

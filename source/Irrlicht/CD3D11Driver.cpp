@@ -126,7 +126,10 @@ namespace irr
 			deleteMaterialRenders();
 			deleteAllTextures();
 			removeAllOcclusionQueries();
+			releaseQueryObjects();
 			removeAllHardwareBuffers();
+			// The tile pools the tiled textures still map into: released before the device is.
+			releaseTiledRecords();
 
 			if (BridgeCalls)
 				delete BridgeCalls;
@@ -475,6 +478,7 @@ namespace irr
 			::ZeroMemory(&present, sizeof(DXGI_SWAP_CHAIN_DESC));
 			present.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 			present.BufferCount = 2;
+			chooseSwapchainFormat();
 			present.BufferDesc.Format = D3DColorFormat;
 			present.BufferDesc.Width = Params.WindowSize.Width;
 			present.BufferDesc.Height = Params.WindowSize.Height;
@@ -564,6 +568,7 @@ namespace irr
 				}
 			}
 			DXGIDevice->Release();
+			applySwapchainColorSpace();
 
 			// Get default render target
 			ID3D11Texture2D* backBuffer = NULL;
@@ -575,13 +580,8 @@ namespace irr
 				return false;
 			}
 
-			hr = Device->CreateRenderTargetView(backBuffer, NULL, &DefaultBackBuffer);
-			if (FAILED(hr))
-			{
-				logFormatError(hr, "Could not create render target view");
-
+			if (!createBackBufferView(backBuffer))
 				return false;
-			}
 			backBuffer->Release();
 
 			// set exposed data
@@ -645,6 +645,7 @@ namespace irr
 			DriverAttributes->setAttribute("LogicOpOnUnorm", queryFeature(EVDF_LOGIC_OP) && formatSupportsLogicOp(D3DColorFormat));
 			DriverAttributes->setAttribute("TiledResourcesTier", (s32)FeatureOptions2.TiledResourcesTier);
 			DriverAttributes->setAttribute("ConservativeRasterizationTier", (s32)FeatureOptions2.ConservativeRasterizationTier);
+			DriverAttributes->setAttribute("SwapchainColorSpace", (s32)SwapchainColorSpace);
 			DriverAttributes->setAttribute("AntiAlias", Params.AntiAlias);
 
 			// clear textures
@@ -668,6 +669,18 @@ namespace irr
 				desc.Query = D3D11_QUERY_OCCLUSION;
 				desc.MiscFlags = 0;
 				Device->CreateQuery(&desc, reinterpret_cast<ID3D11Query**>(&OcclusionQueries[index].PID));
+
+				// The predicate twin for beginPredicatedDraws(): SetPredication() only takes a
+				// predicate object, not the counting query above.
+				if (Predicates.find(node.get()) == Predicates.end())
+				{
+					D3D11_QUERY_DESC predicateDesc;
+					predicateDesc.Query = D3D11_QUERY_OCCLUSION_PREDICATE;
+					predicateDesc.MiscFlags = 0;
+					ID3D11Predicate* predicate = NULL;
+					if (SUCCEEDED(Device->CreatePredicate(&predicateDesc, &predicate)))
+						Predicates[node.get()] = predicate;
+				}
 			}
 		}
 
@@ -694,6 +707,13 @@ namespace irr
 					reinterpret_cast<ID3D11Query*>(OcclusionQueries[index].PID)->Release();
 				CNullDriver::removeOcclusionQuery(node);
 			}
+			std::unordered_map<scene::ISceneNode*, ID3D11Predicate*>::iterator predicate = Predicates.find(node.get());
+			if (predicate != Predicates.end())
+			{
+				if (predicate->second)
+					predicate->second->Release();
+				Predicates.erase(predicate);
+			}
 		}
 
 		//! Run occlusion query. Draws mesh stored in query.
@@ -707,11 +727,18 @@ namespace irr
 			const s32 index = OcclusionQueries.linear_search(SOccQuery(node));
 			if (index != -1)
 			{
+				std::unordered_map<scene::ISceneNode*, ID3D11Predicate*>::iterator predicate = Predicates.find(node.get());
+				ID3D11Predicate* pred = predicate != Predicates.end() ? predicate->second : NULL;
+
 				if (OcclusionQueries[index].PID)
 					Context->Begin(reinterpret_cast<ID3D11Query*>(OcclusionQueries[index].PID));
+				if (pred)
+					Context->Begin(pred);
 
 				CNullDriver::runOcclusionQuery(node, visible);
 
+				if (pred)
+					Context->End(pred);
 				if (OcclusionQueries[index].PID)
 					Context->End(reinterpret_cast<ID3D11Query*>(OcclusionQueries[index].PID));
 			}
@@ -782,6 +809,24 @@ namespace irr
 				Context->ClearDepthStencilView(DefaultDepthBuffer->dsView, flags, 0.0f, 0);
 			}
 
+			// Timers / statistics: move to the next query slot, read what it recorded four frames
+			// ago, then open its disjoint (and statistics) query for this frame.
+			if (StatsArmed && !QueryFramesCreated)
+				ensureQueryFrames();
+			if (QueryFramesCreated)
+			{
+				QueryFrameIndex = (QueryFrameIndex + 1) % QueryFrameCount;
+				SD3D11QueryFrame& frame = QueryFrames[QueryFrameIndex];
+				harvestQueryFrame(frame);
+				Context->Begin(frame.Disjoint);
+				frame.Open = true;
+				if (StatsArmed && frame.Stats)
+				{
+					Context->Begin(frame.Stats);
+					frame.StatsOpen = true;
+				}
+			}
+
 			return true;
 		}
 
@@ -789,6 +834,15 @@ namespace irr
 		bool CD3D11Driver::endScene()
 		{
 			CNullDriver::endScene();
+
+			if (QueryFramesCreated)
+			{
+				SD3D11QueryFrame& frame = QueryFrames[QueryFrameIndex];
+				if (frame.Open)
+					Context->End(frame.Disjoint);
+				if (frame.StatsOpen)
+					Context->End(frame.Stats);
+			}
 
 			HRESULT hr = S_OK;
 
@@ -891,6 +945,13 @@ namespace irr
 				return FeatureLevel >= D3D_FEATURE_LEVEL_10_0; // SV_ViewportArrayIndex from a geometry shader
 			case EVDF_MINMAX_FILTER:
 				return FeatureOptions1.MinMaxFiltering != 0;
+			case EVDF_PREDICATION:	// D3D11_QUERY_OCCLUSION_PREDICATE + SetPredication, every feature level
+			case EVDF_TIMER_QUERY:	// D3D11_QUERY_TIMESTAMP / _DISJOINT / _PIPELINE_STATISTICS
+				return true;
+			case EVDF_PIXEL_SHADER_UAV:	// OMSetRenderTargetsAndUnorderedAccessViews, feature level 11
+				return FeatureLevel >= D3D_FEATURE_LEVEL_11_0;
+			case EVDF_TILED_RESOURCES:	// D3D11.2 tile pools + D3D11_RESOURCE_MISC_TILED
+				return Device2 != NULL && FeatureOptions2.TiledResourcesTier != D3D11_TILED_RESOURCES_NOT_SUPPORTED;
 
 			default:
 				return false;
@@ -1378,8 +1439,126 @@ namespace irr
 					return;
 				}
 			}
+			// A pixel-stage binding applies its counter at bind time, so the bind is re-issued.
+			for (u32 i = 0; i < MaxPixelUAVSlots; ++i)
+			{
+				if (PixelUAVSource[i] == appendBuffer)
+				{
+					PixelUAVInitialCounts[i] = value;
+					applyPixelShaderUAVs();
+					return;
+				}
+			}
 
 			os::Printer::log("CD3D11Driver::resetStructureCount: buffer is not bound - bind it as a UAV first", ELL_WARNING);
+		}
+
+		// ================================ pixel-stage UAVs ================================
+
+		void CD3D11Driver::applyPixelShaderUAVs()
+		{
+			if (!Context)
+				return;
+			u32 lo = MaxPixelUAVSlots, hi = 0;
+			for (u32 i = 0; i < MaxPixelUAVSlots; ++i)
+			{
+				if (!PixelUAV[i])
+					continue;
+				if (i < CurrentRenderTargetCount)
+				{
+					// The target count grew past this slot since it was bound; D3D11 refuses the call.
+					if (!WarnedPixelUAVSlot)
+						os::Printer::log("CD3D11Driver: a pixel-stage UAV slot overlaps the bound render "
+							"targets and is left unbound", ELL_WARNING);
+					WarnedPixelUAVSlot = true;
+					continue;
+				}
+				if (i < lo) lo = i;
+				hi = i + 1;
+			}
+			if (lo >= hi)
+			{
+				if (PixelUAVBoundCount)
+				{
+					ID3D11UnorderedAccessView* nulls[MaxPixelUAVSlots] = {};
+					Context->OMSetRenderTargetsAndUnorderedAccessViews(D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL,
+						NULL, NULL, PixelUAVBoundStart, PixelUAVBoundCount, nulls, NULL);
+					PixelUAVBoundCount = 0;
+				}
+				return;
+			}
+			Context->OMSetRenderTargetsAndUnorderedAccessViews(D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL,
+				NULL, NULL, lo, hi - lo, &PixelUAV[lo], &PixelUAVInitialCounts[lo]);
+			PixelUAVBoundStart = lo;
+			PixelUAVBoundCount = hi - lo;
+			// Counter resets are one-shot, as on the compute path.
+			for (u32 i = lo; i < hi; ++i)
+				PixelUAVInitialCounts[i] = (u32)-1;
+		}
+
+		bool CD3D11Driver::bindPixelShaderBuffer(u32 slot, scene::IComputeBuffer* buffer)
+		{
+			if (slot >= MaxPixelUAVSlots)
+			{
+				os::Printer::log("CD3D11Driver::bindPixelShaderBuffer: slot out of range", ELL_ERROR);
+				return false;
+			}
+			if (buffer && slot < CurrentRenderTargetCount)
+			{
+				os::Printer::log("CD3D11Driver::bindPixelShaderBuffer: the slot must be at or above the "
+					"number of bound render targets", ELL_ERROR);
+				return false;
+			}
+			CD3D11HardwareBuffer* hw = buffer ? prepareComputeBuffer(buffer) : NULL;
+			PixelUAV[slot] = hw ? hw->getUnorderedAccessView() : NULL;
+			PixelUAVSource[slot] = hw ? buffer : NULL;
+			PixelUAVTexture[slot] = NULL;
+			PixelUAVInitialCounts[slot] = (u32)-1;
+			applyPixelShaderUAVs();
+			return !buffer || (hw != NULL && PixelUAV[slot] != NULL);
+		}
+
+		bool CD3D11Driver::bindPixelShaderTexture(u32 slot, ITexture* texture)
+		{
+			if (slot >= MaxPixelUAVSlots)
+			{
+				os::Printer::log("CD3D11Driver::bindPixelShaderTexture: slot out of range", ELL_ERROR);
+				return false;
+			}
+			if (texture && slot < CurrentRenderTargetCount)
+			{
+				os::Printer::log("CD3D11Driver::bindPixelShaderTexture: the slot must be at or above the "
+					"number of bound render targets", ELL_ERROR);
+				return false;
+			}
+			if (texture && (texture->getDriverType() != EDT_DIRECT3D11 || !texture->isUnorderedAccess()))
+			{
+				os::Printer::log("CD3D11Driver::bindPixelShaderTexture: not an addUAVTexture() texture", ELL_ERROR);
+				return false;
+			}
+			CD3D11Texture* tex = static_cast<CD3D11Texture*>(texture);
+			PixelUAV[slot] = tex ? tex->getUnorderedAccessView() : NULL;
+			PixelUAVSource[slot] = NULL;
+			PixelUAVTexture[slot] = texture;
+			PixelUAVInitialCounts[slot] = (u32)-1;
+			// A UAV bind kicks the texture out of every SRV slot; the bridge's cache must not
+			// believe it is still bound there.
+			if (texture)
+				BridgeCalls->invalidateTextureBinding(texture);
+			applyPixelShaderUAVs();
+			return !texture || PixelUAV[slot] != NULL;
+		}
+
+		void CD3D11Driver::unbindPixelShaderResources()
+		{
+			for (u32 i = 0; i < MaxPixelUAVSlots; ++i)
+			{
+				PixelUAV[i] = NULL;
+				PixelUAVSource[i] = NULL;
+				PixelUAVTexture[i] = NULL;
+				PixelUAVInitialCounts[i] = (u32)-1;
+			}
+			applyPixelShaderUAVs();
 		}
 
 		bool CD3D11Driver::beginComputeReadback(scene::IComputeBuffer* buffer, u32 slot)
@@ -1568,6 +1747,8 @@ namespace irr
 			CurrentDepthBuffer = 0;
 			MrtBlendActive = false;
 			Context->OMSetRenderTargets(1, &view, NULL);
+			CurrentRenderTargetCount = 1;
+			reapplyPixelShaderUAVsAfterTargetChange();
 
 			if (clearTarget)
 			{
@@ -1670,6 +1851,11 @@ namespace irr
 			core::dimension2du size = getCurrentRenderTargetSize();
 			// don't forget to set viewport
 			setViewPort(core::rect<s32>(0, 0, size.Width, size.Height));
+			// The 2D projection is built from the target size and only refreshed when this flag is
+			// set: a 2D draw right after a target change would otherwise keep the previous size's.
+			Transformation3DChanged = true;
+			CurrentRenderTargetCount = 1;
+			reapplyPixelShaderUAVsAfterTargetChange();
 
 			return true;
 		}
@@ -1840,6 +2026,9 @@ namespace irr
 			core::dimension2du size = getCurrentRenderTargetSize();
 			// don't forget to set viewport
 			setViewPort(core::rect<s32>(0, 0, size.Width, size.Height));
+			Transformation3DChanged = true; // see the single-target overload
+			CurrentRenderTargetCount = maxMultipleRTTs;
+			reapplyPixelShaderUAVsAfterTargetChange();
 
 			// BlendDesc was just overwritten from the targets' own blend settings, so the current
 			// material's blend state is gone. Force the next draw to re-apply it -- otherwise a
@@ -3072,6 +3261,549 @@ namespace irr
 				Context->RSSetViewports(count, viewports);
 		}
 
+		// ============================ timers, statistics, predication ============================
+
+		bool CD3D11Driver::ensureQueryFrames()
+		{
+			if (QueryFramesCreated)
+				return true;
+			if (!Device)
+				return false;
+			D3D11_QUERY_DESC disjoint = { D3D11_QUERY_TIMESTAMP_DISJOINT, 0 };
+			D3D11_QUERY_DESC timestamp = { D3D11_QUERY_TIMESTAMP, 0 };
+			D3D11_QUERY_DESC statistics = { D3D11_QUERY_PIPELINE_STATISTICS, 0 };
+			for (u32 f = 0; f < QueryFrameCount; ++f)
+			{
+				SD3D11QueryFrame& frame = QueryFrames[f];
+				if (FAILED(Device->CreateQuery(&disjoint, &frame.Disjoint)))
+				{
+					releaseQueryObjects();
+					return false;
+				}
+				for (u32 i = 0; i < EMCS_MAX_TIMER_QUERIES; ++i)
+				{
+					Device->CreateQuery(&timestamp, &frame.Begin[i]);
+					Device->CreateQuery(&timestamp, &frame.End[i]);
+				}
+				Device->CreateQuery(&statistics, &frame.Stats);
+			}
+			QueryFramesCreated = true;
+			return true;
+		}
+
+		void CD3D11Driver::releaseQueryObjects()
+		{
+			for (u32 f = 0; f < QueryFrameCount; ++f)
+			{
+				SD3D11QueryFrame& frame = QueryFrames[f];
+				if (frame.Disjoint) frame.Disjoint->Release();
+				if (frame.Stats) frame.Stats->Release();
+				for (u32 i = 0; i < EMCS_MAX_TIMER_QUERIES; ++i)
+				{
+					if (frame.Begin[i]) frame.Begin[i]->Release();
+					if (frame.End[i]) frame.End[i]->Release();
+				}
+				frame = SD3D11QueryFrame();
+			}
+			QueryFramesCreated = false;
+			for (std::unordered_map<scene::ISceneNode*, ID3D11Predicate*>::iterator it = Predicates.begin(); it != Predicates.end(); ++it)
+				if (it->second)
+					it->second->Release();
+			Predicates.clear();
+		}
+
+		void CD3D11Driver::harvestQueryFrame(SD3D11QueryFrame& frame)
+		{
+			// Four frames old: the data is normally there, and a wait on it is short. GetData is
+			// only legal on the immediate context, which is the one recording the queries.
+			if (frame.Open)
+			{
+				D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjoint = {};
+				HRESULT hr;
+				do
+				{
+					hr = Context->GetData(frame.Disjoint, &disjoint, sizeof(disjoint), 0);
+				} while (hr == S_FALSE);
+				for (u32 i = 0; i < EMCS_MAX_TIMER_QUERIES; ++i)
+				{
+					if (!frame.Used[i])
+						continue;
+					if (hr == S_OK && !disjoint.Disjoint && frame.Ended[i] && disjoint.Frequency)
+					{
+						UINT64 begin = 0, end = 0;
+						HRESULT b, e;
+						do { b = Context->GetData(frame.Begin[i], &begin, sizeof(begin), 0); } while (b == S_FALSE);
+						do { e = Context->GetData(frame.End[i], &end, sizeof(end), 0); } while (e == S_FALSE);
+						if (b == S_OK && e == S_OK && end >= begin)
+						{
+							TimerResults[i] = static_cast<u64>((end - begin) * 1000000000.0 / static_cast<f64>(disjoint.Frequency));
+							TimerResultValid[i] = true;
+						}
+					}
+					frame.Used[i] = frame.Ended[i] = false;
+				}
+				frame.Open = false;
+			}
+			if (frame.StatsOpen)
+			{
+				D3D11_QUERY_DATA_PIPELINE_STATISTICS stats = {};
+				HRESULT hr;
+				do
+				{
+					hr = Context->GetData(frame.Stats, &stats, sizeof(stats), 0);
+				} while (hr == S_FALSE);
+				if (hr == S_OK)
+				{
+					LastStats.VerticesIn = stats.IAVertices;
+					LastStats.PrimitivesIn = stats.IAPrimitives;
+					LastStats.VertexShaderInvocations = stats.VSInvocations;
+					LastStats.GeometryShaderInvocations = stats.GSInvocations;
+					LastStats.GeometryShaderPrimitives = stats.GSPrimitives;
+					LastStats.RasterizedPrimitives = stats.CPrimitives;
+					LastStats.PixelShaderInvocations = stats.PSInvocations;
+					LastStats.ComputeShaderInvocations = stats.CSInvocations;
+					StatsValid = true;
+				}
+				frame.StatsOpen = false;
+			}
+		}
+
+		void CD3D11Driver::beginTimer(u32 id)
+		{
+			if (id >= EMCS_MAX_TIMER_QUERIES || !ensureQueryFrames())
+				return;
+			SD3D11QueryFrame& frame = QueryFrames[QueryFrameIndex];
+			if (!frame.Open)
+			{
+				// First timer of the process, mid-frame: the disjoint query opens here and closes at
+				// endScene() like every later one.
+				Context->Begin(frame.Disjoint);
+				frame.Open = true;
+			}
+			if (frame.Used[id])
+			{
+				if (!WarnedTimerReuse)
+					os::Printer::log("CD3D11Driver::beginTimer: a timer id was begun twice in one frame, "
+						"the second pair is ignored", ELL_WARNING);
+				WarnedTimerReuse = true;
+				return;
+			}
+			Context->End(frame.Begin[id]); // a timestamp query is "ended" only
+			frame.Used[id] = true;
+		}
+
+		void CD3D11Driver::endTimer(u32 id)
+		{
+			if (id >= EMCS_MAX_TIMER_QUERIES || !QueryFramesCreated)
+				return;
+			SD3D11QueryFrame& frame = QueryFrames[QueryFrameIndex];
+			if (!frame.Used[id] || frame.Ended[id])
+				return;
+			Context->End(frame.End[id]);
+			frame.Ended[id] = true;
+		}
+
+		bool CD3D11Driver::getTimerResult(u32 id, u64& nanoseconds) const
+		{
+			if (id >= EMCS_MAX_TIMER_QUERIES || !TimerResultValid[id])
+				return false;
+			nanoseconds = TimerResults[id];
+			return true;
+		}
+
+		bool CD3D11Driver::getPipelineStatistics(SPipelineStatistics& out) const
+		{
+			StatsArmed = true; // the query objects are created at the next beginScene()
+			if (!StatsValid)
+				return false;
+			out = LastStats;
+			return true;
+		}
+
+		void CD3D11Driver::beginPredicatedDraws(std::shared_ptr<scene::ISceneNode> node)
+		{
+			if (!node || !Context)
+				return;
+			std::unordered_map<scene::ISceneNode*, ID3D11Predicate*>::iterator it = Predicates.find(node.get());
+			if (it == Predicates.end() || !it->second)
+				return; // no query for this node: draws go through normally
+			// FALSE: rendering is skipped when the predicate's result is FALSE, i.e. when the last
+			// occlusion pass saw no sample of the node.
+			Context->SetPredication(it->second, FALSE);
+		}
+
+		void CD3D11Driver::endPredicatedDraws()
+		{
+			if (Context)
+				Context->SetPredication(NULL, FALSE);
+		}
+
+		// ---------------- Swapchain colour space ----------------
+
+		void CD3D11Driver::chooseSwapchainFormat()
+		{
+			SwapchainColorSpace = ESCS_SRGB_NONLINEAR;
+			BackBufferViewFormat = DXGI_FORMAT_UNKNOWN;
+			switch (Params.ColorSpace)
+			{
+			case ESCS_SRGB_LINEAR:
+				// The buffer stays UNORM (a flip-model swapchain refuses _SRGB); the view encodes.
+				if (D3DColorFormat == DXGI_FORMAT_R8G8B8A8_UNORM)
+					BackBufferViewFormat = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+				else if (D3DColorFormat == DXGI_FORMAT_B8G8R8A8_UNORM)
+					BackBufferViewFormat = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+				if (BackBufferViewFormat != DXGI_FORMAT_UNKNOWN)
+					SwapchainColorSpace = ESCS_SRGB_LINEAR;
+				else
+					os::Printer::log("CD3D11Driver: no sRGB view for this back buffer format, ESCS_SRGB_NONLINEAR used", ELL_WARNING);
+				break;
+			case ESCS_SCRGB_LINEAR:
+				D3DColorFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
+				break;
+			case ESCS_HDR10_ST2084:
+				D3DColorFormat = DXGI_FORMAT_R10G10B10A2_UNORM;
+				break;
+			default:
+				break;
+			}
+		}
+
+		void CD3D11Driver::applySwapchainColorSpace()
+		{
+			if (Params.ColorSpace != ESCS_SCRGB_LINEAR && Params.ColorSpace != ESCS_HDR10_ST2084)
+				return;
+			const DXGI_COLOR_SPACE_TYPE space = Params.ColorSpace == ESCS_SCRGB_LINEAR ?
+				DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709 : DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+			IDXGISwapChain3* swapChain3 = NULL;
+			if (SwapChain)
+				SwapChain->QueryInterface(__uuidof(IDXGISwapChain3), reinterpret_cast<void**>(&swapChain3));
+			UINT support = 0;
+			if (swapChain3 && SUCCEEDED(swapChain3->CheckColorSpaceSupport(space, &support)) &&
+				(support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT) && SUCCEEDED(swapChain3->SetColorSpace1(space)))
+				SwapchainColorSpace = Params.ColorSpace;
+			else
+				os::Printer::log("CD3D11Driver: the display or runtime refuses the requested swapchain colour space; "
+					"the wider back buffer is kept and presented as sRGB (ESCS_SRGB_NONLINEAR)", ELL_WARNING);
+			if (swapChain3)
+				swapChain3->Release();
+		}
+
+		bool CD3D11Driver::createBackBufferView(ID3D11Texture2D* backBuffer)
+		{
+			D3D11_RENDER_TARGET_VIEW_DESC desc;
+			D3D11_RENDER_TARGET_VIEW_DESC* descPtr = NULL;
+			if (BackBufferViewFormat != DXGI_FORMAT_UNKNOWN)
+			{
+				D3D11_TEXTURE2D_DESC textureDesc;
+				backBuffer->GetDesc(&textureDesc);
+				::ZeroMemory(&desc, sizeof(desc));
+				desc.Format = BackBufferViewFormat;
+				desc.ViewDimension = textureDesc.SampleDesc.Count > 1 ?
+					D3D11_RTV_DIMENSION_TEXTURE2DMS : D3D11_RTV_DIMENSION_TEXTURE2D;
+				descPtr = &desc;
+			}
+			const HRESULT hr = Device->CreateRenderTargetView(backBuffer, descPtr, &DefaultBackBuffer);
+			if (FAILED(hr))
+			{
+				logFormatError(hr, "Could not create render target view");
+				return false;
+			}
+			return true;
+		}
+
+		// ---------------- Tiled resources (D3D11.2) ----------------
+
+		//! A D3D11_RESOURCE_MISC_TILE_POOL buffer, grown or shrunk in place by ResizeTilePool.
+		class CD3D11TilePool : public CTilePoolBase
+		{
+		public:
+			CD3D11TilePool(ID3D11Device2* device, ID3D11DeviceContext2* context)
+				: Buffer(0), Device(device), Context(context)
+			{
+				Device->AddRef();
+				Context->AddRef();
+			}
+
+			virtual ~CD3D11TilePool()
+			{
+				if (Buffer)
+					Buffer->Release();
+				Context->Release();
+				Device->Release();
+			}
+
+			bool create(u32 tileCount)
+			{
+				D3D11_BUFFER_DESC desc;
+				ZeroMemory(&desc, sizeof(desc));
+				desc.ByteWidth = tileCount * TILED_RESOURCE_TILE_BYTES;
+				desc.Usage = D3D11_USAGE_DEFAULT;
+				desc.MiscFlags = D3D11_RESOURCE_MISC_TILE_POOL;
+				if (FAILED(Device->CreateBuffer(&desc, NULL, &Buffer)))
+				{
+					os::Printer::log("CD3D11Driver::createTilePool: CreateBuffer(TILE_POOL) failed", ELL_ERROR);
+					Buffer = 0;
+					return false;
+				}
+				TileCount = tileCount;
+				MappedCount.assign(tileCount, 0);
+				return true;
+			}
+
+			virtual bool resize(u32 tileCount) _IRR_OVERRIDE_
+			{
+				if (tileCount == 0 || !Buffer)
+					return false;
+				if (tileCount < TileCount && !canShrinkTo(tileCount))
+				{
+					os::Printer::log("ITilePool::resize: a tile past the new size is still mapped", ELL_ERROR);
+					return false;
+				}
+				if (FAILED(Context->ResizeTilePool(Buffer, (UINT64)tileCount * TILED_RESOURCE_TILE_BYTES)))
+				{
+					os::Printer::log("ITilePool::resize: ResizeTilePool failed", ELL_ERROR);
+					return false;
+				}
+				TileCount = tileCount;
+				MappedCount.resize(tileCount, 0);
+				return true;
+			}
+
+			ID3D11Buffer* Buffer;
+
+		private:
+			ID3D11Device2* Device;
+			ID3D11DeviceContext2* Context;
+		};
+
+		ID3D11DeviceContext2* CD3D11Driver::getTiledContext() const
+		{
+			if (!Device2 || !Device)
+				return NULL;
+			ID3D11DeviceContext* immediate = NULL;
+			Device->GetImmediateContext(&immediate);
+			if (!immediate)
+				return NULL;
+			ID3D11DeviceContext2* context2 = NULL;
+			immediate->QueryInterface(__uuidof(ID3D11DeviceContext2), reinterpret_cast<void**>(&context2));
+			immediate->Release();
+			return context2;
+		}
+
+		ITilePool* CD3D11Driver::createTilePool(u32 tileCount)
+		{
+			if (!queryFeature(EVDF_TILED_RESOURCES) || tileCount == 0)
+			{
+				os::Printer::log("CD3D11Driver::createTilePool: tiled resources unavailable or empty pool", ELL_ERROR);
+				return 0;
+			}
+			ID3D11DeviceContext2* context = getTiledContext();
+			if (!context)
+				return 0;
+			CD3D11TilePool* pool = new CD3D11TilePool(Device2, context);
+			context->Release();
+			if (!pool->create(tileCount))
+			{
+				pool->drop();
+				return 0;
+			}
+			return pool;
+		}
+
+		bool CD3D11Driver::queryTileShape(CD3D11Texture* texture, STiledTextureRecord& out) const
+		{
+			UINT tileCount = 0;
+			D3D11_PACKED_MIP_DESC packed = {};
+			D3D11_TILE_SHAPE shape = {};
+			UINT subresourceCount = texture->NumberOfMipLevels * texture->NumberOfArraySlices;
+			std::vector<D3D11_SUBRESOURCE_TILING> tilings(subresourceCount);
+			Device2->GetResourceTiling(texture->Texture, &tileCount, &packed, &shape, &subresourceCount, 0, tilings.data());
+			if (tileCount == 0 || shape.WidthInTexels == 0)
+			{
+				os::Printer::log("CD3D11Driver::addTiledTexture: GetResourceTiling reported no tiles", ELL_ERROR);
+				return false;
+			}
+			out.Size = texture->getSize();
+			out.MipLevels = texture->NumberOfMipLevels;
+			out.ArraySlices = texture->NumberOfArraySlices;
+			out.Shape.TexelsWide = shape.WidthInTexels;
+			out.Shape.TexelsHigh = shape.HeightInTexels;
+			out.Shape.TexelsDeep = shape.DepthInTexels;
+			out.Shape.TilesWide = out.tilesWide(0);
+			out.Shape.TilesHigh = out.tilesHigh(0);
+			out.Shape.TilesDeep = 1;
+			out.Shape.MipTailStart = packed.NumStandardMips;
+			out.Shape.MipTailTiles = packed.NumTilesForPackedMips;
+			out.Shape.TotalTiles = tileCount;
+			return true;
+		}
+
+		ITexture* CD3D11Driver::addTiledTexture(const core::dimension2d<u32>& size, const io::path& name,
+			ECOLOR_FORMAT format, u32 mipLevels, u32 arraySlices, bool isRenderTarget)
+		{
+			if (!queryFeature(EVDF_TILED_RESOURCES))
+			{
+				os::Printer::log("CD3D11Driver::addTiledTexture: EVDF_TILED_RESOURCES unavailable", name, ELL_ERROR);
+				return 0;
+			}
+			CD3D11Texture* texture = new CD3D11Texture(this, size, name, format, mipLevels, arraySlices,
+				isRenderTarget, STiledTextureTag());
+			STiledTextureRecord record;
+			if (!texture->getTextureResource() || !queryTileShape(texture, record))
+			{
+				texture->drop();
+				return 0;
+			}
+			addTexture(texture);
+			texture->drop();
+			TiledTextures[texture] = record;
+			return texture;
+		}
+
+		bool CD3D11Driver::getTileShape(const ITexture* texture, STileShape& out) const
+		{
+			std::map<const ITexture*, STiledTextureRecord>::const_iterator it = TiledTextures.find(texture);
+			if (it == TiledTextures.end())
+				return false;
+			out = it->second.Shape;
+			return true;
+		}
+
+		namespace
+		{
+			//! The D3D11 coordinate + size of one region: a box for a standard mip, a linear tile run
+			//! (bUseBox = FALSE, X = the first tile) inside the packed tail.
+			void fillTileRegion(const STiledTextureRecord& record, const STileRegion& region,
+				D3D11_TILED_RESOURCE_COORDINATE& coordinate, D3D11_TILE_REGION_SIZE& size)
+			{
+				ZeroMemory(&coordinate, sizeof(coordinate));
+				ZeroMemory(&size, sizeof(size));
+				coordinate.Subresource = D3D11CalcSubresource(region.MipLevel, region.ArraySlice, record.MipLevels);
+				coordinate.X = region.X;
+				size.NumTiles = region.getTileCount();
+				if (record.isMipTail(region.MipLevel))
+					return;
+				coordinate.Y = region.Y;
+				coordinate.Z = region.Z;
+				size.bUseBox = TRUE;
+				size.Width = region.Width;
+				size.Height = static_cast<UINT16>(region.Height);
+				size.Depth = static_cast<UINT16>(region.Depth);
+			}
+		}
+
+		bool CD3D11Driver::updateTileMappings(ITexture* texture, const STileRegion* regions, u32 regionCount,
+			ITilePool* pool, const u32* poolTileIndices)
+		{
+			std::map<const ITexture*, STiledTextureRecord>::iterator it = TiledTextures.find(texture);
+			if (it == TiledTextures.end())
+			{
+				os::Printer::log("CD3D11Driver::updateTileMappings: not a tiled texture of this driver", ELL_ERROR);
+				return false;
+			}
+			STiledTextureRecord& record = it->second;
+			CD3D11TilePool* d3dPool = static_cast<CD3D11TilePool*>(pool);
+			if (!record.validate(regions, regionCount, d3dPool, poolTileIndices, "CD3D11Driver::updateTileMappings"))
+				return false;
+			// Unmapping names a pool too: with a null pTilePool the AMD driver (Radeon Pro, 2026
+			// runtime) drops EVERY mapping of the resource, not just the NULL ranges, so the NULL
+			// ranges are issued against a pool the texture currently maps into. No pool at all means
+			// nothing is mapped, and there is nothing to do.
+			ID3D11Buffer* poolBuffer = pool ? d3dPool->Buffer : NULL;
+			if (!pool)
+			{
+				if (record.PoolRefs.empty())
+					return true;
+				poolBuffer = static_cast<CD3D11TilePool*>(record.PoolRefs.begin()->first)->Buffer;
+			}
+			ID3D11DeviceContext2* context = getTiledContext();
+			if (!context)
+				return false;
+
+			std::vector<D3D11_TILED_RESOURCE_COORDINATE> coordinates(regionCount);
+			std::vector<D3D11_TILE_REGION_SIZE> sizes(regionCount);
+			std::vector<UINT> rangeFlags(regionCount), rangeStarts(regionCount), rangeCounts(regionCount);
+			for (u32 i = 0; i < regionCount; ++i)
+			{
+				fillTileRegion(record, regions[i], coordinates[i], sizes[i]);
+				rangeFlags[i] = pool ? 0 : D3D11_TILE_RANGE_NULL;
+				rangeStarts[i] = pool ? poolTileIndices[i] : 0;
+				rangeCounts[i] = regions[i].getTileCount();
+			}
+			const HRESULT hr = context->UpdateTileMappings(static_cast<CD3D11Texture*>(texture)->getTextureResource(),
+				regionCount, coordinates.data(), sizes.data(), poolBuffer,
+				regionCount, rangeFlags.data(), rangeStarts.data(), rangeCounts.data(), 0);
+			context->Release();
+			if (FAILED(hr))
+			{
+				logFormatError(hr, "CD3D11Driver::updateTileMappings: UpdateTileMappings failed");
+				return false;
+			}
+
+			for (u32 i = 0; i < regionCount; ++i)
+			{
+				const STileRegion& r = regions[i];
+				u32 n = 0;
+				for (u32 z = 0; z < r.Depth; ++z)
+					for (u32 y = 0; y < r.Height; ++y)
+						for (u32 x = 0; x < r.Width; ++x, ++n)
+							record.account(STiledTextureRecord::tileKey(coordinates[i].Subresource, r.X + x, r.Y + y, r.Z + z),
+								pool ? d3dPool : 0, pool ? poolTileIndices[i] + n : 0);
+			}
+			return true;
+		}
+
+		bool CD3D11Driver::updateTiles(ITexture* texture, const STileRegion& region, const void* data)
+		{
+			std::map<const ITexture*, STiledTextureRecord>::iterator it = TiledTextures.find(texture);
+			if (it == TiledTextures.end() || !data)
+			{
+				os::Printer::log("CD3D11Driver::updateTiles: not a tiled texture of this driver, or no data", ELL_ERROR);
+				return false;
+			}
+			const STiledTextureRecord& record = it->second;
+			if (!record.validate(&region, 1, 0, 0, "CD3D11Driver::updateTiles"))
+				return false;
+			if (record.isMipTail(region.MipLevel))
+			{
+				os::Printer::log("CD3D11Driver::updateTiles: packed mips have no per-tile layout; write them through lock()", ELL_ERROR);
+				return false;
+			}
+			ID3D11DeviceContext2* context = getTiledContext();
+			if (!context)
+				return false;
+			D3D11_TILED_RESOURCE_COORDINATE coordinate;
+			D3D11_TILE_REGION_SIZE size;
+			fillTileRegion(record, region, coordinate, size);
+			context->UpdateTiles(static_cast<CD3D11Texture*>(texture)->getTextureResource(), &coordinate, &size, data, 0);
+			context->Release();
+			return true;
+		}
+
+		void CD3D11Driver::removeTexture(ITexture* texture)
+		{
+			std::map<const ITexture*, STiledTextureRecord>::iterator it = TiledTextures.find(texture);
+			if (it != TiledTextures.end())
+			{
+				it->second.release();
+				TiledTextures.erase(it);
+			}
+			CNullDriver::removeTexture(texture);
+		}
+
+		void CD3D11Driver::removeAllTextures()
+		{
+			releaseTiledRecords();
+			CNullDriver::removeAllTextures();
+		}
+
+		void CD3D11Driver::releaseTiledRecords()
+		{
+			for (std::map<const ITexture*, STiledTextureRecord>::iterator it = TiledTextures.begin(); it != TiledTextures.end(); ++it)
+				it->second.release();
+			TiledTextures.clear();
+		}
+
 		bool CD3D11Driver::formatSupportsLogicOp(DXGI_FORMAT format)
 		{
 			std::map<DXGI_FORMAT, bool>::iterator cached = LogicOpFormatSupport.find(format);
@@ -3233,6 +3965,14 @@ namespace irr
 
 			if (format == video::ECF_UNKNOWN)
 				format = video::ECF_A8R8G8B8;
+
+			// The copy below needs a staging texture of the back buffer's own format: a 16-bit float
+			// or 10-bit swapchain (ESCS_SCRGB_LINEAR / ESCS_HDR10_ST2084) has no 8-bit image to hand out.
+			if (D3DColorFormat != DXGI_FORMAT_R8G8B8A8_UNORM && D3DColorFormat != DXGI_FORMAT_B8G8R8A8_UNORM)
+			{
+				os::Printer::log("CD3D11Driver::createScreenShot: only an 8-bit back buffer can be read back", ELL_WARNING);
+				return 0;
+			}
 
 			core::dimension2du size = getCurrentRenderTargetSize();
 
@@ -4150,13 +4890,8 @@ namespace irr
 				return;
 			}
 
-			hr = Device->CreateRenderTargetView(backBuffer, NULL, &DefaultBackBuffer);
-			if (FAILED(hr))
-			{
-				logFormatError(hr, "Could not create render target view");
-
+			if (!createBackBufferView(backBuffer))
 				return;
-			}
 			D3D11_TEXTURE2D_DESC tdesc;
 			ZeroMemory(&tdesc, sizeof(D3D11_TEXTURE2D_DESC));
 			backBuffer->GetDesc(&tdesc);

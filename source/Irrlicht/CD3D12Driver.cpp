@@ -113,6 +113,8 @@ namespace irr
 			// used to avoid -- it must not be lost when moving to CNullDriver.
 			// deleteAllTextures() is a no-op for a deferred context (its cache stays empty, it
 			// delegates everything to the immediate driver).
+			// The tiled textures' pool references first: a pool's heaps go through retireResource().
+			releaseTiledRecords();
 			deleteAllTextures();
 			NullTexture = nullptr;
 
@@ -142,6 +144,19 @@ namespace irr
 		{
 			if (!createDeviceAndQueue())
 				return false;
+
+			// Shader Model 6 for user shaders (SIrrlichtCreationParameters::PreferShaderModel6): the
+			// device has to accept SM 6.0 DXIL and DXC has to be loadable; otherwise FXC as always.
+			if (Params.PreferShaderModel6)
+			{
+				D3D12_FEATURE_DATA_SHADER_MODEL shaderModel = { D3D_SHADER_MODEL_6_0 };
+				const bool deviceOk = SUCCEEDED(Device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &shaderModel, sizeof(shaderModel)))
+					&& shaderModel.HighestShaderModel >= D3D_SHADER_MODEL_6_0;
+				ShaderModel6Enabled = deviceOk && CD3D12MaterialRenderer::isShaderModel6Available();
+				if (!ShaderModel6Enabled)
+					os::Printer::log("CD3D12Driver: PreferShaderModel6 set, but the device lacks SM 6.0 or dxcompiler.dll / "
+						"dxil.dll are not beside the executable: user shaders compile with FXC (SM 5.x)", ELL_WARNING);
+			}
 
 			if (!createDescriptorHeaps())
 				return false;
@@ -471,10 +486,33 @@ namespace irr
 
 		bool CD3D12Driver::createSwapChain(HWND hwnd, uint32_t width, uint32_t height)
 		{
+			// The swapchain colour space (SIrrlichtCreationParameters::ColorSpace): the sRGB case keeps
+			// the UNORM buffer and encodes through the render target view, the wide ones change the
+			// buffer format and ask DXGI for the matching colour space once the swapchain exists.
+			BackBufferFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+			BackBufferViewFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+			SwapchainColorSpace = ESCS_SRGB_NONLINEAR;
+			switch (Params.ColorSpace)
+			{
+			case ESCS_SRGB_LINEAR:
+				BackBufferViewFormat = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+				SwapchainColorSpace = ESCS_SRGB_LINEAR;
+				break;
+			case ESCS_SCRGB_LINEAR:
+				BackBufferFormat = BackBufferViewFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
+				break;
+			case ESCS_HDR10_ST2084:
+				BackBufferFormat = BackBufferViewFormat = DXGI_FORMAT_R10G10B10A2_UNORM;
+				break;
+			default:
+				break;
+			}
+			CurrentRTVFormats[0] = BackBufferViewFormat;
+
 			DXGI_SWAP_CHAIN_DESC1 desc = {};
 			desc.Width = width;
 			desc.Height = height;
-			desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+			desc.Format = BackBufferFormat;
 			desc.Stereo = FALSE;
 			desc.SampleDesc = { 1, 0 };
 			desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
@@ -498,12 +536,30 @@ namespace irr
 			if (FAILED(hr))
 				return false;
 
+			if (Params.ColorSpace == ESCS_SCRGB_LINEAR || Params.ColorSpace == ESCS_HDR10_ST2084)
+			{
+				const DXGI_COLOR_SPACE_TYPE space = Params.ColorSpace == ESCS_SCRGB_LINEAR ?
+					DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709 : DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+				UINT support = 0;
+				if (SUCCEEDED(SwapChain->CheckColorSpaceSupport(space, &support)) &&
+					(support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT) && SUCCEEDED(SwapChain->SetColorSpace1(space)))
+					SwapchainColorSpace = Params.ColorSpace;
+				else
+					os::Printer::log("CD3D12Driver: the display or runtime refuses the requested swapchain colour space; "
+						"the wider back buffer is kept and presented as sRGB (ESCS_SRGB_NONLINEAR)", ELL_WARNING);
+			}
+			DriverAttributes->setAttribute("SwapchainColorSpace", (s32)SwapchainColorSpace);
+
 			CurrentFrameIndex = SwapChain->GetCurrentBackBufferIndex();
 			return true;
 		}
 
 		void CD3D12Driver::updateRenderTargetViews()
 		{
+			// The view format may differ from the buffer's (the sRGB view, see createSwapChain()).
+			D3D12_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+			rtvDesc.Format = BackBufferViewFormat;
+			rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
 			for (UINT i = 0; i < NativeFrameCount; ++i)
 			{
 				HRESULT hr = SwapChain->GetBuffer(i, IID_PPV_ARGS(&Frames[i].BackBuffer));
@@ -515,7 +571,7 @@ namespace irr
 				UINT rtvIndex;
 				CD3DX12_CPU_DESCRIPTOR_HANDLE handle;
 				RTVHeap.allocate(rtvIndex, handle);
-				Device->CreateRenderTargetView(Frames[i].BackBuffer.Get(), nullptr, handle);
+				Device->CreateRenderTargetView(Frames[i].BackBuffer.Get(), &rtvDesc, handle);
 				Frames[i].RTVHandle = handle;
 			}
 		}
@@ -858,6 +914,25 @@ namespace irr
 				}
 			}
 
+			// Pixel-stage UAVs u0..u7 (bindPixelShaderBuffer()/bindPixelShaderTexture()): the last
+			// parameter of every graphics signature, after the user tables, so
+			// FirstUserCBVRootSlot and the user table indices are unchanged. bindDrawState() sets it
+			// on every draw (an all-null table when nothing is bound), see allocatePixelUAVTable().
+			D3D12_DESCRIPTOR_RANGE1 pixelUAVRange = {};
+			pixelUAVRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+			pixelUAVRange.NumDescriptors = MaxPixelUAVSlots;
+			pixelUAVRange.BaseShaderRegister = 0;
+			pixelUAVRange.RegisterSpace = 0;
+			pixelUAVRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE;
+			pixelUAVRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+			{
+				D3D12_ROOT_PARAMETER1& param = rootParams[paramCount++];
+				param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+				param.DescriptorTable.NumDescriptorRanges = 1;
+				param.DescriptorTable.pDescriptorRanges = &pixelUAVRange;
+				param.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+			}
+
 			// CBV b3, space4 (DriverConstantRegisterSpace) -- dynamic lighting, same pattern as
 			// rootParams[4] (ClipPlanes) above: single root descriptor visible on the VS side only
 			// (see bindLighting()/CD3D12DefaultShaders.h).
@@ -1008,6 +1083,8 @@ namespace irr
 					renderer->UserCBVTables.push_back(table);
 				}
 			}
+			// The pixel UAV table follows the last user table, see getOrCreateRootSignature().
+			renderer->PixelUAVRootSlot = rootSlot;
 
 			return true;
 		}
@@ -2112,6 +2189,19 @@ namespace irr
 			for (UINT i = 0; i < OcclusionQueryCapacity; ++i)
 				FreeOcclusionSlots.push_back(OcclusionQueryCapacity - 1 - i);
 
+			// The predication copy of the results: SetPredication() needs a default-heap buffer in
+			// the PREDICATION state, which a readback-heap resource can never be in. Optional: its
+			// absence only disables EVDF_PREDICATION.
+			D3D12_HEAP_PROPERTIES defaultHeapProps = {};
+			defaultHeapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
+			if (FAILED(Device->CreateCommittedResource(&defaultHeapProps, D3D12_HEAP_FLAG_NONE, &readbackDesc,
+				D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&PredicationBuffer))))
+			{
+				os::Printer::log("CD3D12Driver: predication buffer creation failed, EVDF_PREDICATION off", ELL_WARNING);
+				PredicationBuffer = nullptr;
+			}
+			PredicationBufferState = D3D12_RESOURCE_STATE_COPY_DEST;
+
 			return true;
 		}
 
@@ -3180,7 +3270,7 @@ namespace irr
 			// MaxUserShaderCBVSlotsPerStage it would never touch. Must stay >= what the
 			// allocateUserCBVTable() loop at the end of this function consumes -- it is derived from
 			// the same UserCBVTables vector that loop walks, so the two cannot drift.
-			const UINT drawDescriptorCount = MaxUserShaderTextureSlots +
+			const UINT drawDescriptorCount = MaxUserShaderTextureSlots + MaxPixelUAVSlots +
 				static_cast<UINT>(activeRenderer ? activeRenderer->UserCBVTables.size() : 0) *
 				MaxUserShaderCBVSlotsPerStage;
 
@@ -3263,7 +3353,138 @@ namespace irr
 				}
 			}
 
+			// The pixel UAV table the signature ends with: set on every draw, since a root argument
+			// does not survive SetGraphicsRootSignature(); an all-null table when nothing is bound.
+			{
+				const UINT uavSlot = (activeRenderer && activeRenderer->RootSignature) ?
+					activeRenderer->PixelUAVRootSlot : FirstUserCBVRootSlot;
+				const D3D12_GPU_DESCRIPTOR_HANDLE uavTable = allocatePixelUAVTable(PixelUAVBound);
+				if (uavTable.ptr)
+					CommandList->SetGraphicsRootDescriptorTable(uavSlot, uavTable);
+			}
+
 			return true;
+		}
+
+		// ================================ pixel-stage UAVs ================================
+
+		D3D12_GPU_DESCRIPTOR_HANDLE CD3D12Driver::allocatePixelUAVTable(bool withBindings)
+		{
+			SD3D12FrameContext& frame = Frames[CurrentFrameIndex];
+			D3D12_GPU_DESCRIPTOR_HANDLE nullHandle = {};
+			// The null UAV descriptor lives with the compute descriptor setup, created on first use
+			// there; a frame that never dispatched still needs it for the empty slots here.
+			if (!HasNullBufferViews && !ensureComputeDescriptorHeap())
+				return nullHandle;
+
+			// Nothing bound: one all-null table per frame serves every draw, rebuilt only when the
+			// frame's heap object changed (a growth replaces it).
+			if (!withBindings && NullPixelUAVTableFrame == CurrentFrameIndex &&
+				NullPixelUAVTableHeap == frame.ShaderVisibleSRVHeap.Get())
+				return NullPixelUAVTable;
+
+			if (!reserveShaderVisibleSRVDescriptors(frame, MaxPixelUAVSlots))
+				return nullHandle;
+			const UINT slot = frame.ShaderVisibleSRVNext;
+			frame.ShaderVisibleSRVNext += MaxPixelUAVSlots;
+			D3D12_GPU_DESCRIPTOR_HANDLE destGPU = frame.ShaderVisibleSRVHeapStartGPU;
+			destGPU.ptr += static_cast<UINT64>(slot) * CBVSRVUAVDescriptorSize;
+
+			for (UINT u = 0; u < MaxPixelUAVSlots; ++u)
+			{
+				D3D12_CPU_DESCRIPTOR_HANDLE source = NullBufferUAV;
+				if (withBindings && PixelUAV[u].Buffer && PixelUAV[u].Buffer->getHardwareBuffer())
+				{
+					CD3D12HardwareBuffer* hw = static_cast<CD3D12HardwareBuffer*>(PixelUAV[u].Buffer->getHardwareBuffer().get());
+					if (hw->hasUnorderedAccessView())
+					{
+						hw->transitionTo(CommandList.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+						hw->transitionCounterTo(CommandList.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+						source = hw->getUnorderedAccessView();
+					}
+				}
+				else if (withBindings && PixelUAV[u].Texture)
+				{
+					CD3D12Texture* tex = static_cast<CD3D12Texture*>(PixelUAV[u].Texture);
+					tex->transitionTo(CommandList.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+					source = tex->getUnorderedAccessView();
+				}
+				D3D12_CPU_DESCRIPTOR_HANDLE destCPU = frame.ShaderVisibleSRVHeapStartCPU;
+				destCPU.ptr += static_cast<SIZE_T>(slot + u) * CBVSRVUAVDescriptorSize;
+				Device->CopyDescriptorsSimple(1, destCPU, source, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+			}
+
+			if (!withBindings)
+			{
+				NullPixelUAVTable = destGPU;
+				NullPixelUAVTableHeap = frame.ShaderVisibleSRVHeap.Get();
+				NullPixelUAVTableFrame = CurrentFrameIndex;
+			}
+			return destGPU;
+		}
+
+		bool CD3D12Driver::bindPixelShaderBuffer(u32 slot, scene::IComputeBuffer* buffer)
+		{
+			if (slot >= MaxPixelUAVSlots)
+			{
+				os::Printer::log("CD3D12Driver::bindPixelShaderBuffer: slot out of range", ELL_ERROR);
+				return false;
+			}
+			// D3D11 parity: the UAV slots start after the bound render targets.
+			if (buffer && slot < CurrentRTVCount)
+			{
+				os::Printer::log("CD3D12Driver::bindPixelShaderBuffer: the slot must be at or above the "
+					"number of bound render targets", ELL_ERROR);
+				return false;
+			}
+			CD3D12HardwareBuffer* hw = buffer ? prepareComputeBuffer(buffer) : nullptr;
+			if (buffer && (!hw || !hw->hasUnorderedAccessView()))
+			{
+				os::Printer::log("CD3D12Driver::bindPixelShaderBuffer: the buffer has no UAV (create it with "
+					"EHBF_COMPUTE_RAW/STRUCTURED/APPEND/CONSUME)", ELL_ERROR);
+				return false;
+			}
+			PixelUAV[slot].Buffer = buffer;
+			PixelUAV[slot].Texture = nullptr;
+			PixelUAVBound = false;
+			for (UINT i = 0; i < MaxPixelUAVSlots; ++i)
+				PixelUAVBound = PixelUAVBound || PixelUAV[i].Buffer || PixelUAV[i].Texture;
+			return true;
+		}
+
+		bool CD3D12Driver::bindPixelShaderTexture(u32 slot, ITexture* texture)
+		{
+			if (slot >= MaxPixelUAVSlots)
+			{
+				os::Printer::log("CD3D12Driver::bindPixelShaderTexture: slot out of range", ELL_ERROR);
+				return false;
+			}
+			if (texture && slot < CurrentRTVCount)
+			{
+				os::Printer::log("CD3D12Driver::bindPixelShaderTexture: the slot must be at or above the "
+					"number of bound render targets", ELL_ERROR);
+				return false;
+			}
+			if (texture && (texture->getDriverType() != EDT_DIRECT3D12 || !texture->isUnorderedAccess()))
+			{
+				os::Printer::log("CD3D12Driver::bindPixelShaderTexture: not an addUAVTexture() texture", ELL_ERROR);
+				return false;
+			}
+			PixelUAV[slot].Buffer = nullptr;
+			PixelUAV[slot].Texture = texture;
+			PixelUAVBound = false;
+			for (UINT i = 0; i < MaxPixelUAVSlots; ++i)
+				PixelUAVBound = PixelUAVBound || PixelUAV[i].Buffer || PixelUAV[i].Texture;
+			return true;
+		}
+
+		void CD3D12Driver::unbindPixelShaderResources()
+		{
+			// The resources keep UNORDERED_ACCESS as their tracked state; whoever reads them next
+			// (an SRV table, a copy) transitions them from there, the way every other user does.
+			for (UINT i = 0; i < MaxPixelUAVSlots; ++i)
+				PixelUAV[i] = SD3D12ComputeSlot();
+			PixelUAVBound = false;
 		}
 
 		SPSOKey CD3D12Driver::buildShadowVolumeStencilKey(D3D12_CULL_MODE cullMode, D3D12_STENCIL_OP op, bool useDepthFailOp) const
@@ -3917,7 +4138,7 @@ namespace irr
 			{
 				rtv = Frames[CurrentFrameIndex].RTVHandle;
 				CurrentRTVCount = 1;
-				CurrentRTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+				CurrentRTVFormats[0] = BackBufferViewFormat;
 				// The back buffer always stays single-sample in this pass (see the
 				// CurrentRTVSampleCount comment) -- without this explicit reset, returning to the back
 				// buffer after drawing into an MSAA RTT would leave CurrentRTVSampleCount > 1,
@@ -4810,6 +5031,22 @@ namespace irr
 			CommandList->ResolveQueryData(OcclusionQueryHeap.Get(), D3D12_QUERY_TYPE_OCCLUSION, q.Slot, 1,
 				OcclusionReadback.Get(), static_cast<UINT64>(q.Slot) * sizeof(UINT64));
 
+			// The same result into the predication buffer, for beginPredicatedDraws(): a resolve needs
+			// COPY_DEST, the predicate PREDICATION, so the buffer moves between the two around it.
+			if (PredicationBuffer)
+			{
+				if (PredicationBufferState != D3D12_RESOURCE_STATE_COPY_DEST)
+				{
+					CD3DX12_RESOURCE_BARRIER toCopy = CD3DX12_RESOURCE_BARRIER::Transition(PredicationBuffer.Get(),
+						PredicationBufferState, D3D12_RESOURCE_STATE_COPY_DEST);
+					CommandList->ResourceBarrier(1, &toCopy);
+					PredicationBufferState = D3D12_RESOURCE_STATE_COPY_DEST;
+				}
+				CommandList->ResolveQueryData(OcclusionQueryHeap.Get(), D3D12_QUERY_TYPE_OCCLUSION, q.Slot, 1,
+					PredicationBuffer.Get(), static_cast<UINT64>(q.Slot) * sizeof(UINT64));
+				q.EverResolved = true;
+			}
+
 			// Only valid once THIS frame (the one containing this ResolveQueryData) has been
 			// executed by the GPU -- the current frame's endScene() will signal Fence with this
 			// value (FenceValue+1, same calculation as frame.FenceValue = signalFence() in
@@ -4821,6 +5058,547 @@ namespace irr
 		{
 			for (auto& kv : OcclusionQueries)
 				runOcclusionQuery(kv.first, visible);
+		}
+
+		// ============================ timers, statistics, predication ============================
+
+		bool CD3D12Driver::createQueryResources()
+		{
+			if (QueryResourcesCreated)
+				return true;
+			if (!Device || !DirectQueue)
+				return false;
+
+			auto makeReadback = [&](UINT64 bytes, ComPtr<ID3D12Resource>& resource, void*& mapped) -> bool
+			{
+				D3D12_HEAP_PROPERTIES heapProps = {};
+				heapProps.Type = D3D12_HEAP_TYPE_READBACK;
+				D3D12_RESOURCE_DESC desc = {};
+				desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+				desc.Width = bytes;
+				desc.Height = 1;
+				desc.DepthOrArraySize = 1;
+				desc.MipLevels = 1;
+				desc.Format = DXGI_FORMAT_UNKNOWN;
+				desc.SampleDesc = { 1, 0 };
+				desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+				if (FAILED(Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc,
+					D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&resource))))
+					return false;
+				// Mapped for good, read only for slots whose frame fence has passed.
+				return SUCCEEDED(resource->Map(0, nullptr, &mapped));
+			};
+
+			D3D12_QUERY_HEAP_DESC timestamps = {};
+			timestamps.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+			timestamps.Count = NativeFrameCount * TimerSlotsPerFrame;
+			if (FAILED(Device->CreateQueryHeap(&timestamps, IID_PPV_ARGS(&TimestampHeap))) ||
+				!makeReadback(static_cast<UINT64>(timestamps.Count) * sizeof(UINT64), TimestampReadback, TimestampReadbackMapped) ||
+				FAILED(DirectQueue->GetTimestampFrequency(&TimestampFrequency)) || TimestampFrequency == 0)
+			{
+				os::Printer::log("CD3D12Driver: timestamp queries unavailable", ELL_WARNING);
+				TimestampHeap = nullptr;
+				TimestampReadback = nullptr;
+				TimestampReadbackMapped = nullptr;
+			}
+
+			D3D12_QUERY_HEAP_DESC statistics = {};
+			statistics.Type = D3D12_QUERY_HEAP_TYPE_PIPELINE_STATISTICS;
+			statistics.Count = NativeFrameCount;
+			if (FAILED(Device->CreateQueryHeap(&statistics, IID_PPV_ARGS(&StatsHeap))) ||
+				!makeReadback(static_cast<UINT64>(NativeFrameCount) * sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS), StatsReadback, StatsReadbackMapped))
+			{
+				os::Printer::log("CD3D12Driver: pipeline statistics queries unavailable", ELL_WARNING);
+				StatsHeap = nullptr;
+				StatsReadback = nullptr;
+				StatsReadbackMapped = nullptr;
+			}
+
+			for (UINT f = 0; f < NativeFrameCount; ++f)
+			{
+				StatsOpen[f] = false;
+				for (u32 i = 0; i < EMCS_MAX_TIMER_QUERIES; ++i)
+					TimerUsed[f][i] = TimerEnded[f][i] = false;
+			}
+			QueryResourcesCreated = TimestampHeap || StatsHeap;
+			return QueryResourcesCreated;
+		}
+
+		void CD3D12Driver::harvestQueryFrame(UINT frame)
+		{
+			const UINT base = frame * TimerSlotsPerFrame;
+			const UINT64* stamps = static_cast<const UINT64*>(TimestampReadbackMapped);
+			for (u32 id = 0; id < EMCS_MAX_TIMER_QUERIES; ++id)
+			{
+				if (!TimerUsed[frame][id])
+					continue;
+				if (TimerEnded[frame][id] && stamps && TimestampFrequency)
+				{
+					const UINT64 begin = stamps[base + 2 * id];
+					const UINT64 end = stamps[base + 2 * id + 1];
+					if (end >= begin)
+					{
+						TimerResults[id] = static_cast<u64>((end - begin) * 1000000000.0 / static_cast<f64>(TimestampFrequency));
+						TimerResultValid[id] = true;
+					}
+				}
+				TimerUsed[frame][id] = TimerEnded[frame][id] = false;
+			}
+			if (StatsOpen[frame] && StatsReadbackMapped)
+			{
+				const D3D12_QUERY_DATA_PIPELINE_STATISTICS& s =
+					static_cast<const D3D12_QUERY_DATA_PIPELINE_STATISTICS*>(StatsReadbackMapped)[frame];
+				LastStats.VerticesIn = s.IAVertices;
+				LastStats.PrimitivesIn = s.IAPrimitives;
+				LastStats.VertexShaderInvocations = s.VSInvocations;
+				LastStats.GeometryShaderInvocations = s.GSInvocations;
+				LastStats.GeometryShaderPrimitives = s.GSPrimitives;
+				LastStats.RasterizedPrimitives = s.CPrimitives;
+				LastStats.PixelShaderInvocations = s.PSInvocations;
+				LastStats.ComputeShaderInvocations = s.CSInvocations;
+				StatsValid = true;
+				StatsOpen[frame] = false;
+			}
+		}
+
+		void CD3D12Driver::beginTimer(u32 id)
+		{
+			if (!SceneOpen || id >= EMCS_MAX_TIMER_QUERIES)
+				return;
+			if (!QueryResourcesCreated && !createQueryResources())
+				return;
+			if (!TimestampHeap)
+				return;
+			if (TimerUsed[CurrentFrameIndex][id])
+			{
+				if (!WarnedTimerReuse)
+					os::Printer::log("CD3D12Driver::beginTimer: a timer id was begun twice in one frame, "
+						"the second pair is ignored", ELL_WARNING);
+				WarnedTimerReuse = true;
+				return;
+			}
+			CommandList->EndQuery(TimestampHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, CurrentFrameIndex * TimerSlotsPerFrame + 2 * id);
+			TimerUsed[CurrentFrameIndex][id] = true;
+		}
+
+		void CD3D12Driver::endTimer(u32 id)
+		{
+			if (!SceneOpen || id >= EMCS_MAX_TIMER_QUERIES || !TimestampHeap)
+				return;
+			if (!TimerUsed[CurrentFrameIndex][id] || TimerEnded[CurrentFrameIndex][id])
+				return;
+			CommandList->EndQuery(TimestampHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, CurrentFrameIndex * TimerSlotsPerFrame + 2 * id + 1);
+			TimerEnded[CurrentFrameIndex][id] = true;
+		}
+
+		bool CD3D12Driver::getTimerResult(u32 id, u64& nanoseconds) const
+		{
+			if (id >= EMCS_MAX_TIMER_QUERIES || !TimerResultValid[id])
+				return false;
+			nanoseconds = TimerResults[id];
+			return true;
+		}
+
+		bool CD3D12Driver::getPipelineStatistics(SPipelineStatistics& out) const
+		{
+			StatsArmed = true; // the heaps are created at the next beginScene()
+			if (!StatsValid)
+				return false;
+			out = LastStats;
+			return true;
+		}
+
+		void CD3D12Driver::beginPredicatedDraws(std::shared_ptr<scene::ISceneNode> node)
+		{
+			if (!SceneOpen || !node || !PredicationBuffer)
+				return;
+			auto it = OcclusionQueries.find(node);
+			// A node whose query never ran draws normally: the buffer holds nothing for it yet.
+			if (it == OcclusionQueries.end() || !it->second.EverResolved)
+				return;
+			if (PredicationBufferState != D3D12_RESOURCE_STATE_PREDICATION)
+			{
+				CD3DX12_RESOURCE_BARRIER toPredication = CD3DX12_RESOURCE_BARRIER::Transition(PredicationBuffer.Get(),
+					PredicationBufferState, D3D12_RESOURCE_STATE_PREDICATION);
+				CommandList->ResourceBarrier(1, &toPredication);
+				PredicationBufferState = D3D12_RESOURCE_STATE_PREDICATION;
+			}
+			// EQUAL_ZERO: the draws are discarded while the 64-bit count is zero, i.e. when the
+			// last occlusion pass saw no sample of the node.
+			CommandList->SetPredication(PredicationBuffer.Get(), static_cast<UINT64>(it->second.Slot) * sizeof(UINT64),
+				D3D12_PREDICATION_OP_EQUAL_ZERO);
+		}
+
+		void CD3D12Driver::endPredicatedDraws()
+		{
+			if (SceneOpen)
+				CommandList->SetPredication(nullptr, 0, D3D12_PREDICATION_OP_EQUAL_ZERO);
+		}
+
+		// ---------------- Tiled resources ----------------
+
+		//! A tile pool as chunks of ID3D12Heap: a heap cannot grow, so resize() appends a chunk, and
+		//! shrinking drops whole trailing chunks nothing maps into any more (a chunk straddling the new
+		//! size stays allocated and is reused by the next growth). One UpdateTileMappings() call names
+		//! one heap, so a run of pool tiles is split at chunk boundaries (see locate()).
+		class CD3D12TilePool : public CTilePoolBase
+		{
+		public:
+			CD3D12TilePool(CD3D12Driver* driver, D3D12_HEAP_FLAGS flags) : Driver(driver), Flags(flags) {}
+
+			virtual ~CD3D12TilePool()
+			{
+				for (size_t i = 0; i < Chunks.size(); ++i)
+					Driver->retireResource(std::move(Chunks[i].Heap));
+			}
+
+			bool addChunk(u32 tileCount)
+			{
+				D3D12_HEAP_DESC desc = {};
+				desc.SizeInBytes = static_cast<UINT64>(tileCount) * TILED_RESOURCE_TILE_BYTES;
+				desc.Properties.Type = D3D12_HEAP_TYPE_DEFAULT;
+				desc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+				desc.Flags = Flags;
+				SChunk chunk;
+				chunk.FirstTile = TileCount;
+				chunk.TileCount = tileCount;
+				if (FAILED(Driver->getDevice()->CreateHeap(&desc, IID_PPV_ARGS(&chunk.Heap))))
+				{
+					os::Printer::log("CD3D12Driver: tile pool CreateHeap failed", ELL_ERROR);
+					return false;
+				}
+				Chunks.push_back(chunk);
+				TileCount += tileCount;
+				MappedCount.resize(TileCount, 0);
+				return true;
+			}
+
+			virtual bool resize(u32 tileCount) _IRR_OVERRIDE_
+			{
+				if (tileCount == 0)
+					return false;
+				if (tileCount > TileCount)
+				{
+					const u32 capacity = Chunks.empty() ? 0 : Chunks.back().FirstTile + Chunks.back().TileCount;
+					TileCount = core::min_(tileCount, capacity);
+					MappedCount.resize(TileCount, 0);
+					return tileCount == TileCount || addChunk(tileCount - TileCount);
+				}
+				if (!canShrinkTo(tileCount))
+				{
+					os::Printer::log("ITilePool::resize: a tile past the new size is still mapped", ELL_ERROR);
+					return false;
+				}
+				while (!Chunks.empty() && Chunks.back().FirstTile >= tileCount)
+				{
+					Driver->retireResource(std::move(Chunks.back().Heap));
+					Chunks.pop_back();
+				}
+				TileCount = tileCount;
+				MappedCount.resize(TileCount);
+				return true;
+			}
+
+			//! The heap holding pool tile `tile`, its offset in that heap (tiles) and how many tiles
+			//! from it on stay in the same heap.
+			bool locate(u32 tile, ID3D12Heap*& heap, u32& offsetInHeap, u32& runInHeap) const
+			{
+				if (tile >= TileCount)
+					return false;
+				for (size_t i = 0; i < Chunks.size(); ++i)
+				{
+					const SChunk& c = Chunks[i];
+					if (tile >= c.FirstTile && tile < c.FirstTile + c.TileCount)
+					{
+						heap = c.Heap.Get();
+						offsetInHeap = tile - c.FirstTile;
+						runInHeap = core::min_(c.FirstTile + c.TileCount, TileCount) - tile;
+						return true;
+					}
+				}
+				return false;
+			}
+
+		private:
+			struct SChunk
+			{
+				ComPtr<ID3D12Heap> Heap;
+				u32 FirstTile = 0;
+				u32 TileCount = 0;
+			};
+			std::vector<SChunk> Chunks;
+			CD3D12Driver* Driver;
+			D3D12_HEAP_FLAGS Flags;
+		};
+
+		namespace
+		{
+			//! The D3D12 coordinate + size of one region: a box for a standard mip, a linear tile run
+			//! (UseBox = FALSE, X = the first tile) inside the packed tail.
+			void fillTileRegion(const STiledTextureRecord& record, const STileRegion& region,
+				D3D12_TILED_RESOURCE_COORDINATE& coordinate, D3D12_TILE_REGION_SIZE& size)
+			{
+				coordinate = D3D12_TILED_RESOURCE_COORDINATE();
+				size = D3D12_TILE_REGION_SIZE();
+				coordinate.Subresource = region.MipLevel + region.ArraySlice * record.MipLevels; // plane 0
+				coordinate.X = region.X;
+				size.NumTiles = region.getTileCount();
+				if (record.isMipTail(region.MipLevel))
+					return;
+				coordinate.Y = region.Y;
+				coordinate.Z = region.Z;
+				size.UseBox = TRUE;
+				size.Width = region.Width;
+				size.Height = static_cast<UINT16>(region.Height);
+				size.Depth = static_cast<UINT16>(region.Depth);
+			}
+		}
+
+		ITilePool* CD3D12Driver::createTilePool(u32 tileCount)
+		{
+			if (!queryFeature(EVDF_TILED_RESOURCES) || tileCount == 0)
+			{
+				os::Printer::log("CD3D12Driver::createTilePool: tiled resources unavailable or empty pool", ELL_ERROR);
+				return nullptr;
+			}
+			// Heap tier 1 keeps render targets and other textures in separate heaps; the pool then
+			// backs sampled textures only (see addTiledTexture()).
+			const D3D12_HEAP_FLAGS flags = FeatureOptions.ResourceHeapTier >= D3D12_RESOURCE_HEAP_TIER_2 ?
+				D3D12_HEAP_FLAG_ALLOW_ALL_BUFFERS_AND_TEXTURES : D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES;
+			CD3D12TilePool* pool = new CD3D12TilePool(ResourceOwner, flags);
+			if (!pool->addChunk(tileCount))
+			{
+				pool->drop();
+				return nullptr;
+			}
+			return pool;
+		}
+
+		bool CD3D12Driver::queryTileShape(CD3D12Texture* texture, STiledTextureRecord& out) const
+		{
+			UINT tileCount = 0;
+			D3D12_PACKED_MIP_INFO packed = {};
+			D3D12_TILE_SHAPE shape = {};
+			UINT subresourceCount = texture->getMipLevelCount() * texture->getArraySliceCount();
+			std::vector<D3D12_SUBRESOURCE_TILING> tilings(subresourceCount);
+			getDevice()->GetResourceTiling(texture->getResource(), &tileCount, &packed, &shape, &subresourceCount, 0, tilings.data());
+			if (tileCount == 0 || shape.WidthInTexels == 0)
+			{
+				os::Printer::log("CD3D12Driver::addTiledTexture: GetResourceTiling reported no tiles", ELL_ERROR);
+				return false;
+			}
+			out.Size = texture->getSize();
+			out.MipLevels = texture->getMipLevelCount();
+			out.ArraySlices = texture->getArraySliceCount();
+			out.Shape.TexelsWide = shape.WidthInTexels;
+			out.Shape.TexelsHigh = shape.HeightInTexels;
+			out.Shape.TexelsDeep = shape.DepthInTexels;
+			out.Shape.TilesWide = out.tilesWide(0);
+			out.Shape.TilesHigh = out.tilesHigh(0);
+			out.Shape.TilesDeep = 1;
+			out.Shape.MipTailStart = packed.NumStandardMips;
+			out.Shape.MipTailTiles = packed.NumTilesForPackedMips;
+			out.Shape.TotalTiles = tileCount;
+			return true;
+		}
+
+		ITexture* CD3D12Driver::addTiledTexture(const core::dimension2d<u32>& size, const io::path& name,
+			ECOLOR_FORMAT format, u32 mipLevels, u32 arraySlices, bool isRenderTarget)
+		{
+			if (!queryFeature(EVDF_TILED_RESOURCES))
+			{
+				os::Printer::log("CD3D12Driver::addTiledTexture: EVDF_TILED_RESOURCES unavailable", name, ELL_ERROR);
+				return nullptr;
+			}
+			if (isRenderTarget && FeatureOptions.ResourceHeapTier < D3D12_RESOURCE_HEAP_TIER_2)
+				os::Printer::log("CD3D12Driver::addTiledTexture: a render-target tiled texture cannot map into a tile pool "
+					"on resource heap tier 1", name, ELL_WARNING);
+			CD3D12Texture* texture = new CD3D12Texture(ResourceOwner, size, name, format, mipLevels, arraySlices,
+				isRenderTarget, STiledTextureTag());
+			STiledTextureRecord record;
+			if (!texture->hasDeviceResource() || !queryTileShape(texture, record))
+			{
+				texture->drop();
+				return nullptr;
+			}
+			CNullDriver::addTexture(texture);
+			texture->drop();
+			TiledTextures[texture] = record;
+			return texture;
+		}
+
+		bool CD3D12Driver::getTileShape(const ITexture* texture, STileShape& out) const
+		{
+			std::map<const ITexture*, STiledTextureRecord>::const_iterator it = TiledTextures.find(texture);
+			if (it == TiledTextures.end())
+				return false;
+			out = it->second.Shape;
+			return true;
+		}
+
+		bool CD3D12Driver::updateTileMappings(ITexture* texture, const STileRegion* regions, u32 regionCount,
+			ITilePool* pool, const u32* poolTileIndices)
+		{
+			std::map<const ITexture*, STiledTextureRecord>::iterator it = TiledTextures.find(texture);
+			if (it == TiledTextures.end())
+			{
+				os::Printer::log("CD3D12Driver::updateTileMappings: not a tiled texture of this driver", ELL_ERROR);
+				return false;
+			}
+			STiledTextureRecord& record = it->second;
+			CD3D12TilePool* d3dPool = static_cast<CD3D12TilePool*>(pool);
+			if (!record.validate(regions, regionCount, d3dPool, poolTileIndices, "CD3D12Driver::updateTileMappings"))
+				return false;
+
+			// The queue applies the mapping in submission order: everything recorded so far goes first.
+			if (SceneOpen && ResourceOwner == this)
+				flushCommandList();
+
+			ID3D12Resource* resource = static_cast<CD3D12Texture*>(texture)->getResource();
+			ID3D12CommandQueue* queue = ResourceOwner->DirectQueue.Get();
+			const D3D12_TILE_RANGE_FLAGS flagNone = D3D12_TILE_RANGE_FLAG_NONE;
+			const D3D12_TILE_RANGE_FLAGS flagNull = D3D12_TILE_RANGE_FLAG_NULL;
+			for (u32 i = 0; i < regionCount; ++i)
+			{
+				const STileRegion& r = regions[i];
+				D3D12_TILED_RESOURCE_COORDINATE coordinate;
+				D3D12_TILE_REGION_SIZE size;
+				fillTileRegion(record, r, coordinate, size);
+				const u32 count = r.getTileCount();
+
+				if (!pool)
+				{
+					queue->UpdateTileMappings(resource, 1, &coordinate, &size, nullptr, 1, &flagNull, nullptr, &count,
+						D3D12_TILE_MAPPING_FLAG_NONE);
+				}
+				else
+				{
+					// One coordinate per tile, so a run can be cut wherever the pool changes heap.
+					std::vector<D3D12_TILED_RESOURCE_COORDINATE> tiles(count, coordinate);
+					std::vector<D3D12_TILE_REGION_SIZE> ones(count);
+					u32 n = 0;
+					for (u32 z = 0; z < r.Depth; ++z)
+						for (u32 y = 0; y < r.Height; ++y)
+							for (u32 x = 0; x < r.Width; ++x, ++n)
+							{
+								tiles[n].X = r.X + x;
+								if (!record.isMipTail(r.MipLevel))
+								{
+									tiles[n].Y = r.Y + y;
+									tiles[n].Z = r.Z + z;
+								}
+								ones[n].NumTiles = 1;
+							}
+					for (n = 0; n < count; )
+					{
+						ID3D12Heap* heap = nullptr;
+						u32 offset = 0, run = 0;
+						if (!d3dPool->locate(poolTileIndices[i] + n, heap, offset, run))
+							return false;
+						const u32 k = core::min_(run, count - n);
+						queue->UpdateTileMappings(resource, k, &tiles[n], &ones[n], heap, 1, &flagNone, &offset, &k,
+							D3D12_TILE_MAPPING_FLAG_NONE);
+						n += k;
+					}
+				}
+
+				u32 n = 0;
+				for (u32 z = 0; z < r.Depth; ++z)
+					for (u32 y = 0; y < r.Height; ++y)
+						for (u32 x = 0; x < r.Width; ++x, ++n)
+							record.account(STiledTextureRecord::tileKey(coordinate.Subresource, r.X + x, r.Y + y, r.Z + z),
+								pool ? d3dPool : nullptr, pool ? poolTileIndices[i] + n : 0);
+			}
+			return true;
+		}
+
+		bool CD3D12Driver::updateTiles(ITexture* texture, const STileRegion& region, const void* data)
+		{
+			std::map<const ITexture*, STiledTextureRecord>::iterator it = TiledTextures.find(texture);
+			if (it == TiledTextures.end() || !data)
+			{
+				os::Printer::log("CD3D12Driver::updateTiles: not a tiled texture of this driver, or no data", ELL_ERROR);
+				return false;
+			}
+			const STiledTextureRecord& record = it->second;
+			if (!record.validate(&region, 1, nullptr, nullptr, "CD3D12Driver::updateTiles"))
+				return false;
+			if (record.isMipTail(region.MipLevel))
+			{
+				os::Printer::log("CD3D12Driver::updateTiles: packed mips have no per-tile layout; write them through lock()", ELL_ERROR);
+				return false;
+			}
+
+			const UINT64 bytes = static_cast<UINT64>(region.getTileCount()) * TILED_RESOURCE_TILE_BYTES;
+			D3D12_HEAP_PROPERTIES uploadHeap = {};
+			uploadHeap.Type = D3D12_HEAP_TYPE_UPLOAD;
+			D3D12_RESOURCE_DESC uploadDesc = {};
+			uploadDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+			uploadDesc.Width = bytes;
+			uploadDesc.Height = 1;
+			uploadDesc.DepthOrArraySize = 1;
+			uploadDesc.MipLevels = 1;
+			uploadDesc.SampleDesc = { 1, 0 };
+			uploadDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+			ComPtr<ID3D12Resource> upload;
+			if (FAILED(getDevice()->CreateCommittedResource(&uploadHeap, D3D12_HEAP_FLAG_NONE, &uploadDesc,
+				D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upload))))
+			{
+				os::Printer::log("CD3D12Driver::updateTiles: upload buffer creation failed", ELL_ERROR);
+				return false;
+			}
+			void* mapped = nullptr;
+			const D3D12_RANGE noRead = { 0, 0 };
+			if (FAILED(upload->Map(0, &noRead, &mapped)) || !mapped)
+				return false;
+			memcpy(mapped, data, static_cast<size_t>(bytes));
+			upload->Unmap(0, nullptr);
+
+			// Same ordering rule as updateTileMappings(): the copy runs after the draws recorded so far.
+			if (SceneOpen && ResourceOwner == this)
+				flushCommandList();
+
+			CD3D12Texture* d3dTexture = static_cast<CD3D12Texture*>(texture);
+			CD3D12Driver::UploadScope scope(ResourceOwner);
+			ID3D12GraphicsCommandList* cmdList = scope.commandList();
+			if (!cmdList)
+				return false;
+			const D3D12_RESOURCE_STATES before = d3dTexture->getCurrentState();
+			d3dTexture->transitionTo(cmdList, D3D12_RESOURCE_STATE_COPY_DEST);
+			D3D12_TILED_RESOURCE_COORDINATE coordinate;
+			D3D12_TILE_REGION_SIZE size;
+			fillTileRegion(record, region, coordinate, size);
+			cmdList->CopyTiles(d3dTexture->getResource(), &coordinate, &size, upload.Get(), 0,
+				D3D12_TILE_COPY_FLAG_LINEAR_BUFFER_TO_SWIZZLED_TILED_RESOURCE);
+			if (before != D3D12_RESOURCE_STATE_COPY_DEST)
+				d3dTexture->transitionTo(cmdList, before);
+			scope.endAndWait();
+			ResourceOwner->retireResource(std::move(upload));
+			return true;
+		}
+
+		void CD3D12Driver::removeTexture(ITexture* texture)
+		{
+			std::map<const ITexture*, STiledTextureRecord>::iterator it = TiledTextures.find(texture);
+			if (it != TiledTextures.end())
+			{
+				it->second.release();
+				TiledTextures.erase(it);
+			}
+			CNullDriver::removeTexture(texture);
+		}
+
+		void CD3D12Driver::removeAllTextures()
+		{
+			releaseTiledRecords();
+			CNullDriver::removeAllTextures();
+		}
+
+		void CD3D12Driver::releaseTiledRecords()
+		{
+			for (std::map<const ITexture*, STiledTextureRecord>::iterator it = TiledTextures.begin(); it != TiledTextures.end(); ++it)
+				it->second.release();
+			TiledTextures.clear();
 		}
 
 		void CD3D12Driver::updateOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool block)
@@ -4967,6 +5745,25 @@ namespace irr
 			OwnedRetiredResources.push_back(std::move(retired));
 		}
 
+		void CD3D12Driver::retireResource(ComPtr<ID3D12Heap>&& heap)
+		{
+			if (!heap)
+				return;
+
+			if (ResourceOwner != this)
+			{
+				ResourceOwner->retireResource(std::move(heap));
+				return;
+			}
+
+			SRetiredResource retired;
+			retired.FenceValue = FenceValue + 1;
+			retired.HeapResource = std::move(heap);
+
+			std::lock_guard<std::mutex> lock(OwnedRetireMutex);
+			OwnedRetiredResources.push_back(std::move(retired));
+		}
+
 		void CD3D12Driver::retireDescriptor(CD3D12DescriptorHeapAllocator& heap, UINT index)
 		{
 			if (ResourceOwner != this)
@@ -5095,6 +5892,12 @@ namespace irr
 
 			waitForFrame(CurrentFrameIndex);
 
+			// Timers / statistics: the slot's fence passed, so what it resolved last time is readable.
+			if (StatsArmed && !QueryResourcesCreated)
+				createQueryResources();
+			if (QueryResourcesCreated)
+				harvestQueryFrame(CurrentFrameIndex);
+
 			// La frame qui vient de se terminer sur le GPU libere ses ressources retirees. C'est le
 			// seul endroit ou une ID3D12Resource/un slot de descripteur est reellement relache --
 			// voir retireResource().
@@ -5110,7 +5913,7 @@ namespace irr
 			CurrentRenderTarget = nullptr;
 			CurrentRenderTargetSize = WindowSize;
 			CurrentRTVCount = 1;
-			CurrentRTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+			CurrentRTVFormats[0] = BackBufferViewFormat;
 			CurrentRTVSampleCount = 1; // voir le commentaire de CurrentRTVSampleCount
 			CurrentDSVHandle = DSVHandle;
 			CurrentDSVFormat = DepthStencilFormat; // une frame reprend sur le depth buffer du back buffer
@@ -5134,6 +5937,13 @@ namespace irr
 			// ne retient pas les heaps lies par la command list precedente apres Reset().
 			ID3D12DescriptorHeap* shaderVisibleHeaps[] = { frame.ShaderVisibleSRVHeap.Get(), ShaderVisibleSamplerHeap.Get() };
 			CommandList->SetDescriptorHeaps(2, shaderVisibleHeaps);
+
+			// The per-frame statistics query, ended and resolved at endScene().
+			if (StatsArmed && StatsHeap)
+			{
+				CommandList->BeginQuery(StatsHeap.Get(), D3D12_QUERY_TYPE_PIPELINE_STATISTICS, CurrentFrameIndex);
+				StatsOpen[CurrentFrameIndex] = true;
+			}
 
 			// Phase 5 : viewport/scissor n'etaient jamais fixes avant cette passe — sans ca,
 			// D3D12 ne rasterise rien (contrairement a D3D11, pas de valeur par defaut
@@ -5237,6 +6047,26 @@ namespace irr
 			SceneOpen = false;
 
 			SD3D12FrameContext& frame = Frames[CurrentFrameIndex];
+
+			// Timers and statistics of this frame into their readback buffers; read at the next
+			// beginScene() of this slot. Only complete pairs are resolved: a query never issued
+			// cannot be resolved.
+			if (QueryResourcesCreated)
+			{
+				const UINT base = CurrentFrameIndex * TimerSlotsPerFrame;
+				for (u32 id = 0; id < EMCS_MAX_TIMER_QUERIES; ++id)
+				{
+					if (TimerUsed[CurrentFrameIndex][id] && TimerEnded[CurrentFrameIndex][id] && TimestampHeap)
+						CommandList->ResolveQueryData(TimestampHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, base + 2 * id, 2,
+							TimestampReadback.Get(), static_cast<UINT64>(base + 2 * id) * sizeof(UINT64));
+				}
+				if (StatsOpen[CurrentFrameIndex] && StatsHeap)
+				{
+					CommandList->EndQuery(StatsHeap.Get(), D3D12_QUERY_TYPE_PIPELINE_STATISTICS, CurrentFrameIndex);
+					CommandList->ResolveQueryData(StatsHeap.Get(), D3D12_QUERY_TYPE_PIPELINE_STATISTICS, CurrentFrameIndex, 1,
+						StatsReadback.Get(), static_cast<UINT64>(CurrentFrameIndex) * sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS));
+				}
+			}
 
 			// Only transition back if this scene's beginScene(backBuffer, ...) actually put the
 			// back buffer into RENDER_TARGET (see CurrentSceneHasBackBuffer) -- a backBuffer=false
@@ -5347,7 +6177,15 @@ namespace irr
 			case EVDF_NATIVE_DEFERRED_CONTEXT:
 			case EVDF_MULTIPLE_VIEWPORTS:	// SV_ViewportArrayIndex from a geometry shader, always on FL 11
 			case EVDF_MINMAX_FILTER:		// D3D12_FILTER_REDUCTION_TYPE_MINIMUM/MAXIMUM, required of every D3D12 device
+			case EVDF_TIMER_QUERY:			// timestamp and pipeline statistics query heaps, every D3D12 device
+			case EVDF_PIXEL_SHADER_UAV:		// the u0..u7 table of every graphics root signature
 				return true;
+			case EVDF_PREDICATION:
+				return PredicationBuffer != nullptr;
+			case EVDF_TILED_RESOURCES:
+				return FeatureOptions.TiledResourcesTier != D3D12_TILED_RESOURCES_TIER_NOT_SUPPORTED;
+			case EVDF_SHADER_MODEL_6:
+				return ResourceOwner->ShaderModel6Enabled;
 			default:
 				return false;
 			}
@@ -5376,6 +6214,13 @@ namespace irr
 			if (!HasPresentedFrame)
 			{
 				os::Printer::log("CD3D12Driver::createScreenShot: no frame presented yet (call after endScene())", ELL_WARNING);
+				return nullptr;
+			}
+			// The channel copy below reads 8-bit RGBA; a 16-bit float or 10-bit swapchain
+			// (ESCS_SCRGB_LINEAR / ESCS_HDR10_ST2084) has no 8-bit image to hand out.
+			if (BackBufferFormat != DXGI_FORMAT_R8G8B8A8_UNORM)
+			{
+				os::Printer::log("CD3D12Driver::createScreenShot: only an 8-bit back buffer can be read back", ELL_WARNING);
 				return nullptr;
 			}
 
@@ -5511,7 +6356,7 @@ namespace irr
 			if (!CurrentRenderTarget)
 				CurrentRenderTargetSize = size;
 			SwapChain->ResizeBuffers(NativeFrameCount, size.Width, size.Height,
-				DXGI_FORMAT_R8G8B8A8_UNORM,
+				BackBufferFormat,
 				TearingSupported ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0);
 			CurrentFrameIndex = SwapChain->GetCurrentBackBufferIndex();
 			updateRenderTargetViews();
@@ -6780,6 +7625,7 @@ namespace irr
 			// CD3D11MaterialRenderer (le renderer compile+reflechit, le driver orchestre juste la
 			// lecture des fichiers/callback/enregistrement).
 			CD3D12MaterialRenderer* renderer = new CD3D12MaterialRenderer();
+			renderer->UseShaderModel6 = ResourceOwner->ShaderModel6Enabled;
 			if (!renderer->compileFromHLSL(vertexShaderProgram, vertexShaderEntryPointName, vsCompileTarget,
 				pixelShaderProgram, pixelShaderEntryPointName, psCompileTarget,
 				geometryShaderProgram, geometryShaderEntryPointName, gsCompileTarget,
@@ -7004,6 +7850,7 @@ namespace irr
 			// compile+reflechit (CD3D12MaterialRenderer::compileComputeFromHLSL()), le driver
 			// orchestre juste callback/enregistrement.
 			CD3D12MaterialRenderer* renderer = new CD3D12MaterialRenderer();
+			renderer->UseShaderModel6 = ResourceOwner->ShaderModel6Enabled;
 			if (!renderer->compileComputeFromHLSL(computeShaderProgram, computeShaderEntryPointName, csCompileTarget, FileSystem))
 			{
 				renderer->drop();

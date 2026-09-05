@@ -34,6 +34,7 @@
 #include "CVulkanCompute.h"
 #include "CVulkanOcclusionQuery.h"
 #include "CVulkanSamplerCache.h"
+#include "CTiledResourceHelpers.h"
 #include "IDeferredContext.h"
 #include "SIrrCreationParameters.h"
 #include <vector>
@@ -133,6 +134,38 @@ namespace irr
 			//! Up to 16 viewports (D3D11.x feature set, multiViewport feature); the shader picks one
 			//! with SV_ViewportArrayIndex / gl_ViewportIndex.
 			virtual void setViewPorts(const core::array<core::rect<s32> >& areas) _IRR_OVERRIDE_;
+
+			//! GPU timers (vkCmdWriteTimestamp pairs), per-frame pipeline statistics and predication
+			//! (VK_EXT_conditional_rendering over the node's occlusion result). See IVideoDriver.
+			virtual void beginTimer(u32 id) _IRR_OVERRIDE_;
+			virtual void endTimer(u32 id) _IRR_OVERRIDE_;
+			virtual bool getTimerResult(u32 id, u64& nanoseconds) const _IRR_OVERRIDE_;
+			virtual bool getPipelineStatistics(SPipelineStatistics& out) const _IRR_OVERRIDE_;
+			virtual void beginPredicatedDraws(std::shared_ptr<scene::ISceneNode> node) _IRR_OVERRIDE_;
+			virtual void endPredicatedDraws() _IRR_OVERRIDE_;
+
+			//! Pixel-stage UAVs (storage buffers/images of a user material). See IVideoDriver.
+			virtual bool bindPixelShaderBuffer(u32 slot, scene::IComputeBuffer* buffer) _IRR_OVERRIDE_;
+			virtual bool bindPixelShaderTexture(u32 slot, ITexture* texture) _IRR_OVERRIDE_;
+			virtual void unbindPixelShaderResources() _IRR_OVERRIDE_;
+
+			//! Tiled resources: sparse-residency images bound tile by tile (vkQueueBindSparse, waited
+			//! for) to pools of VkDeviceMemory blocks; tiles written with a staging copy. A bind is
+			//! queue-ordered, so inside beginScene()/endScene() the draws of the current frame recorded
+			//! so far see the new mapping too (the frame is submitted after it). See IVideoDriver.
+			//! Packed mips cannot be written with updateTiles(); with a single mip tail (an array
+			//! whose layers share it) the tail is addressed through ArraySlice 0.
+			virtual ITilePool* createTilePool(u32 tileCount) _IRR_OVERRIDE_;
+			virtual ITexture* addTiledTexture(const core::dimension2d<u32>& size, const io::path& name,
+				ECOLOR_FORMAT format, u32 mipLevels = 0, u32 arraySlices = 1, bool isRenderTarget = false) _IRR_OVERRIDE_;
+			virtual bool getTileShape(const ITexture* texture, STileShape& out) const _IRR_OVERRIDE_;
+			virtual bool updateTileMappings(ITexture* texture, const STileRegion* regions, u32 regionCount,
+				ITilePool* pool, const u32* poolTileIndices) _IRR_OVERRIDE_;
+			virtual bool updateTiles(ITexture* texture, const STileRegion& region, const void* data) _IRR_OVERRIDE_;
+			//! Forget a tiled texture's mappings (its pools are released) before CNullDriver drops it.
+			virtual void removeTexture(ITexture* texture) _IRR_OVERRIDE_;
+			virtual void removeAllTextures() _IRR_OVERRIDE_;
+
 			//! The area setViewPort() last accepted, not an empty rect: GUI code divides by it.
 			virtual const core::rect<s32>& getViewPort() const _IRR_OVERRIDE_ { return ViewPort; }
 			virtual void clearZBuffer() _IRR_OVERRIDE_;
@@ -764,6 +797,10 @@ namespace irr
 
 			VkSwapchainKHR Swapchain = VK_NULL_HANDLE;
 			VkFormat SwapchainFormat = VK_FORMAT_UNDEFINED;
+			//! SIrrlichtCreationParameters::ColorSpace as obtained (the "SwapchainColorSpace"
+			//! attribute): the surface format createSwapchain() found for it, or the 8-bit default.
+			E_SWAPCHAIN_COLOR_SPACE SwapchainColorSpace = ESCS_SRGB_NONLINEAR;
+			bool WarnedColorSpace = false;
 			VkExtent2D SwapchainExtent = { 0, 0 };
 			std::vector<VkImage> SwapchainImages;
 			std::vector<VkImageView> SwapchainImageViews;
@@ -821,8 +858,48 @@ namespace irr
 			SVulkanComputeSlot ComputeSRV[EMCS_MAX_COMPUTE_SRV_SLOTS];
 			SVulkanComputeSlot ComputeUAV[EMCS_MAX_COMPUTE_UAV_SLOTS];
 
+			//! Pixel-stage UAVs (bindPixelShaderBuffer()/bindPixelShaderTexture()): slot s is the
+			//! storage buffer/image at binding 16 + s of a user material's set (the compiler's
+			//! u-register shift), filled by bindUserMaterialDescriptors(). A texture is kept in the
+			//! GENERAL layout while bound.
+			static const u32 MaxPixelUAVSlots = 8;
+			SVulkanComputeSlot PixelUAV[MaxPixelUAVSlots];
+			//! What a declared but unbound storage buffer descriptor points at.
+			static const VkDeviceSize NullStorageBufferSize = 64;
+			VkBuffer NullStorageBuffer = VK_NULL_HANDLE;
+			VkDeviceMemory NullStorageMemory = VK_NULL_HANDLE;
+			bool ensureNullStorageBuffer();
+			void transitionPixelUAVTexture(CVulkanTexture* texture, VkImageLayout layout);
+
 			//! Occlusion query pool and per-node records; null until initDriver().
 			CVulkanOcclusionQuery* Occlusion = nullptr;
+
+			// --- The D3D11.x queries (doc/d3d11-feature-api.md): GPU timers, per-frame pipeline
+			// statistics, predication. Created on first use by createQueryResources(); one range of
+			// timestamp slots per frame in flight, reset at beginScene() before the rendering
+			// instance opens, read back once that frame's fence has passed (harvestQueryFrame()).
+			VkQueryPool TimestampPool = VK_NULL_HANDLE;	//!< FrameCount x 2 x EMCS_MAX_TIMER_QUERIES
+			VkQueryPool StatsPool = VK_NULL_HANDLE;		//!< FrameCount entries (pipelineStatisticsQuery)
+			bool TimerUsed[FrameCount][EMCS_MAX_TIMER_QUERIES] = {};
+			bool TimerEnded[FrameCount][EMCS_MAX_TIMER_QUERIES] = {};
+			bool StatsOpen[FrameCount] = {};
+			u64 TimerResults[EMCS_MAX_TIMER_QUERIES] = {};
+			bool TimerResultValid[EMCS_MAX_TIMER_QUERIES] = {};
+			//! getPipelineStatistics() arms the per-frame query on its first call (const method).
+			mutable bool StatsArmed = false;
+			SPipelineStatistics LastStats;
+			bool StatsValid = false;
+			bool QueryResourcesCreated = false;
+			bool WarnedTimerReuse = false;
+			//! One 32-bit occlusion result per query slot, copied from the occlusion pool at
+			//! beginPredicatedDraws() and read by VK_EXT_conditional_rendering.
+			VkBuffer PredicationBuffer = VK_NULL_HANDLE;
+			VkDeviceMemory PredicationMemory = VK_NULL_HANDLE;
+			bool PredicationActive = false;
+			bool createQueryResources();
+			void destroyQueryResources();
+			//! Reads the timers and statistics frame `frame` recorded; its fence has passed.
+			void harvestQueryFrame(u32 frame);
 			//! Bumped once per endScene(); the marker a query is stamped with, so a readback can tell
 			//! a submitted frame from the one still being recorded (waiting on that one would hang).
 			u64 FrameCounter = 1;
@@ -863,6 +940,14 @@ namespace irr
 			bool WarnedSrc1OnMrtSlot = false;
 			//! setViewPorts(): the count baked into the pipeline key (1 without multiViewport).
 			u32 ViewportCount = 1;
+
+			//! The tiled textures this driver created (addTiledTexture()), with their shape and current
+			//! mappings; see CTiledResourceHelpers.h.
+			std::map<const ITexture*, STiledTextureRecord> TiledTextures;
+			//! vkGetImageSparseMemoryRequirements into a fresh record. False (logged) when the image has
+			//! no colour-aspect sparse requirements or a non-standard block size.
+			bool queryTileShape(CVulkanTexture* texture, STiledTextureRecord& out) const;
+			void releaseTiledRecords();
 
 			//! Whether createLogicalDevice() enabled VK_EXT_transform_feedback; Context.HasTransformFeedback
 			//! is that plus the resolved entry points.

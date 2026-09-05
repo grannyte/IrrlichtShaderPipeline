@@ -55,6 +55,68 @@ namespace irr
 			createRenderTarget(format);
 		}
 
+		//! tiled constructor
+		CD3D11Texture::CD3D11Texture(CD3D11Driver* driver, const core::dimension2d<u32>& size, const io::path& name,
+			ECOLOR_FORMAT format, u32 mipLevels, u32 arraySlices, bool renderTarget, STiledTextureTag)
+			: ITexture(name), Texture(0), TextureBuffer(0),
+			Device(0), Context(0), Driver(driver),
+			RTView(0), SRView(0), UAView(0),
+			TextureDimension(D3D11_RESOURCE_DIMENSION_TEXTURE2D),
+			MipLevelLocked(0), NumberOfMipLevels(mipLevels), ArraySliceLocked(0),
+			NumberOfArraySlices(arraySlices ? arraySlices : 1),
+			SampleCount(1), SampleQuality(0),
+			LastMapDirection((D3D11_MAP)0), dsView(0),
+			HardwareMipMaps(false)
+		{
+#ifdef _DEBUG
+			setDebugName("CD3D11Texture");
+#endif
+			TextureType = NumberOfArraySlices > 1 ? ETT_2D_ARRAY : ETT_2D;
+			DriverType = EDT_DIRECT3D11;
+			OriginalSize = Size = size;
+			IsRenderTarget = renderTarget;
+			IsUnorderedAccess = false;
+			Tiled = true;
+			ColorFormat = (format == ECF_UNKNOWN) ? ECF_A8R8G8B8 : format;
+
+			Device = driver->getExposedVideoData().D3D11.D3DDev11;
+			if (Device)
+			{
+				Device->AddRef();
+				Device->GetImmediateContext(&Context);
+			}
+
+			// The channel order createTexture() / createRenderTarget() would pick: a sampled-only
+			// texture stores B8G8R8A8 (what ECF_A8R8G8B8 is in memory), a render target R8G8B8A8.
+			DXGI_FORMAT d3dformat = Driver->getD3DFormatFromColorFormat(ColorFormat);
+			if (!renderTarget && d3dformat == DXGI_FORMAT_R8G8B8A8_UNORM)
+				d3dformat = DXGI_FORMAT_B8G8R8A8_UNORM;
+			setPitch(d3dformat);
+
+			D3D11_TEXTURE2D_DESC desc;
+			ZeroMemory(&desc, sizeof(desc));
+			desc.Width = size.Width;
+			desc.Height = size.Height;
+			desc.MipLevels = mipLevels; // 0: the full chain
+			desc.ArraySize = NumberOfArraySlices;
+			desc.Format = d3dformat;
+			desc.SampleDesc.Count = 1;
+			desc.Usage = D3D11_USAGE_DEFAULT;
+			desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | (renderTarget ? D3D11_BIND_RENDER_TARGET : 0);
+			desc.MiscFlags = D3D11_RESOURCE_MISC_TILED;
+
+			HRESULT hr = Device->CreateTexture2D(&desc, NULL, (ID3D11Texture2D**)&Texture);
+			if (FAILED(hr))
+			{
+				logFormatError(hr, "Could not create tiled texture");
+				return;
+			}
+			((ID3D11Texture2D*)Texture)->GetDesc(&desc);
+			NumberOfMipLevels = desc.MipLevels;
+			MipMaps = NumberOfMipLevels > 1;
+			createViews();
+		}
+
 		//! constructor
 		CD3D11Texture::CD3D11Texture(IImage* image, CD3D11Driver* driver,
 			u32 flags, const io::path& name, u32 arraySlices, void* mipmapData)
