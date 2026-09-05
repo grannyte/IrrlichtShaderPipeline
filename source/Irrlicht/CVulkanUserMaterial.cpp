@@ -436,10 +436,17 @@ namespace irr
 					}
 					break;
 				case SpvOpTypeBool:
-				case SpvOpTypeImage:
 				case SpvOpTypeSampler:
 					if (wordCount >= 2 && words[1] < bound)
 						ids[words[1]].Op = opcode;
+					break;
+				case SpvOpTypeImage:
+					// Word0 keeps the Sampled operand: 2 is a storage image (RWTexture*), 1 a sampled one.
+					if (wordCount >= 2 && words[1] < bound)
+					{
+						ids[words[1]].Op = opcode;
+						ids[words[1]].Word0 = wordCount >= 8 ? words[7] : 1;
+					}
 					break;
 				case SpvOpTypeInt:
 				case SpvOpTypeFloat:
@@ -543,8 +550,23 @@ namespace irr
 
 					if (variable.StorageClass == SpvStorageClassStorageBuffer || type.IsBufferBlock)
 					{
-						logStage(stageName, "storage buffers are not supported by this material, skipped: ",
-							type.Name.c_str(), ELL_WARNING);
+						// A storage buffer (RWStructuredBuffer/RWByteAddressBuffer): declared in the set
+						// layout and filled per draw from the pixel-stage UAV slots, binding 16 + slot
+						// (the u-register shift the compiler applies, see CVulkanShaderCompiler).
+						if (binding == SpirvNoValue)
+						{
+							logStage(stageName, "storage buffer without a binding decoration, skipped: ",
+								type.Name.c_str(), ELL_WARNING);
+							continue;
+						}
+						if (set >= MaxUserDescriptorSets)
+						{
+							logStage(stageName, "storage buffer declared in a descriptor set outside the user "
+								"range 0..3, which belongs to the driver: ", type.Name.c_str(), ELL_ERROR);
+							return false;
+						}
+						addDescriptorBinding(set, binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, stageBit,
+							self.Name.size() ? self.Name : type.Name);
 						continue;
 					}
 
@@ -623,6 +645,26 @@ namespace irr
 				}
 				else if (variable.StorageClass == SpvStorageClassUniformConstant)
 				{
+					// A storage image (RWTexture*, Sampled == 2): the pixel-stage UAV slots, binding
+					// 16 + slot, like the storage buffers above.
+					if (type.Op == SpvOpTypeImage && type.Word0 == 2)
+					{
+						if (binding == SpirvNoValue)
+						{
+							logStage(stageName, "storage image without a binding decoration, skipped: ",
+								self.Name.c_str(), ELL_WARNING);
+							continue;
+						}
+						if (set >= MaxUserDescriptorSets)
+						{
+							logStage(stageName, "storage image declared in a descriptor set outside the user "
+								"range 0..3, which belongs to the driver: ", self.Name.c_str(), ELL_ERROR);
+							return false;
+						}
+						addDescriptorBinding(set, binding, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, descriptorCount,
+							stageBit, self.Name);
+						continue;
+					}
 					if (type.Op != SpvOpTypeSampledImage)
 					{
 						if (type.Op == SpvOpTypeImage || type.Op == SpvOpTypeSampler)

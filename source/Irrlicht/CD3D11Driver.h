@@ -20,6 +20,7 @@
 #include "ID3D11MaterialRendererServices.h"
 #include "CD3D11CallBridge.h"
 #include "IDeferredContext.h"
+#include "CTiledResourceHelpers.h"
 #include "CD3D11VertexDescriptor.h"
 
 #include"CMeshBuffer.h"
@@ -275,6 +276,35 @@ namespace irr
 
 			//! Up to 16 viewports (D3D11.x feature set); the shader picks one with SV_ViewportArrayIndex.
 			virtual void setViewPorts(const core::array<core::rect<s32> >& areas) _IRR_OVERRIDE_;
+
+			//! GPU timers (timestamp pairs under a disjoint query), per-frame pipeline statistics and
+			//! predication (SetPredication on the node's occlusion predicate). See IVideoDriver.
+			virtual void beginTimer(u32 id) _IRR_OVERRIDE_;
+			virtual void endTimer(u32 id) _IRR_OVERRIDE_;
+			virtual bool getTimerResult(u32 id, u64& nanoseconds) const _IRR_OVERRIDE_;
+			virtual bool getPipelineStatistics(SPipelineStatistics& out) const _IRR_OVERRIDE_;
+			virtual void beginPredicatedDraws(std::shared_ptr<scene::ISceneNode> node) _IRR_OVERRIDE_;
+			virtual void endPredicatedDraws() _IRR_OVERRIDE_;
+
+			//! Pixel-stage UAVs (OMSetRenderTargetsAndUnorderedAccessViews). See IVideoDriver.
+			virtual bool bindPixelShaderBuffer(u32 slot, scene::IComputeBuffer* buffer) _IRR_OVERRIDE_;
+			virtual bool bindPixelShaderTexture(u32 slot, ITexture* texture) _IRR_OVERRIDE_;
+			virtual void unbindPixelShaderResources() _IRR_OVERRIDE_;
+
+			//! Tiled resources (D3D11.2): a tile pool buffer and D3D11_RESOURCE_MISC_TILED textures,
+			//! mapped with ID3D11DeviceContext2::UpdateTileMappings on the immediate context (which is
+			//! also what a deferred context uses: call these from the immediate driver's thread). See
+			//! IVideoDriver. Packed mips cannot be written with updateTiles().
+			virtual ITilePool* createTilePool(u32 tileCount) _IRR_OVERRIDE_;
+			virtual ITexture* addTiledTexture(const core::dimension2d<u32>& size, const io::path& name,
+				ECOLOR_FORMAT format, u32 mipLevels = 0, u32 arraySlices = 1, bool isRenderTarget = false) _IRR_OVERRIDE_;
+			virtual bool getTileShape(const ITexture* texture, STileShape& out) const _IRR_OVERRIDE_;
+			virtual bool updateTileMappings(ITexture* texture, const STileRegion* regions, u32 regionCount,
+				ITilePool* pool, const u32* poolTileIndices) _IRR_OVERRIDE_;
+			virtual bool updateTiles(ITexture* texture, const STileRegion& region, const void* data) _IRR_OVERRIDE_;
+			//! Forget a tiled texture's mappings (its pools are released) before CNullDriver drops it.
+			virtual void removeTexture(ITexture* texture) _IRR_OVERRIDE_;
+			virtual void removeAllTextures() _IRR_OVERRIDE_;
 
 			//! gets the area of the current viewport
 			virtual const core::rect<s32>& getViewPort() const;
@@ -644,8 +674,49 @@ namespace irr
 			//! on a format without it is undefined, so setBasicRenderStates() drops it (warned once).
 			std::map<DXGI_FORMAT, bool> LogicOpFormatSupport;
 			bool formatSupportsLogicOp(DXGI_FORMAT format);
+
+			//! The tiled textures this driver created (addTiledTexture()), with their shape and current
+			//! mappings; see CTiledResourceHelpers.h.
+			std::map<const ITexture*, STiledTextureRecord> TiledTextures;
+			//! The immediate context's ID3D11DeviceContext2 (tile mappings are refused on a deferred
+			//! context), AddRef'd; null without D3D11.2. The caller releases it.
+			ID3D11DeviceContext2* getTiledContext() const;
+			//! GetResourceTiling into a fresh record. False (logged) when the runtime refuses.
+			bool queryTileShape(CD3D11Texture* texture, STiledTextureRecord& out) const;
+			void releaseTiledRecords();
 			//! The format of the render target view currently bound (the back buffer's when none).
 			DXGI_FORMAT currentRenderTargetFormat() const;
+
+			// --- The D3D11.x queries (doc/d3d11-feature-api.md): GPU timers, per-frame pipeline
+			// statistics, predication. One set of query objects per frame in flight; a frame's
+			// results are read (blocking on a frame that old is free) when its slot comes round again.
+			struct SD3D11QueryFrame
+			{
+				ID3D11Query* Disjoint = NULL;
+				ID3D11Query* Begin[EMCS_MAX_TIMER_QUERIES] = {};
+				ID3D11Query* End[EMCS_MAX_TIMER_QUERIES] = {};
+				bool Used[EMCS_MAX_TIMER_QUERIES] = {};
+				bool Ended[EMCS_MAX_TIMER_QUERIES] = {};
+				bool Open = false;		//!< the disjoint query was begun and holds a frame to read
+				ID3D11Query* Stats = NULL;
+				bool StatsOpen = false;
+			};
+			static const u32 QueryFrameCount = 4;
+			SD3D11QueryFrame QueryFrames[QueryFrameCount];
+			u32 QueryFrameIndex = 0;
+			bool QueryFramesCreated = false;
+			u64 TimerResults[EMCS_MAX_TIMER_QUERIES] = {};
+			bool TimerResultValid[EMCS_MAX_TIMER_QUERIES] = {};
+			mutable bool StatsArmed = false;
+			SPipelineStatistics LastStats;
+			bool StatsValid = false;
+			bool WarnedTimerReuse = false;
+			//! One D3D11_QUERY_OCCLUSION_PREDICATE beside each node's occlusion query, run around the
+			//! same draw; what SetPredication() takes.
+			std::unordered_map<scene::ISceneNode*, ID3D11Predicate*> Predicates;
+			bool ensureQueryFrames();
+			void harvestQueryFrame(SD3D11QueryFrame& frame);
+			void releaseQueryObjects();
 
 			// Back and depth buffers
 			ID3D11RenderTargetView* DefaultBackBuffer;
@@ -762,6 +833,22 @@ namespace irr
 			DXGI_FORMAT DepthStencilFormat;		// Best format for depth stencil
 			SIrrlichtCreationParameters Params;
 
+			//! SIrrlichtCreationParameters::ColorSpace as obtained (the "SwapchainColorSpace"
+			//! attribute). The swapchain buffer is D3DColorFormat; BackBufferViewFormat is the render
+			//! target view's format when it differs -- the _SRGB view over the UNORM buffer of
+			//! ESCS_SRGB_LINEAR, a flip-model swapchain refusing an _SRGB buffer -- DXGI_FORMAT_UNKNOWN
+			//! otherwise.
+			E_SWAPCHAIN_COLOR_SPACE SwapchainColorSpace = ESCS_SRGB_NONLINEAR;
+			DXGI_FORMAT BackBufferViewFormat = DXGI_FORMAT_UNKNOWN;
+			//! Picks D3DColorFormat / BackBufferViewFormat from Params.ColorSpace, before the swapchain
+			//! is created.
+			void chooseSwapchainFormat();
+			//! IDXGISwapChain3::SetColorSpace1 for the scRGB / HDR10 requests, once the swapchain exists;
+			//! falls back to sRGB with a warning when the display or runtime refuses.
+			void applySwapchainColorSpace();
+			//! DefaultBackBuffer over the swapchain's buffer 0, through BackBufferViewFormat when set.
+			bool createBackBufferView(ID3D11Texture2D* backBuffer);
+
 			std::array <std::unordered_map<u32, std::queue< std::shared_ptr<CD3D11HardwareBuffer>>>, E_HARDWARE_BUFFER_TYPE::EHBT_COUNT> MeshBuffer2dQueues;
 
 			std::shared_ptr<CD3D11HardwareBuffer> GetTempBuffer(E_HARDWARE_BUFFER_TYPE type, irr::u32 size, irr::u32 flags, irr::u32 Stride, const void* initialData);
@@ -831,6 +918,24 @@ namespace irr
 			u32 ComputeUAVInitialCounts[EMCS_MAX_COMPUTE_UAV_SLOTS] = {};
 			u32 ComputeSRVCount = 0;
 			u32 ComputeUAVCount = 0;
+
+			// Pixel-stage UAVs (bindPixelShaderBuffer()/bindPixelShaderTexture()), valid until
+			// unbindPixelShaderResources(). Bound with the KEEP_RENDER_TARGETS form of
+			// OMSetRenderTargetsAndUnorderedAccessViews(), and re-issued after every render target
+			// change, which drops them. Slots share the register space with the render targets, so a
+			// slot below the bound target count is refused, as D3D11 itself would.
+			static const u32 MaxPixelUAVSlots = 8;
+			ID3D11UnorderedAccessView* PixelUAV[MaxPixelUAVSlots] = {};
+			scene::IComputeBuffer* PixelUAVSource[MaxPixelUAVSlots] = {};
+			ITexture* PixelUAVTexture[MaxPixelUAVSlots] = {};
+			u32 PixelUAVInitialCounts[MaxPixelUAVSlots] = {};
+			u32 PixelUAVBoundStart = 0;	//!< the range last handed to the context
+			u32 PixelUAVBoundCount = 0;
+			u32 CurrentRenderTargetCount = 1;
+			bool WarnedPixelUAVSlot = false;
+			void applyPixelShaderUAVs();
+			//! After an OMSetRenderTargets(): the context dropped the UAVs, bind them again.
+			void reapplyPixelShaderUAVsAfterTargetChange() { PixelUAVBoundCount = 0; applyPixelShaderUAVs(); }
 
 			//! sets the needed renderstates
 			void setRenderStates2DMode(bool alpha, bool texture, bool alphaChannel);

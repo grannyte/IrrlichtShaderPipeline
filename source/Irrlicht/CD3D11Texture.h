@@ -10,6 +10,7 @@
 #include <irrArray.h>
 #include "ITexture.h"
 #include "IImage.h"
+#include "CTiledResourceHelpers.h"
 #include <d3d11.h>
 
 namespace irr
@@ -34,6 +35,10 @@ namespace irr
 			//! Array constructor
 			CD3D11Texture(const core::array<ITexture*>* surfaces, CD3D11Driver* driver,
 				u32 flags, const io::path& name, E_TEXTURE_TYPE Type, u32 arraySlices, void* mipmapData);
+			//! Tiled texture (D3D11_RESOURCE_MISC_TILED): address space only, its tiles mapped by
+			//! CD3D11Driver::updateTileMappings(). mipLevels 0 = the full chain.
+			CD3D11Texture(CD3D11Driver* driver, const core::dimension2d<u32>& size, const io::path& name,
+				ECOLOR_FORMAT format, u32 mipLevels, u32 arraySlices, bool renderTarget, STiledTextureTag);
 			//! destructor
 			virtual ~CD3D11Texture();
 
@@ -73,6 +78,9 @@ namespace irr
 			//! return unordered access view (compute-writable textures only, see IsUnorderedAccess)
 			ID3D11UnorderedAccessView* getUnorderedAccessView() const;
 
+			//! Created by the tiled constructor: no backing until its tiles are mapped.
+			bool isTiled() const { return Tiled; }
+
 		private:
 			friend class CD3D11Driver;
 
@@ -101,6 +109,7 @@ namespace irr
 			bool HardwareMipMaps;
 			//! Pixels went to CreateTexture2D as initial data, so copyTexture() has nothing to do.
 			bool UploadedAtCreation = false;
+			bool Tiled = false;
 
 			//! Single-sample twin of a multisampled render target, resolved into by
 			//! getShaderResourceView() so the target can be sampled; null for everything else.

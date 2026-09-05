@@ -330,6 +330,9 @@ namespace irr
 			if (Context.Device)
 				vk::DeviceWaitIdle(Context.Device);
 
+			// The tile pools the tiled textures still map into: freed while the device is alive.
+			releaseTiledRecords();
+
 			// A deferred context shares the device, the loader and the compiler state with the
 			// immediate driver: it tears down what it created (frames, caches, its own pools) and
 			// nothing of the owner's.
@@ -674,6 +677,11 @@ namespace irr
 				}
 				extensions.push_back(kRequiredInstanceExtensions[i]);
 			}
+			// The wide-gamut / HDR surface colour spaces (SIrrlichtCreationParameters::ColorSpace)
+			// only exist with this optional extension; without it createSwapchain() falls back.
+			if ((Params.ColorSpace == ESCS_SCRGB_LINEAR || Params.ColorSpace == ESCS_HDR10_ST2084) &&
+				hasExtension(available, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME))
+				extensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
 
 			std::vector<const c8*> layers;
 #ifdef _IRR_VULKAN_DEBUG_LAYER_
@@ -883,6 +891,11 @@ namespace irr
 			Context.HasMultiViewport = supported.multiViewport == VK_TRUE;
 			features.pipelineStatisticsQuery = supported.pipelineStatisticsQuery;
 			Context.HasPipelineStatistics = supported.pipelineStatisticsQuery == VK_TRUE;
+			// Pixel-stage UAVs: stores and atomics from the fragment stage, and storage-image writes
+			// without a declared format (HLSL RWTexture2D<float4> without [[vk::image_format]]).
+			features.fragmentStoresAndAtomics = supported.fragmentStoresAndAtomics;
+			features.shaderStorageImageWriteWithoutFormat = supported.shaderStorageImageWriteWithoutFormat;
+			Context.HasFragmentStores = supported.fragmentStoresAndAtomics == VK_TRUE;
 			// Tiled textures: sparse binding plus 2D residency, and the two flags that make a
 			// non-resident read defined (D3D tier 2) and visible to the shader.
 			features.sparseBinding = supported.sparseBinding;
@@ -890,6 +903,18 @@ namespace irr
 			features.shaderResourceResidency = supported.shaderResourceResidency;
 			Context.HasSparseResidency = supported.sparseBinding == VK_TRUE && supported.sparseResidencyImage2D == VK_TRUE;
 			Context.HasShaderResourceResidency = supported.shaderResourceResidency == VK_TRUE;
+			// vkQueueBindSparse needs a queue family with the sparse-binding bit; the tile mappings go
+			// through the graphics queue, so that family has to carry it.
+			if (Context.HasSparseResidency)
+			{
+				u32 familyCount = 0;
+				vk::GetPhysicalDeviceQueueFamilyProperties(Context.PhysicalDevice, &familyCount, nullptr);
+				std::vector<VkQueueFamilyProperties> families(familyCount);
+				if (familyCount)
+					vk::GetPhysicalDeviceQueueFamilyProperties(Context.PhysicalDevice, &familyCount, families.data());
+				Context.HasSparseResidency = Context.GraphicsQueueFamily < familyCount &&
+					(families[Context.GraphicsQueueFamily].queueFlags & VK_QUEUE_SPARSE_BINDING_BIT) != 0;
+			}
 			Context.HasSparseResidencyStrict = Context.DeviceProperties.sparseProperties.residencyNonResidentStrict == VK_TRUE;
 
 			// Must be enabled explicitly even when the extension is present, or CmdBeginRendering
@@ -1040,17 +1065,44 @@ namespace irr
 			std::vector<VkSurfaceFormatKHR> formats(formatCount);
 			vk::GetPhysicalDeviceSurfaceFormatsKHR(Context.PhysicalDevice, Surface, &formatCount, formats.data());
 
-			// B8G8R8A8_UNORM matches Irrlicht's A8R8G8B8 byte order, so 2D blits need no swizzle.
-			VkSurfaceFormatKHR chosen = formats[0];
-			for (size_t i = 0; i < formats.size(); ++i)
+			// B8G8R8A8_UNORM matches Irrlicht's A8R8G8B8 byte order, so 2D blits need no swizzle. The
+			// requested colour space (SIrrlichtCreationParameters::ColorSpace) asks for another surface
+			// format first; one the surface lacks falls back to that default, warned once.
+			auto findSurfaceFormat = [&](VkFormat format, VkColorSpaceKHR colorSpace, VkSurfaceFormatKHR& out) -> bool
 			{
-				if (formats[i].format == VK_FORMAT_B8G8R8A8_UNORM &&
-					formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
-				{
-					chosen = formats[i];
-					break;
-				}
+				for (size_t i = 0; i < formats.size(); ++i)
+					if (formats[i].format == format && formats[i].colorSpace == colorSpace)
+					{
+						out = formats[i];
+						return true;
+					}
+				return false;
+			};
+			VkFormat wantedFormat = VK_FORMAT_B8G8R8A8_UNORM;
+			VkColorSpaceKHR wantedSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+			switch (Params.ColorSpace)
+			{
+			case ESCS_SRGB_LINEAR:  wantedFormat = VK_FORMAT_B8G8R8A8_SRGB; break;
+			case ESCS_SCRGB_LINEAR: wantedFormat = VK_FORMAT_R16G16B16A16_SFLOAT; wantedSpace = VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT; break;
+			case ESCS_HDR10_ST2084: wantedFormat = VK_FORMAT_A2B10G10R10_UNORM_PACK32; wantedSpace = VK_COLOR_SPACE_HDR10_ST2084_EXT; break;
+			default: break;
 			}
+			VkSurfaceFormatKHR chosen = formats[0];
+			SwapchainColorSpace = ESCS_SRGB_NONLINEAR;
+			if (Params.ColorSpace != ESCS_SRGB_NONLINEAR && findSurfaceFormat(wantedFormat, wantedSpace, chosen))
+				SwapchainColorSpace = Params.ColorSpace;
+			else
+			{
+				if (Params.ColorSpace != ESCS_SRGB_NONLINEAR && !WarnedColorSpace)
+				{
+					os::Printer::log("CVulkanDriver: the surface offers no format for the requested colour space; "
+						"the 8-bit sRGB default is used (ESCS_SRGB_NONLINEAR)", ELL_WARNING);
+					WarnedColorSpace = true;
+				}
+				if (!findSurfaceFormat(VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, chosen))
+					chosen = formats[0];
+			}
+			DriverAttributes->setAttribute("SwapchainColorSpace", (s32)SwapchainColorSpace);
 
 			SwapchainExtent.width = caps.currentExtent.width != 0xFFFFFFFFu ? caps.currentExtent.width : size.Width;
 			SwapchainExtent.height = caps.currentExtent.height != 0xFFFFFFFFu ? caps.currentExtent.height : size.Height;
@@ -1310,16 +1362,21 @@ namespace irr
 			// Plain UNIFORM_BUFFER, not the _DYNAMIC flavour: getVulkanDriverUniformBindings()
 			// declares set 4 with that type, and a pool has to carry the types its sets ask for.
 			// One draw takes one set of each kind, hence the two multipliers.
-			VkDescriptorPoolSize sizes[2] = {};
+			VkDescriptorPoolSize sizes[4] = {};
 			sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 			sizes[0].descriptorCount = kDescriptorSetsPerFrame * EVDU_COUNT;
 			sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 			sizes[1].descriptorCount = kDescriptorSetsPerFrame * VulkanMaterialTextureBindingCount;
+			// The pixel-stage UAVs of user materials (storage buffers and images), a few per set.
+			sizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+			sizes[2].descriptorCount = kDescriptorSetsPerFrame * 2;
+			sizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+			sizes[3].descriptorCount = kDescriptorSetsPerFrame * 2;
 
 			VkDescriptorPoolCreateInfo dpInfo = {};
 			dpInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 			dpInfo.maxSets = kDescriptorSetsPerFrame;
-			dpInfo.poolSizeCount = 2;
+			dpInfo.poolSizeCount = 4;
 			dpInfo.pPoolSizes = sizes;
 
 			VkDescriptorPool pool = VK_NULL_HANDLE;
@@ -1486,6 +1543,29 @@ namespace irr
 				vk::BeginCommandBuffer(frame.CommandBuffer, &begin)))
 				return false;
 
+			// Timers / statistics: this slot's fence passed above, so its last results can be read,
+			// and its query range reset here, outside any rendering instance, for this frame's use.
+			if (StatsArmed && !QueryResourcesCreated)
+				createQueryResources();
+			if (QueryResourcesCreated)
+			{
+				harvestQueryFrame(CurrentFrameIndex);
+				if (TimestampPool)
+					vk::CmdResetQueryPool(frame.CommandBuffer, TimestampPool,
+						CurrentFrameIndex * 2 * EMCS_MAX_TIMER_QUERIES, 2 * EMCS_MAX_TIMER_QUERIES);
+				if (StatsPool)
+				{
+					vk::CmdResetQueryPool(frame.CommandBuffer, StatsPool, CurrentFrameIndex, 1);
+					if (StatsArmed)
+					{
+						// Begun outside the rendering instance and ended outside it at endScene(): a
+						// query may span rendering instances but not straddle one boundary.
+						vk::CmdBeginQuery(frame.CommandBuffer, StatsPool, CurrentFrameIndex, 0);
+						StatsOpen[CurrentFrameIndex] = true;
+					}
+				}
+			}
+
 			transitionImageLayout(frame.CommandBuffer, SwapchainImages[CurrentImageIndex],
 				VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 				VK_IMAGE_ASPECT_COLOR_BIT);
@@ -1586,6 +1666,9 @@ namespace irr
 		{
 			if (!RenderingActive)
 				return;
+			// Conditional rendering must end inside the rendering instance it began in; a block
+			// still open here (a suspend for compute, or endScene()) is closed with it.
+			endPredicatedDraws();
 			vk::CmdEndRendering(Frames[CurrentFrameIndex].CommandBuffer);
 			RenderingActive = false;
 		}
@@ -1598,6 +1681,10 @@ namespace irr
 
 			SVulkanFrameContext& frame = Frames[CurrentFrameIndex];
 			endRendering();
+
+			// The statistics query opened by beginScene(), outside the rendering instance like it.
+			if (StatsOpen[CurrentFrameIndex] && StatsPool)
+				vk::CmdEndQuery(frame.CommandBuffer, StatsPool, CurrentFrameIndex);
 
 			// A target still bound at endScene() has to be released before the present transition,
 			// or its colour textures stay in the attachment layout and cannot be sampled next frame.
@@ -1843,11 +1930,14 @@ namespace irr
 			case EVDF_MINMAX_FILTER:
 				return Context.HasSamplerFilterMinmax;
 			case EVDF_PREDICATION:
-				return Context.HasConditionalRendering && Occlusion && Occlusion->isValid();
+				return Context.HasConditionalRendering && Occlusion && Occlusion->isValid() &&
+					vk::CmdBeginConditionalRenderingEXT != nullptr;
 			case EVDF_TIMER_QUERY:
 				return Context.DeviceProperties.limits.timestampComputeAndGraphics == VK_TRUE;
 			case EVDF_TILED_RESOURCES:
 				return Context.HasSparseResidency;
+			case EVDF_PIXEL_SHADER_UAV:
+				return Context.HasFragmentStores;
 			case EVDF_NATIVE_DEFERRED_CONTEXT:
 				return true;
 			default:
@@ -2545,10 +2635,50 @@ namespace irr
 						images.push_back(info);
 						write.pImageInfo = &images.back();
 					}
+					else if (binding.Type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+					{
+						// Pixel-stage UAV slot s is binding 16 + s (the compiler's u-register shift).
+						const u32 slot = binding.Binding >= 16 ? binding.Binding - 16 : ~0u;
+						CVulkanHardwareBuffer* hw = (slot < MaxPixelUAVSlots && PixelUAV[slot].Buffer) ?
+							prepareComputeBuffer(PixelUAV[slot].Buffer) : nullptr;
+						if (!hw && !ensureNullStorageBuffer())
+							continue;
+						VkDescriptorBufferInfo info = {};
+						info.buffer = hw ? hw->getBuffer() : NullStorageBuffer;
+						info.offset = 0;
+						info.range = hw ? hw->getSize() : NullStorageBufferSize;
+						buffers.push_back(info);
+						write.pBufferInfo = &buffers.back();
+					}
+					else if (binding.Type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+					{
+						const u32 slot = binding.Binding >= 16 ? binding.Binding - 16 : ~0u;
+						CVulkanTexture* texture = (slot < MaxPixelUAVSlots) ?
+							static_cast<CVulkanTexture*>(PixelUAV[slot].Texture) : nullptr;
+						// bindPixelShaderTexture() put it in GENERAL; anything else cannot be written
+						// inside the rendering instance, so the binding is left unwritten (warned).
+						if (!texture || texture->getImageLayout() != VK_IMAGE_LAYOUT_GENERAL ||
+							texture->getImageView() == VK_NULL_HANDLE)
+						{
+							if (!WarnedUserDescriptorType)
+							{
+								os::Printer::log("CVulkanDriver: a user shader declares a storage image with no "
+									"bindPixelShaderTexture() bound to its slot, left unwritten: ",
+									binding.Name.c_str(), ELL_WARNING);
+								WarnedUserDescriptorType = true;
+							}
+							continue;
+						}
+						VkDescriptorImageInfo info = {};
+						info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+						info.imageView = texture->getImageView();
+						images.push_back(info);
+						write.pImageInfo = &images.back();
+					}
 					else
 					{
-						// Storage buffers/images and the rest have no driver-side source to fill
-						// them from; the set layout still declares them, so the pipeline is valid.
+						// Anything else has no driver-side source to fill it from; the set layout
+						// still declares it, so the pipeline is valid.
 						if (!WarnedUserDescriptorType)
 						{
 							os::Printer::log("CVulkanDriver: a user shader declares a descriptor type "
@@ -3556,6 +3686,13 @@ namespace irr
 					"TRANSFER_SRC on its images", ELL_WARNING);
 				return nullptr;
 			}
+			// The memcpy below assumes B,G,R,A bytes: the default surface format and its sRGB twin
+			// (ESCS_SRGB_LINEAR); a 16-bit float or 10-bit swapchain has no 8-bit image to hand out.
+			if (SwapchainFormat != VK_FORMAT_B8G8R8A8_UNORM && SwapchainFormat != VK_FORMAT_B8G8R8A8_SRGB)
+			{
+				os::Printer::log("CVulkanDriver::createScreenShot: only an 8-bit BGRA swapchain can be read back", ELL_WARNING);
+				return nullptr;
+			}
 
 			// Tightly packed: vkCmdCopyImageToBuffer with a zero bufferRowLength uses the image
 			// width, so there is no D3D-style row-pitch alignment to work around.
@@ -4459,6 +4596,709 @@ namespace irr
 			}
 		}
 
+		// ============================ timers, statistics, predication ============================
+
+		bool CVulkanDriver::createQueryResources()
+		{
+			if (QueryResourcesCreated)
+				return true;
+			if (!Context.Device)
+				return false;
+
+			VkQueryPoolCreateInfo info = {};
+			info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+			info.queryType = VK_QUERY_TYPE_TIMESTAMP;
+			info.queryCount = FrameCount * 2 * EMCS_MAX_TIMER_QUERIES;
+			if (Context.DeviceProperties.limits.timestampComputeAndGraphics &&
+				vulkanFailed("CVulkanDriver: timestamp query pool",
+					vk::CreateQueryPool(Context.Device, &info, nullptr, &TimestampPool)))
+				TimestampPool = VK_NULL_HANDLE;
+
+			if (Context.HasPipelineStatistics)
+			{
+				// In SPipelineStatistics order; the result array follows the bit order of the flags.
+				VkQueryPoolCreateInfo stats = {};
+				stats.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+				stats.queryType = VK_QUERY_TYPE_PIPELINE_STATISTICS;
+				stats.queryCount = FrameCount;
+				stats.pipelineStatistics =
+					VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT |
+					VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES_BIT |
+					VK_QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS_BIT |
+					VK_QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_INVOCATIONS_BIT |
+					VK_QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_PRIMITIVES_BIT |
+					VK_QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES_BIT |
+					VK_QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS_BIT |
+					VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT;
+				if (vulkanFailed("CVulkanDriver: pipeline statistics query pool",
+					vk::CreateQueryPool(Context.Device, &stats, nullptr, &StatsPool)))
+					StatsPool = VK_NULL_HANDLE;
+			}
+
+			// The predication buffer: one 32-bit occlusion result per slot, filled by
+			// vkCmdCopyQueryPoolResults and read by the conditional rendering commands.
+			if (Context.HasConditionalRendering && Occlusion && Occlusion->isValid())
+			{
+				if (!createVulkanBuffer(Context, CVulkanOcclusionQuery::QueryCapacity * sizeof(u32),
+					VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_CONDITIONAL_RENDERING_BIT_EXT,
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, PredicationBuffer, PredicationMemory))
+				{
+					PredicationBuffer = VK_NULL_HANDLE;
+					PredicationMemory = VK_NULL_HANDLE;
+				}
+			}
+
+			// A fresh pool's slots are in an undefined state: reset them all once. Nothing has used
+			// them yet, so no submission can be affected. Outside any rendering instance.
+			if (SceneOpen)
+			{
+				suspendRendering();
+				VkCommandBuffer cmd = Frames[CurrentFrameIndex].CommandBuffer;
+				if (TimestampPool)
+					vk::CmdResetQueryPool(cmd, TimestampPool, 0, info.queryCount);
+				if (StatsPool)
+					vk::CmdResetQueryPool(cmd, StatsPool, 0, FrameCount);
+				resumeRendering();
+			}
+			else
+			{
+				VkCommandBuffer cmd = beginUpload();
+				if (cmd)
+				{
+					if (TimestampPool)
+						vk::CmdResetQueryPool(cmd, TimestampPool, 0, info.queryCount);
+					if (StatsPool)
+						vk::CmdResetQueryPool(cmd, StatsPool, 0, FrameCount);
+					endUploadAndWait(cmd);
+				}
+			}
+
+			for (u32 f = 0; f < FrameCount; ++f)
+			{
+				StatsOpen[f] = false;
+				for (u32 i = 0; i < EMCS_MAX_TIMER_QUERIES; ++i)
+					TimerUsed[f][i] = TimerEnded[f][i] = false;
+			}
+			QueryResourcesCreated = true;
+			return TimestampPool != VK_NULL_HANDLE || StatsPool != VK_NULL_HANDLE || PredicationBuffer != VK_NULL_HANDLE;
+		}
+
+		void CVulkanDriver::destroyQueryResources()
+		{
+			if (!Context.Device)
+				return;
+			if (TimestampPool)
+				vk::DestroyQueryPool(Context.Device, TimestampPool, nullptr);
+			if (StatsPool)
+				vk::DestroyQueryPool(Context.Device, StatsPool, nullptr);
+			if (PredicationBuffer)
+				vk::DestroyBuffer(Context.Device, PredicationBuffer, nullptr);
+			if (PredicationMemory)
+				vk::FreeMemory(Context.Device, PredicationMemory, nullptr);
+			TimestampPool = StatsPool = VK_NULL_HANDLE;
+			PredicationBuffer = VK_NULL_HANDLE;
+			PredicationMemory = VK_NULL_HANDLE;
+			QueryResourcesCreated = false;
+			// The pixel-stage UAV placeholder shares this teardown point (device-owned, like the rest).
+			if (NullStorageBuffer)
+				vk::DestroyBuffer(Context.Device, NullStorageBuffer, nullptr);
+			if (NullStorageMemory)
+				vk::FreeMemory(Context.Device, NullStorageMemory, nullptr);
+			NullStorageBuffer = VK_NULL_HANDLE;
+			NullStorageMemory = VK_NULL_HANDLE;
+		}
+
+		void CVulkanDriver::harvestQueryFrame(u32 frame)
+		{
+			const f64 period = Context.DeviceProperties.limits.timestampPeriod; // nanoseconds per tick
+			const u32 base = frame * 2 * EMCS_MAX_TIMER_QUERIES;
+			for (u32 id = 0; id < EMCS_MAX_TIMER_QUERIES; ++id)
+			{
+				if (!TimerUsed[frame][id])
+					continue;
+				if (TimerEnded[frame][id] && TimestampPool)
+				{
+					// The fence of this frame has passed, so WAIT never blocks; it only guards the
+					// availability the spec makes conditional on the pool state.
+					u64 stamps[2] = { 0, 0 };
+					if (vk::GetQueryPoolResults(Context.Device, TimestampPool, base + 2 * id, 2, sizeof(stamps),
+						stamps, sizeof(u64), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) == VK_SUCCESS &&
+						stamps[1] >= stamps[0])
+					{
+						TimerResults[id] = static_cast<u64>(static_cast<f64>(stamps[1] - stamps[0]) * period);
+						TimerResultValid[id] = true;
+					}
+				}
+				TimerUsed[frame][id] = TimerEnded[frame][id] = false;
+			}
+
+			if (StatsOpen[frame] && StatsPool)
+			{
+				u64 values[8] = {};
+				if (vk::GetQueryPoolResults(Context.Device, StatsPool, frame, 1, sizeof(values), values,
+					sizeof(values), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) == VK_SUCCESS)
+				{
+					LastStats.VerticesIn = values[0];
+					LastStats.PrimitivesIn = values[1];
+					LastStats.VertexShaderInvocations = values[2];
+					LastStats.GeometryShaderInvocations = values[3];
+					LastStats.GeometryShaderPrimitives = values[4];
+					LastStats.RasterizedPrimitives = values[5];
+					LastStats.PixelShaderInvocations = values[6];
+					LastStats.ComputeShaderInvocations = values[7];
+					StatsValid = true;
+				}
+				StatsOpen[frame] = false;
+			}
+		}
+
+		void CVulkanDriver::beginTimer(u32 id)
+		{
+			if (!SceneOpen || id >= EMCS_MAX_TIMER_QUERIES)
+				return;
+			if (!QueryResourcesCreated && !createQueryResources())
+				return;
+			if (!TimestampPool || !RenderingActive)
+				return;
+			if (TimerUsed[CurrentFrameIndex][id])
+			{
+				if (!WarnedTimerReuse)
+					os::Printer::log("CVulkanDriver::beginTimer: a timer id was begun twice in one frame, "
+						"the second pair is ignored", ELL_WARNING);
+				WarnedTimerReuse = true;
+				return;
+			}
+			vk::CmdWriteTimestamp(Frames[CurrentFrameIndex].CommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+				TimestampPool, CurrentFrameIndex * 2 * EMCS_MAX_TIMER_QUERIES + 2 * id);
+			TimerUsed[CurrentFrameIndex][id] = true;
+		}
+
+		void CVulkanDriver::endTimer(u32 id)
+		{
+			if (!SceneOpen || id >= EMCS_MAX_TIMER_QUERIES || !TimestampPool)
+				return;
+			if (!TimerUsed[CurrentFrameIndex][id] || TimerEnded[CurrentFrameIndex][id])
+				return;
+			vk::CmdWriteTimestamp(Frames[CurrentFrameIndex].CommandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+				TimestampPool, CurrentFrameIndex * 2 * EMCS_MAX_TIMER_QUERIES + 2 * id + 1);
+			TimerEnded[CurrentFrameIndex][id] = true;
+		}
+
+		bool CVulkanDriver::getTimerResult(u32 id, u64& nanoseconds) const
+		{
+			if (id >= EMCS_MAX_TIMER_QUERIES || !TimerResultValid[id])
+				return false;
+			nanoseconds = TimerResults[id];
+			return true;
+		}
+
+		bool CVulkanDriver::getPipelineStatistics(SPipelineStatistics& out) const
+		{
+			// Arms the per-frame query; the pool is created at the next beginScene().
+			StatsArmed = true;
+			if (!StatsValid)
+				return false;
+			out = LastStats;
+			return true;
+		}
+
+		void CVulkanDriver::beginPredicatedDraws(std::shared_ptr<scene::ISceneNode> node)
+		{
+			if (!SceneOpen || !RenderingActive || !node || !Occlusion || !Occlusion->isValid() ||
+				!Context.HasConditionalRendering || !vk::CmdBeginConditionalRenderingEXT || PredicationActive)
+				return;
+			if (!QueryResourcesCreated && !createQueryResources())
+				return;
+			// A node whose query never ran draws normally: there is no result to decide on, and a
+			// copy waiting on an unrecorded slot would never complete.
+			const u32 slot = Occlusion->getSlot(node);
+			if (slot == ~0u || !Occlusion->hasRun(node) || !PredicationBuffer)
+				return;
+
+			SVulkanFrameContext& frame = Frames[CurrentFrameIndex];
+			const VkDeviceSize offset = static_cast<VkDeviceSize>(slot) * sizeof(u32);
+
+			// The copy and its barriers cannot be recorded inside the rendering instance; the
+			// conditional block itself begins inside it, after the resume.
+			suspendRendering();
+			VkBufferMemoryBarrier toCopy = {};
+			toCopy.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+			toCopy.srcAccessMask = VK_ACCESS_CONDITIONAL_RENDERING_READ_BIT_EXT;
+			toCopy.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			toCopy.srcQueueFamilyIndex = toCopy.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			toCopy.buffer = PredicationBuffer;
+			toCopy.offset = offset;
+			toCopy.size = sizeof(u32);
+			vk::CmdPipelineBarrier(frame.CommandBuffer, VK_PIPELINE_STAGE_CONDITIONAL_RENDERING_BIT_EXT,
+				VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &toCopy, 0, nullptr);
+			// The most recent result the GPU produced for this slot: last frame's, or this frame's
+			// when the query already ran earlier in the command buffer (WAIT orders the two).
+			vk::CmdCopyQueryPoolResults(frame.CommandBuffer, Occlusion->getPool(), slot, 1,
+				PredicationBuffer, offset, sizeof(u32), VK_QUERY_RESULT_WAIT_BIT);
+			VkBufferMemoryBarrier toRead = toCopy;
+			toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			toRead.dstAccessMask = VK_ACCESS_CONDITIONAL_RENDERING_READ_BIT_EXT;
+			vk::CmdPipelineBarrier(frame.CommandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+				VK_PIPELINE_STAGE_CONDITIONAL_RENDERING_BIT_EXT, 0, 0, nullptr, 1, &toRead, 0, nullptr);
+			resumeRendering();
+			if (!RenderingActive)
+				return;
+
+			// Draws are discarded while the 32-bit value is zero: nothing visible last time.
+			VkConditionalRenderingBeginInfoEXT info = {};
+			info.sType = VK_STRUCTURE_TYPE_CONDITIONAL_RENDERING_BEGIN_INFO_EXT;
+			info.buffer = PredicationBuffer;
+			info.offset = offset;
+			vk::CmdBeginConditionalRenderingEXT(frame.CommandBuffer, &info);
+			PredicationActive = true;
+		}
+
+		void CVulkanDriver::endPredicatedDraws()
+		{
+			if (!PredicationActive)
+				return;
+			if (vk::CmdEndConditionalRenderingEXT)
+				vk::CmdEndConditionalRenderingEXT(Frames[CurrentFrameIndex].CommandBuffer);
+			PredicationActive = false;
+		}
+
+		// ---------------- Tiled resources (sparse images) ----------------
+
+		//! A tile pool as blocks of VkDeviceMemory, one memory type (chosen at creation from a probe
+		//! sparse image, device local). resize() appends a block; shrinking frees whole trailing blocks
+		//! nothing maps into any more, a block straddling the new size staying allocated for the next
+		//! growth. A run of pool tiles is split at block boundaries by locate().
+		class CVulkanTilePool : public CTilePoolBase
+		{
+		public:
+			CVulkanTilePool(const SVulkanContext& context, u32 memoryTypeIndex)
+				: Context(context), MemoryTypeIndex(memoryTypeIndex) {}
+
+			virtual ~CVulkanTilePool()
+			{
+				// Every bind into this pool was waited for, and nothing maps into it any more.
+				for (size_t i = 0; i < Chunks.size(); ++i)
+					vk::FreeMemory(Context.Device, Chunks[i].Memory, nullptr);
+			}
+
+			bool addChunk(u32 tileCount)
+			{
+				VkMemoryAllocateInfo info = {};
+				info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+				info.allocationSize = static_cast<VkDeviceSize>(tileCount) * TILED_RESOURCE_TILE_BYTES;
+				info.memoryTypeIndex = MemoryTypeIndex;
+				SChunk chunk;
+				chunk.FirstTile = TileCount;
+				chunk.TileCount = tileCount;
+				if (vulkanFailed("CVulkanDriver: tile pool vkAllocateMemory",
+					vk::AllocateMemory(Context.Device, &info, nullptr, &chunk.Memory)))
+					return false;
+				Chunks.push_back(chunk);
+				TileCount += tileCount;
+				MappedCount.resize(TileCount, 0);
+				return true;
+			}
+
+			virtual bool resize(u32 tileCount) _IRR_OVERRIDE_
+			{
+				if (tileCount == 0)
+					return false;
+				if (tileCount > TileCount)
+				{
+					const u32 capacity = Chunks.empty() ? 0 : Chunks.back().FirstTile + Chunks.back().TileCount;
+					TileCount = core::min_(tileCount, capacity);
+					MappedCount.resize(TileCount, 0);
+					return tileCount == TileCount || addChunk(tileCount - TileCount);
+				}
+				if (!canShrinkTo(tileCount))
+				{
+					os::Printer::log("ITilePool::resize: a tile past the new size is still mapped", ELL_ERROR);
+					return false;
+				}
+				while (!Chunks.empty() && Chunks.back().FirstTile >= tileCount)
+				{
+					vk::FreeMemory(Context.Device, Chunks.back().Memory, nullptr);
+					Chunks.pop_back();
+				}
+				TileCount = tileCount;
+				MappedCount.resize(TileCount);
+				return true;
+			}
+
+			//! The block holding pool tile `tile`, the byte offset of the tile in it, and how many
+			//! tiles from it on stay in the same block.
+			bool locate(u32 tile, VkDeviceMemory& memory, VkDeviceSize& offset, u32& run) const
+			{
+				if (tile >= TileCount)
+					return false;
+				for (size_t i = 0; i < Chunks.size(); ++i)
+				{
+					const SChunk& c = Chunks[i];
+					if (tile >= c.FirstTile && tile < c.FirstTile + c.TileCount)
+					{
+						memory = c.Memory;
+						offset = static_cast<VkDeviceSize>(tile - c.FirstTile) * TILED_RESOURCE_TILE_BYTES;
+						run = core::min_(c.FirstTile + c.TileCount, TileCount) - tile;
+						return true;
+					}
+				}
+				return false;
+			}
+
+			const u32 MemoryTypeIndex;
+
+		private:
+			struct SChunk
+			{
+				VkDeviceMemory Memory = VK_NULL_HANDLE;
+				u32 FirstTile = 0;
+				u32 TileCount = 0;
+			};
+			std::vector<SChunk> Chunks;
+			const SVulkanContext& Context;
+		};
+
+		ITilePool* CVulkanDriver::createTilePool(u32 tileCount)
+		{
+			if (!queryFeature(EVDF_TILED_RESOURCES) || tileCount == 0)
+			{
+				os::Printer::log("CVulkanDriver::createTilePool: tiled resources unavailable or empty pool", ELL_ERROR);
+				return nullptr;
+			}
+
+			// The memory types a sparse colour image accepts, asked of a throwaway probe image: the
+			// pool is created before any texture maps into it.
+			VkImageCreateInfo probeInfo = {};
+			probeInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+			probeInfo.flags = VK_IMAGE_CREATE_SPARSE_BINDING_BIT | VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT;
+			probeInfo.imageType = VK_IMAGE_TYPE_2D;
+			probeInfo.format = VK_FORMAT_B8G8R8A8_UNORM;
+			probeInfo.extent = { 256, 256, 1 };
+			probeInfo.mipLevels = 1;
+			probeInfo.arrayLayers = 1;
+			probeInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+			probeInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+			probeInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+			probeInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+			probeInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+			VkImage probe = VK_NULL_HANDLE;
+			if (vulkanFailed("CVulkanDriver::createTilePool: probe image", vk::CreateImage(Context.Device, &probeInfo, nullptr, &probe)))
+				return nullptr;
+			VkMemoryRequirements requirements = {};
+			vk::GetImageMemoryRequirements(Context.Device, probe, &requirements);
+			vk::DestroyImage(Context.Device, probe, nullptr);
+
+			u32 memoryType = findMemoryTypeIndex(Context.MemoryProperties, requirements.memoryTypeBits,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+			if (memoryType == 0xffffffffu)
+				memoryType = findMemoryTypeIndex(Context.MemoryProperties, requirements.memoryTypeBits, 0);
+			if (memoryType == 0xffffffffu)
+			{
+				os::Printer::log("CVulkanDriver::createTilePool: no memory type for sparse images", ELL_ERROR);
+				return nullptr;
+			}
+
+			CVulkanTilePool* pool = new CVulkanTilePool(Context, memoryType);
+			if (!pool->addChunk(tileCount))
+			{
+				pool->drop();
+				return nullptr;
+			}
+			return pool;
+		}
+
+		bool CVulkanDriver::queryTileShape(CVulkanTexture* texture, STiledTextureRecord& out) const
+		{
+			u32 count = 0;
+			vk::GetImageSparseMemoryRequirements(Context.Device, texture->getImage(), &count, nullptr);
+			std::vector<VkSparseImageMemoryRequirements> requirements(count);
+			if (count)
+				vk::GetImageSparseMemoryRequirements(Context.Device, texture->getImage(), &count, requirements.data());
+			const VkSparseImageMemoryRequirements* colour = nullptr;
+			for (u32 i = 0; i < count; ++i)
+				if (requirements[i].formatProperties.aspectMask & VK_IMAGE_ASPECT_COLOR_BIT)
+					colour = &requirements[i];
+			if (!colour || colour->formatProperties.imageGranularity.width == 0)
+			{
+				os::Printer::log("CVulkanDriver::addTiledTexture: no sparse requirements for the colour aspect", ELL_ERROR);
+				return false;
+			}
+			VkMemoryRequirements memory = {};
+			vk::GetImageMemoryRequirements(Context.Device, texture->getImage(), &memory);
+			if (memory.alignment != TILED_RESOURCE_TILE_BYTES)
+			{
+				os::Printer::log("CVulkanDriver::addTiledTexture: the device uses a non-standard sparse block size", ELL_ERROR);
+				return false;
+			}
+
+			const VkExtent3D g = colour->formatProperties.imageGranularity;
+			out.Size = texture->getSize();
+			out.MipLevels = texture->getMipLevelCount();
+			out.ArraySlices = texture->getLayerCount();
+			out.MemoryTypeBits = memory.memoryTypeBits;
+			out.Shape.TexelsWide = g.width;
+			out.Shape.TexelsHigh = g.height;
+			out.Shape.TexelsDeep = g.depth;
+			out.Shape.TilesWide = out.tilesWide(0);
+			out.Shape.TilesHigh = out.tilesHigh(0);
+			out.Shape.TilesDeep = 1;
+			out.Shape.MipTailStart = core::min_(colour->imageMipTailFirstLod, out.MipLevels);
+			out.Shape.MipTailTiles = static_cast<u32>(colour->imageMipTailSize / TILED_RESOURCE_TILE_BYTES);
+			out.MipTailOffset = colour->imageMipTailOffset;
+			out.MipTailStride = colour->imageMipTailStride;
+			out.SingleMipTail = (colour->formatProperties.flags & VK_SPARSE_IMAGE_FORMAT_SINGLE_MIPTAIL_BIT) != 0;
+
+			u32 standardTiles = 0;
+			for (u32 mip = 0; mip < out.Shape.MipTailStart; ++mip)
+				standardTiles += out.tilesWide(mip) * out.tilesHigh(mip);
+			out.Shape.TotalTiles = standardTiles * out.ArraySlices +
+				(out.SingleMipTail ? out.Shape.MipTailTiles : out.Shape.MipTailTiles * out.ArraySlices);
+			return true;
+		}
+
+		ITexture* CVulkanDriver::addTiledTexture(const core::dimension2d<u32>& size, const io::path& name,
+			ECOLOR_FORMAT format, u32 mipLevels, u32 arraySlices, bool isRenderTarget)
+		{
+			if (!queryFeature(EVDF_TILED_RESOURCES))
+			{
+				os::Printer::log("CVulkanDriver::addTiledTexture: EVDF_TILED_RESOURCES unavailable", name, ELL_ERROR);
+				return nullptr;
+			}
+			CVulkanTexture* texture = new CVulkanTexture(Context, *ResourceOwner, size,
+				(format == ECF_UNKNOWN) ? ECF_A8R8G8B8 : format, mipLevels, arraySlices, isRenderTarget, name, STiledTextureTag());
+			STiledTextureRecord record;
+			if (!texture->hasDeviceResource() || !queryTileShape(texture, record))
+			{
+				texture->drop();
+				return nullptr;
+			}
+			CNullDriver::addTexture(texture);
+			texture->drop();
+			TiledTextures[texture] = record;
+			return texture;
+		}
+
+		bool CVulkanDriver::getTileShape(const ITexture* texture, STileShape& out) const
+		{
+			std::map<const ITexture*, STiledTextureRecord>::const_iterator it = TiledTextures.find(texture);
+			if (it == TiledTextures.end())
+				return false;
+			out = it->second.Shape;
+			return true;
+		}
+
+		bool CVulkanDriver::updateTileMappings(ITexture* texture, const STileRegion* regions, u32 regionCount,
+			ITilePool* pool, const u32* poolTileIndices)
+		{
+			std::map<const ITexture*, STiledTextureRecord>::iterator it = TiledTextures.find(texture);
+			if (it == TiledTextures.end())
+			{
+				os::Printer::log("CVulkanDriver::updateTileMappings: not a tiled texture of this driver", ELL_ERROR);
+				return false;
+			}
+			STiledTextureRecord& record = it->second;
+			CVulkanTilePool* vkPool = static_cast<CVulkanTilePool*>(pool);
+			if (!record.validate(regions, regionCount, vkPool, poolTileIndices, "CVulkanDriver::updateTileMappings"))
+				return false;
+			if (vkPool && !((record.MemoryTypeBits >> vkPool->MemoryTypeIndex) & 1))
+			{
+				os::Printer::log("CVulkanDriver::updateTileMappings: the pool's memory type does not fit this image", ELL_ERROR);
+				return false;
+			}
+
+			CVulkanTexture* vkTexture = static_cast<CVulkanTexture*>(texture);
+			std::vector<VkSparseImageMemoryBind> imageBinds;
+			std::vector<VkSparseMemoryBind> tailBinds;
+			for (u32 i = 0; i < regionCount; ++i)
+			{
+				const STileRegion& r = regions[i];
+				const bool tail = record.isMipTail(r.MipLevel);
+				if (tail && record.SingleMipTail && r.ArraySlice != 0)
+				{
+					os::Printer::log("CVulkanDriver::updateTileMappings: this image has one mip tail for every layer; "
+						"address it through ArraySlice 0", ELL_ERROR);
+					return false;
+				}
+				const u32 mipWidth = core::max_(1u, record.Size.Width >> r.MipLevel);
+				const u32 mipHeight = core::max_(1u, record.Size.Height >> r.MipLevel);
+				u32 n = 0;
+				for (u32 y = 0; y < r.Height; ++y)
+					for (u32 x = 0; x < r.Width; ++x, ++n)
+					{
+						VkDeviceMemory memory = VK_NULL_HANDLE;
+						VkDeviceSize offset = 0;
+						u32 run = 0;
+						if (vkPool && !vkPool->locate(poolTileIndices[i] + n, memory, offset, run))
+							return false;
+						if (tail)
+						{
+							VkSparseMemoryBind bind = {};
+							bind.resourceOffset = record.MipTailOffset +
+								(record.SingleMipTail ? 0 : record.MipTailStride * r.ArraySlice) +
+								static_cast<VkDeviceSize>(r.X + x) * TILED_RESOURCE_TILE_BYTES;
+							bind.size = TILED_RESOURCE_TILE_BYTES;
+							bind.memory = memory;
+							bind.memoryOffset = offset;
+							tailBinds.push_back(bind);
+						}
+						else
+						{
+							VkSparseImageMemoryBind bind = {};
+							bind.subresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+							bind.subresource.mipLevel = r.MipLevel;
+							bind.subresource.arrayLayer = r.ArraySlice;
+							bind.offset.x = static_cast<s32>((r.X + x) * record.Shape.TexelsWide);
+							bind.offset.y = static_cast<s32>((r.Y + y) * record.Shape.TexelsHigh);
+							bind.offset.z = 0;
+							// The last tile of a row/column is clipped to the image, as the spec requires.
+							bind.extent.width = core::min_(record.Shape.TexelsWide, mipWidth - (u32)bind.offset.x);
+							bind.extent.height = core::min_(record.Shape.TexelsHigh, mipHeight - (u32)bind.offset.y);
+							bind.extent.depth = 1;
+							bind.memory = memory;
+							bind.memoryOffset = offset;
+							imageBinds.push_back(bind);
+						}
+					}
+			}
+
+			VkSparseImageMemoryBindInfo imageInfo = {};
+			imageInfo.image = vkTexture->getImage();
+			imageInfo.bindCount = static_cast<u32>(imageBinds.size());
+			imageInfo.pBinds = imageBinds.data();
+			VkSparseImageOpaqueMemoryBindInfo tailInfo = {};
+			tailInfo.image = vkTexture->getImage();
+			tailInfo.bindCount = static_cast<u32>(tailBinds.size());
+			tailInfo.pBinds = tailBinds.data();
+			VkBindSparseInfo bindInfo = {};
+			bindInfo.sType = VK_STRUCTURE_TYPE_BIND_SPARSE_INFO;
+			bindInfo.imageBindCount = imageBinds.empty() ? 0 : 1;
+			bindInfo.pImageBinds = &imageInfo;
+			bindInfo.imageOpaqueBindCount = tailBinds.empty() ? 0 : 1;
+			bindInfo.pImageOpaqueBinds = &tailInfo;
+
+			{
+				// Waited for, like an upload: the caller may copy into the tiles straight after, and a
+				// pool block freed later must not be named by a bind still in flight.
+				std::lock_guard<std::mutex> queueLock(ResourceOwner->QueueMutex);
+				if (vulkanFailed("CVulkanDriver::updateTileMappings: vkQueueBindSparse",
+					vk::QueueBindSparse(Context.GraphicsQueue, 1, &bindInfo, VK_NULL_HANDLE)))
+					return false;
+				vk::QueueWaitIdle(Context.GraphicsQueue);
+			}
+
+			for (u32 i = 0; i < regionCount; ++i)
+			{
+				const STileRegion& r = regions[i];
+				const u32 subresource = r.MipLevel + r.ArraySlice * record.MipLevels;
+				u32 n = 0;
+				for (u32 y = 0; y < r.Height; ++y)
+					for (u32 x = 0; x < r.Width; ++x, ++n)
+						record.account(STiledTextureRecord::tileKey(subresource, r.X + x, r.Y + y, 0),
+							vkPool, vkPool ? poolTileIndices[i] + n : 0);
+			}
+			return true;
+		}
+
+		bool CVulkanDriver::updateTiles(ITexture* texture, const STileRegion& region, const void* data)
+		{
+			std::map<const ITexture*, STiledTextureRecord>::iterator it = TiledTextures.find(texture);
+			if (it == TiledTextures.end() || !data)
+			{
+				os::Printer::log("CVulkanDriver::updateTiles: not a tiled texture of this driver, or no data", ELL_ERROR);
+				return false;
+			}
+			const STiledTextureRecord& record = it->second;
+			if (!record.validate(&region, 1, nullptr, nullptr, "CVulkanDriver::updateTiles"))
+				return false;
+			if (record.isMipTail(region.MipLevel))
+			{
+				os::Printer::log("CVulkanDriver::updateTiles: packed mips have no per-tile layout; write them through lock()", ELL_ERROR);
+				return false;
+			}
+
+			const VkDeviceSize bytes = static_cast<VkDeviceSize>(region.getTileCount()) * TILED_RESOURCE_TILE_BYTES;
+			VkBuffer staging = VK_NULL_HANDLE;
+			VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+			if (!createVulkanBuffer(Context, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging, stagingMemory))
+				return false;
+			void* mapped = nullptr;
+			if (vulkanFailed("vkMapMemory", vk::MapMemory(Context.Device, stagingMemory, 0, bytes, 0, &mapped)))
+			{
+				vk::DestroyBuffer(Context.Device, staging, nullptr);
+				vk::FreeMemory(Context.Device, stagingMemory, nullptr);
+				return false;
+			}
+			memcpy(mapped, data, static_cast<size_t>(bytes));
+			vk::UnmapMemory(Context.Device, stagingMemory);
+
+			CVulkanTexture* vkTexture = static_cast<CVulkanTexture*>(texture);
+			const u32 mipWidth = core::max_(1u, record.Size.Width >> region.MipLevel);
+			const u32 mipHeight = core::max_(1u, record.Size.Height >> region.MipLevel);
+			// One copy per tile: the source holds the tiles back to back, each a tightly packed
+			// TexelsWide x TexelsHigh block (the last column/row of tiles reads only its visible part).
+			std::vector<VkBufferImageCopy> copies;
+			u32 n = 0;
+			for (u32 y = 0; y < region.Height; ++y)
+				for (u32 x = 0; x < region.Width; ++x, ++n)
+				{
+					VkBufferImageCopy copy = {};
+					copy.bufferOffset = static_cast<VkDeviceSize>(n) * TILED_RESOURCE_TILE_BYTES;
+					copy.bufferRowLength = record.Shape.TexelsWide;
+					copy.bufferImageHeight = record.Shape.TexelsHigh;
+					copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+					copy.imageSubresource.mipLevel = region.MipLevel;
+					copy.imageSubresource.baseArrayLayer = region.ArraySlice;
+					copy.imageSubresource.layerCount = 1;
+					copy.imageOffset.x = static_cast<s32>((region.X + x) * record.Shape.TexelsWide);
+					copy.imageOffset.y = static_cast<s32>((region.Y + y) * record.Shape.TexelsHigh);
+					copy.imageExtent.width = core::min_(record.Shape.TexelsWide, mipWidth - (u32)copy.imageOffset.x);
+					copy.imageExtent.height = core::min_(record.Shape.TexelsHigh, mipHeight - (u32)copy.imageOffset.y);
+					copy.imageExtent.depth = 1;
+					copies.push_back(copy);
+				}
+
+			VkCommandBuffer commandBuffer = ResourceOwner->beginUpload();
+			bool ok = commandBuffer != VK_NULL_HANDLE;
+			if (ok)
+			{
+				const VkImageLayout before = vkTexture->getImageLayout();
+				vkTexture->transitionTo(commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+				vk::CmdCopyBufferToImage(commandBuffer, staging, vkTexture->getImage(),
+					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<u32>(copies.size()), copies.data());
+				vkTexture->transitionTo(commandBuffer, before == VK_IMAGE_LAYOUT_UNDEFINED ?
+					VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : before);
+				ResourceOwner->endUploadAndWait(commandBuffer);
+			}
+			vk::DestroyBuffer(Context.Device, staging, nullptr);
+			vk::FreeMemory(Context.Device, stagingMemory, nullptr);
+			return ok;
+		}
+
+		void CVulkanDriver::removeTexture(ITexture* texture)
+		{
+			std::map<const ITexture*, STiledTextureRecord>::iterator it = TiledTextures.find(texture);
+			if (it != TiledTextures.end())
+			{
+				it->second.release();
+				TiledTextures.erase(it);
+			}
+			CNullDriver::removeTexture(texture);
+		}
+
+		void CVulkanDriver::removeAllTextures()
+		{
+			releaseTiledRecords();
+			CNullDriver::removeAllTextures();
+		}
+
+		void CVulkanDriver::releaseTiledRecords()
+		{
+			for (std::map<const ITexture*, STiledTextureRecord>::iterator it = TiledTextures.begin(); it != TiledTextures.end(); ++it)
+				it->second.release();
+			TiledTextures.clear();
+		}
+
 		void CVulkanDriver::runAllOcclusionQueries(bool visible)
 		{
 			if (!Occlusion)
@@ -4829,6 +5669,118 @@ namespace irr
 				ComputeSRV[i] = SVulkanComputeSlot();
 			for (u32 i = 0; i < EMCS_MAX_COMPUTE_UAV_SLOTS; ++i)
 				ComputeUAV[i] = SVulkanComputeSlot();
+		}
+
+		// ================================ pixel-stage UAVs ================================
+
+		bool CVulkanDriver::ensureNullStorageBuffer()
+		{
+			if (NullStorageBuffer != VK_NULL_HANDLE)
+				return true;
+			// What a declared-but-unbound storage buffer points at, so the descriptor is valid.
+			return createVulkanBuffer(Context, NullStorageBufferSize,
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, NullStorageBuffer, NullStorageMemory);
+		}
+
+		void CVulkanDriver::transitionPixelUAVTexture(CVulkanTexture* texture, VkImageLayout layout)
+		{
+			if (!texture || texture->getImageLayout() == layout)
+				return;
+			// An image barrier is illegal inside a rendering instance; outside a scene the one-shot
+			// upload buffer carries it.
+			if (SceneOpen)
+			{
+				suspendRendering();
+				texture->transitionTo(Frames[CurrentFrameIndex].CommandBuffer, layout);
+				resumeRendering();
+			}
+			else
+			{
+				VkCommandBuffer cmd = beginUpload();
+				if (!cmd)
+					return;
+				texture->transitionTo(cmd, layout);
+				endUploadAndWait(cmd);
+			}
+		}
+
+		bool CVulkanDriver::bindPixelShaderBuffer(u32 slot, scene::IComputeBuffer* buffer)
+		{
+			if (slot >= MaxPixelUAVSlots)
+			{
+				os::Printer::log("CVulkanDriver::bindPixelShaderBuffer: slot out of range", ELL_ERROR);
+				return false;
+			}
+			// D3D11 parity: the UAV slots start after the bound colour attachments.
+			const u32 targets = RenderTargetActive ? RenderTarget->getColorAttachmentCount() : 1;
+			if (buffer && slot < targets)
+			{
+				os::Printer::log("CVulkanDriver::bindPixelShaderBuffer: the slot must be at or above the "
+					"number of bound render targets", ELL_ERROR);
+				return false;
+			}
+			if (buffer && !prepareComputeBuffer(buffer))
+			{
+				os::Printer::log("CVulkanDriver::bindPixelShaderBuffer: the buffer has no device buffer", ELL_ERROR);
+				return false;
+			}
+			PixelUAV[slot].Buffer = buffer;
+			PixelUAV[slot].Texture = nullptr;
+			return true;
+		}
+
+		bool CVulkanDriver::bindPixelShaderTexture(u32 slot, ITexture* texture)
+		{
+			if (slot >= MaxPixelUAVSlots)
+			{
+				os::Printer::log("CVulkanDriver::bindPixelShaderTexture: slot out of range", ELL_ERROR);
+				return false;
+			}
+			const u32 targets = RenderTargetActive ? RenderTarget->getColorAttachmentCount() : 1;
+			if (texture && slot < targets)
+			{
+				os::Printer::log("CVulkanDriver::bindPixelShaderTexture: the slot must be at or above the "
+					"number of bound render targets", ELL_ERROR);
+				return false;
+			}
+			if (texture && (texture->getDriverType() != EDT_VULKAN || !texture->isUnorderedAccess()))
+			{
+				os::Printer::log("CVulkanDriver::bindPixelShaderTexture: not an addUAVTexture() texture", ELL_ERROR);
+				return false;
+			}
+			// Storage access needs the GENERAL layout; back to the sampled one at unbind.
+			transitionPixelUAVTexture(static_cast<CVulkanTexture*>(texture), VK_IMAGE_LAYOUT_GENERAL);
+			PixelUAV[slot].Buffer = nullptr;
+			PixelUAV[slot].Texture = texture;
+			return true;
+		}
+
+		void CVulkanDriver::unbindPixelShaderResources()
+		{
+			bool anyBuffer = false;
+			for (u32 i = 0; i < MaxPixelUAVSlots; ++i)
+			{
+				if (PixelUAV[i].Texture)
+					transitionPixelUAVTexture(static_cast<CVulkanTexture*>(PixelUAV[i].Texture),
+						VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				anyBuffer = anyBuffer || PixelUAV[i].Buffer != nullptr;
+				PixelUAV[i] = SVulkanComputeSlot();
+			}
+			// What the fragment shaders wrote becomes visible to whatever reads the buffers next in
+			// this frame (a vertex fetch, a compute dispatch, a copy).
+			if (anyBuffer && SceneOpen)
+			{
+				suspendRendering();
+				VkMemoryBarrier barrier = {};
+				barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+				barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+				barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT |
+					VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+				vk::CmdPipelineBarrier(Frames[CurrentFrameIndex].CommandBuffer, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+					VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+				resumeRendering();
+			}
 		}
 
 		// Every dispatch here is submitted and waited on with full barriers around it, so there is

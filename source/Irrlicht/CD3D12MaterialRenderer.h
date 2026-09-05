@@ -175,6 +175,19 @@ namespace irr
 			//! the per-draw bind plan. Empty for built-in types.
 			std::vector<SD3D12UserCBVTable> UserCBVTables;
 
+			//! Root parameter index of the pixel-stage UAV table (u0..u7) every graphics root
+			//! signature ends with: the slot after the last user CBV table.
+			UINT PixelUAVRootSlot = 0;
+
+			//! Compile the user stages as Shader Model 6.0 through DXC (dxcompiler.dll + dxil.dll
+			//! beside the executable) instead of FXC / SM 5.x. Set by the driver from
+			//! SIrrlichtCreationParameters::PreferShaderModel6 once isShaderModel6Available() agreed.
+			//! The requested SM 4/5 targets are ignored then; built-ins stay on FXC. The source sees
+			//! IRR_SM6=1 and is parsed as HLSL 2018, the closest to what FXC accepts.
+			bool UseShaderModel6 = false;
+			//! Whether dxcompiler.dll and dxil.dll load (probed once per process, both kept loaded).
+			static bool isShaderModel6Available();
+
 			//! The reflected cbuffers of one stage, so callers can walk all 5 in a loop.
 			std::vector<SD3D12UserShaderCBuffer>* getStageBuffers(E_D3D12_USER_CBV_STAGE stage);
 			const std::vector<SD3D12UserShaderCBuffer>* getStageBuffers(E_D3D12_USER_CBV_STAGE stage) const;
@@ -234,6 +247,15 @@ namespace irr
 			//! warning rather than failing the whole compilation.
 			static bool reflectCBuffer(ID3DBlob* code, std::vector<SD3D12UserShaderCBuffer>& outBuffers,
 				std::vector<SD3D12UserShaderVariable>& outVariables);
+			//! The walk itself, over a reflector from D3DReflect (FXC) or IDxcUtils::CreateReflection (DXC).
+			static bool reflectFromReflector(ID3D12ShaderReflection* reflector, std::vector<SD3D12UserShaderCBuffer>& outBuffers,
+				std::vector<SD3D12UserShaderVariable>& outVariables);
+
+			//! One stage through DXC: compiles `source` at `profile` (e.g. L"vs_6_0"), reflects its
+			//! cbuffers, hands the DXIL back as an ID3DBlob. False (logged, with stageName) on failure.
+			static bool compileStageShaderModel6(const c8* source, const c8* entryPoint, const wchar_t* profile,
+				const c8* stageName, io::IFileSystem* fileSystem, ComPtr<ID3DBlob>& outCode,
+				std::vector<SD3D12UserShaderCBuffer>& outBuffers, std::vector<SD3D12UserShaderVariable>& outVariables);
 		};
 
 		//! An entry in the CD3D12Driver::MaterialRenderers registry, indexed by

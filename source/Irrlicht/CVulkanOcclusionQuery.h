@@ -44,6 +44,8 @@ namespace irr
 			//! "not ready yet" from "never run" -- blocking on an unsubmitted query never returns.
 			u64 PendingFrame = 0;
 			u32 LastResult = 0; //!< last value read back, in visible samples
+			//! Whether the slot was ever recorded: a copy of its result may wait on it only then.
+			bool EverRecorded = false;
 		};
 
 		//! Takes the shared device context by const reference, like every other CVulkan* resource
@@ -65,6 +67,12 @@ namespace irr
 			void destroy();
 
 			bool isValid() const { return QueryPool != VK_NULL_HANDLE; }
+
+			//! The pool itself, for the driver's predication path (vkCmdCopyQueryPoolResults).
+			VkQueryPool getPool() const { return QueryPool; }
+
+			//! Whether the node's slot was recorded at least once, i.e. holds or will hold a result.
+			bool hasRun(const std::shared_ptr<scene::ISceneNode>& node) const;
 
 			//! Slots in the pool, mirroring the D3D12 query heap's capacity.
 			static const u32 QueryCapacity = 256;

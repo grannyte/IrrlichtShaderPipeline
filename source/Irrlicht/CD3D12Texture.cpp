@@ -357,6 +357,35 @@ namespace irr
 			createResource(renderTarget);
 		}
 
+		CD3D12Texture::CD3D12Texture(CD3D12Driver* driver, const core::dimension2d<u32>& size,
+			const io::path& name, ECOLOR_FORMAT format, u32 mipLevels, u32 arraySlices, bool renderTarget,
+			STiledTextureTag)
+			: ITexture(name), Driver(driver)
+		{
+			DriverType = EDT_DIRECT3D12;
+			Tiled = true;
+			NumberOfArraySlices = arraySlices ? arraySlices : 1;
+			TextureType = (NumberOfArraySlices > 1) ? ETT_2D_ARRAY : ETT_2D;
+			Source = ETS_UNKNOWN;
+			OriginalSize = Size = size;
+			MipLevelCount = mipLevels ? mipLevels : computeMipLevels(size.Width, size.Height);
+
+			const ECOLOR_FORMAT requestedFormat = (format == ECF_UNKNOWN) ? ECF_A8R8G8B8 : format;
+			DxgiFormat = getD3D12ColorFormat(requestedFormat);
+			ColorFormat = (requestedFormat == ECF_R8G8B8 && DxgiFormat == DXGI_FORMAT_R8G8B8A8_UNORM)
+				? ECF_A8R8G8B8 : requestedFormat;
+			IsRenderTarget = renderTarget;
+			// The same channel-order rule as the empty-texture constructor above.
+			if (!renderTarget)
+				DxgiFormat = applyNonRenderTargetChannelOrder(DxgiFormat);
+			Pitch = size.Width * (video::IImage::getBitsPerPixelFromFormat(ColorFormat) / 8);
+			MipMaps = MipLevelCount > 1;
+
+			if (DxgiFormat == DXGI_FORMAT_UNKNOWN)
+				return;
+			createResource(renderTarget);
+		}
+
 		// Every texture release passes through this destructor, regardless of origin
 		// (removeTexture(), a replaced render target, a caller's drop()...), so this
 		// is where GPU-side lifetime is decided.
@@ -418,7 +447,9 @@ namespace irr
 			// SampleCount > 1 only for a render-target-texture (see the
 			// constructor's comment) -- SampleQuality stays 0 for any other resource.
 			desc.SampleDesc = { SampleCount, SampleQuality };
-			desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN; // let the driver choose the optimal tiling
+			// A reserved (tiled) resource has to declare the 64 KB tile layout; anything else lets
+			// the driver choose.
+			desc.Layout = Tiled ? D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE : D3D12_TEXTURE_LAYOUT_UNKNOWN;
 
 			// ALLOW_RENDER_TARGET is also needed when MipLevelCount > 1, even for a
 			// normal loaded texture: generateMips() creates a transient RTV per mip.
@@ -429,7 +460,7 @@ namespace irr
 			//
 			// A depth format wants ALLOW_DEPTH_STENCIL and specifically not
 			// ALLOW_RENDER_TARGET; combining them is an E_INVALIDARG.
-			const bool mipBlitCapable = !IsDepth
+			const bool mipBlitCapable = !IsDepth && !Tiled
 				&& !IImage::isCompressedFormat(ColorFormat)
 				&& supportsRenderTarget(Driver, DxgiFormat);
 			if (IsDepth)
@@ -465,11 +496,16 @@ namespace irr
 			CurrentState = IsDepth ? D3D12_RESOURCE_STATE_DEPTH_WRITE :
 				(asRenderTarget ? D3D12_RESOURCE_STATE_RENDER_TARGET : D3D12_RESOURCE_STATE_COPY_DEST);
 
-			HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc,
-				CurrentState, pClearValue, IID_PPV_ARGS(&Resource));
+			// A tiled texture reserves address space only (CreateReservedResource); its tiles get
+			// memory from a tile pool heap through CD3D12Driver::updateTileMappings().
+			HRESULT hr = Tiled ?
+				device->CreateReservedResource(&desc, CurrentState, pClearValue, IID_PPV_ARGS(&Resource)) :
+				device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc,
+					CurrentState, pClearValue, IID_PPV_ARGS(&Resource));
 			if (FAILED(hr))
 			{
-				os::Printer::log("CD3D12Texture: CreateCommittedResource a echoue", ELL_ERROR);
+				os::Printer::log(Tiled ? "CD3D12Texture: CreateReservedResource failed" :
+					"CD3D12Texture: CreateCommittedResource a echoue", ELL_ERROR);
 				return false;
 			}
 

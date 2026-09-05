@@ -13,6 +13,7 @@
 #include "SMaterialLayer.h" // E_TEXTURE_CLAMP
 #include "irrArray.h"
 #include "CVulkanHelpers.h"
+#include "CTiledResourceHelpers.h"
 #include <vector>
 
 namespace irr
@@ -47,7 +48,17 @@ namespace irr
 			CVulkanTexture(const SVulkanContext& context, IVulkanUploadContext& upload,
 				const core::array<ITexture*>& slices, E_TEXTURE_TYPE type, const io::path& name);
 
+			//! Tiled texture: a sparse-residency image with no memory of its own; its tiles are bound
+			//! to a tile pool by CVulkanDriver::updateTileMappings(). mipLevels 0 = the full chain.
+			//! Colour formats only.
+			CVulkanTexture(const SVulkanContext& context, IVulkanUploadContext& upload,
+				const core::dimension2d<u32>& size, ECOLOR_FORMAT format, u32 mipLevels, u32 arrayLayers,
+				bool renderTarget, const io::path& name, STiledTextureTag);
+
 			virtual ~CVulkanTexture();
+
+			//! Created by the tiled constructor: no backing until its tiles are mapped.
+			bool isTiled() const { return Sparse; }
 
 			//! Maps a staging buffer holding one mip level of layer 0; the image itself is never
 			//! mapped (optimal tiling has no CPU layout). Returns 0 for a block-compressed format.
@@ -135,6 +146,8 @@ namespace irr
 
 			VkImage Image = VK_NULL_HANDLE;
 			VkDeviceMemory Memory = VK_NULL_HANDLE;
+			//! Sparse residency image (tiled constructor): createImage() binds no memory.
+			bool Sparse = false;
 			VkImageView View = VK_NULL_HANDLE;
 			//! Per-layer 2D views, filled lazily by getLayerView(); empty for a single-layer image.
 			std::vector<VkImageView> LayerViews;

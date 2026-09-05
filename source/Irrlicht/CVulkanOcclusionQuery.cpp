@@ -226,6 +226,13 @@ namespace irr
 			if (it == Queries.end())
 				return;
 			it->second.PendingFrame = frameMarker ? frameMarker : 1; // 0 is reserved for "not in flight"
+			it->second.EverRecorded = true;
+		}
+
+		bool CVulkanOcclusionQuery::hasRun(const std::shared_ptr<scene::ISceneNode>& node) const
+		{
+			auto it = Queries.find(node);
+			return it != Queries.end() && it->second.EverRecorded;
 		}
 
 		u64 CVulkanOcclusionQuery::getPendingFrame(const std::shared_ptr<scene::ISceneNode>& node) const

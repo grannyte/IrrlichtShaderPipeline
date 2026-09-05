@@ -274,6 +274,58 @@ namespace irr
 			createSampler(true, false, 0, ETC_CLAMP_TO_EDGE);
 		}
 
+		CVulkanTexture::CVulkanTexture(const SVulkanContext& context, IVulkanUploadContext& upload,
+			const core::dimension2d<u32>& size, ECOLOR_FORMAT format, u32 mipLevels, u32 arrayLayers,
+			bool renderTarget, const io::path& name, STiledTextureTag)
+			: ITexture(name), Context(context), Upload(upload)
+		{
+			DriverType = EDT_VULKAN;
+			Sparse = true;
+			LayerCount = arrayLayers ? arrayLayers : 1;
+			TextureType = (LayerCount > 1) ? ETT_2D_ARRAY : ETT_2D;
+			Source = ETS_UNKNOWN;
+
+			OriginalSize = Size = size;
+			ColorFormat = (format == ECF_UNKNOWN) ? ECF_A8R8G8B8 : format;
+			Format = getVulkanFormat(ColorFormat);
+			if (Format == VK_FORMAT_UNDEFINED)
+				return;
+			if (isDepthFormat(Format))
+			{
+				os::Printer::log("CVulkanTexture: a tiled texture has to be a colour format", name, ELL_ERROR);
+				Format = VK_FORMAT_UNDEFINED;
+				return;
+			}
+
+			IsRenderTarget = renderTarget;
+			HasAlpha = (ColorFormat == ECF_A8R8G8B8 || ColorFormat == ECF_A16B16G16R16F ||
+				ColorFormat == ECF_A32B32G32R32F);
+			Pitch = size.Width * (IImage::getBitsPerPixelFromFormat(ColorFormat) / 8);
+			MipLevelCount = mipLevels ? mipLevels : computeMipLevels(size.Width, size.Height);
+			MipMaps = MipLevelCount > 1;
+			Aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+
+			VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT |
+				VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+			if (renderTarget)
+				usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+			if (!createImage(usage) || !createImageView())
+				return;
+
+			// Nothing is bound yet, but a layout transition touches no texel: park the image in the
+			// sampled layout like every other texture, so binding it before its first tile is mapped
+			// is valid (tier 2 reads zero there).
+			VkCommandBuffer commandBuffer = Upload.beginUpload();
+			if (commandBuffer != VK_NULL_HANDLE)
+			{
+				transitionTo(commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				Upload.endUploadAndWait(commandBuffer);
+			}
+
+			createSampler(true, false, 0, ETC_CLAMP_TO_EDGE);
+		}
+
 		// The slices are the ETT_2D textures CNullDriver::getTexture(files, type) loaded one by one;
 		// each one's whole mip chain is copied into its layer, so the array carries the same mips
 		// its slices did (all of them, or none when any slice lacks a chain).
@@ -459,6 +511,19 @@ namespace irr
 			// A cube view can only be created over an image that was declared cube compatible.
 			if (TextureType == ETT_CUBE || TextureType == ETT_CUBE_ARRAY)
 				imageInfo.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+			// A tiled texture: sparse residency, and the format has to support it with this usage.
+			if (Sparse)
+			{
+				imageInfo.flags |= VK_IMAGE_CREATE_SPARSE_BINDING_BIT | VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT;
+				VkImageFormatProperties properties = {};
+				if (vk::GetPhysicalDeviceImageFormatProperties(Context.PhysicalDevice, Format, imageInfo.imageType,
+					imageInfo.tiling, usage, imageInfo.flags, &properties) != VK_SUCCESS)
+				{
+					os::Printer::log("CVulkanTexture: this format cannot be a sparse image with this usage on "
+						"this device", getName().getPath(), ELL_ERROR);
+					return false;
+				}
+			}
 
 			if (vulkanFailed("vkCreateImage", vk::CreateImage(Context.Device, &imageInfo, nullptr, &Image)))
 			{
@@ -466,6 +531,10 @@ namespace irr
 				return false;
 			}
 			CurrentLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+			// A sparse image gets its memory tile by tile from CVulkanDriver::updateTileMappings().
+			if (Sparse)
+				return true;
 
 			VkMemoryRequirements requirements = {};
 			vk::GetImageMemoryRequirements(Context.Device, Image, &requirements);

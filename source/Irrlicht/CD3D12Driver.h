@@ -31,6 +31,7 @@
 #include "IIndexBuffer.h"
 #include "CD3D12HardwareBuffer.h"
 #include "CD3D12Texture.h"
+#include "CTiledResourceHelpers.h"
 #include "CD3D12PSOCache.h"
 #include "CD3D12MaterialRenderer.h"
 #include "CD3D12DefaultShaders.h"
@@ -1452,7 +1453,47 @@ namespace irr
 			virtual void setViewPorts(const core::array<core::rect<s32> >& areas) _IRR_OVERRIDE_;
 			virtual const core::rect<s32>& getViewPort() const _IRR_OVERRIDE_;
 
+			//! GPU timers (timestamp query heap), per-frame pipeline statistics and predication
+			//! (SetPredication over the node's resolved occlusion result). See IVideoDriver.
+			virtual void beginTimer(u32 id) _IRR_OVERRIDE_;
+			virtual void endTimer(u32 id) _IRR_OVERRIDE_;
+			virtual bool getTimerResult(u32 id, u64& nanoseconds) const _IRR_OVERRIDE_;
+			virtual bool getPipelineStatistics(SPipelineStatistics& out) const _IRR_OVERRIDE_;
+			virtual void beginPredicatedDraws(std::shared_ptr<scene::ISceneNode> node) _IRR_OVERRIDE_;
+			virtual void endPredicatedDraws() _IRR_OVERRIDE_;
+
+			//! Pixel-stage UAVs (a u0..u7 descriptor table on every graphics root signature). See IVideoDriver.
+			virtual bool bindPixelShaderBuffer(u32 slot, scene::IComputeBuffer* buffer) _IRR_OVERRIDE_;
+			virtual bool bindPixelShaderTexture(u32 slot, ITexture* texture) _IRR_OVERRIDE_;
+			virtual void unbindPixelShaderResources() _IRR_OVERRIDE_;
+
+			//! Tiled resources: reserved resources mapped onto tile pool heaps with
+			//! ID3D12CommandQueue::UpdateTileMappings, tiles written with CopyTiles from an upload
+			//! buffer. Inside a scene the command list is flushed first, so the mapping / upload lands
+			//! after the draws recorded so far. See IVideoDriver. Packed mips cannot be written with
+			//! updateTiles().
+			virtual ITilePool* createTilePool(u32 tileCount) _IRR_OVERRIDE_;
+			virtual ITexture* addTiledTexture(const core::dimension2d<u32>& size, const io::path& name,
+				ECOLOR_FORMAT format, u32 mipLevels = 0, u32 arraySlices = 1, bool isRenderTarget = false) _IRR_OVERRIDE_;
+			virtual bool getTileShape(const ITexture* texture, STileShape& out) const _IRR_OVERRIDE_;
+			virtual bool updateTileMappings(ITexture* texture, const STileRegion* regions, u32 regionCount,
+				ITilePool* pool, const u32* poolTileIndices) _IRR_OVERRIDE_;
+			virtual bool updateTiles(ITexture* texture, const STileRegion& region, const void* data) _IRR_OVERRIDE_;
+			//! Forget a tiled texture's mappings (its pools are released) before CNullDriver drops it.
+			virtual void removeTexture(ITexture* texture) _IRR_OVERRIDE_;
+			virtual void removeAllTextures() _IRR_OVERRIDE_;
+
+			//! Same as retireResource(ComPtr<ID3D12Resource>&&), for a tile pool heap: a queued
+			//! UpdateTileMappings may still name it.
+			void retireResource(ComPtr<ID3D12Heap>&& heap);
+
 		private:
+
+			//! The tiled textures this driver created (addTiledTexture()), with their shape and current
+			//! mappings; see CTiledResourceHelpers.h.
+			std::map<const ITexture*, STiledTextureRecord> TiledTextures;
+			bool queryTileShape(CD3D12Texture* texture, STiledTextureRecord& out) const;
+			void releaseTiledRecords();
 
 			//! Auxiliary PSOs (shadow volumes) that don't go through buildPSOKeyFromMaterial() -- same
 			//! default shader/root signature/input layout (see CD3D12PSOCache.h), but with stencil/
@@ -1624,6 +1665,7 @@ namespace irr
 				UINT64 FenceValue = 0;
 				ComPtr<ID3D12Resource> Resource;
 				ComPtr<ID3D12DescriptorHeap> DescriptorHeapResource;
+				ComPtr<ID3D12Heap> HeapResource;
 				CD3D12DescriptorHeapAllocator* Heap = nullptr;
 				UINT DescriptorIndex = 0;
 			};
@@ -1662,6 +1704,19 @@ namespace irr
 
 			bool TearingSupported = false;
 			core::dimension2d<u32> WindowSize;
+
+			//! The swapchain buffer format, the format its render target views use (an _SRGB view over
+			//! the UNORM buffer for ESCS_SRGB_LINEAR, a flip-model swapchain refusing an _SRGB buffer)
+			//! and the colour space obtained (SIrrlichtCreationParameters::ColorSpace, the
+			//! "SwapchainColorSpace" attribute). Decided in createSwapChain().
+			DXGI_FORMAT BackBufferFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+			DXGI_FORMAT BackBufferViewFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+			E_SWAPCHAIN_COLOR_SPACE SwapchainColorSpace = ESCS_SRGB_NONLINEAR;
+
+			//! SIrrlichtCreationParameters::PreferShaderModel6 took: the device reports SM 6.0 and DXC
+			//! (dxcompiler.dll + dxil.dll) loaded, so user shaders compile through it. What
+			//! queryFeature(EVDF_SHADER_MODEL_6) answers.
+			bool ShaderModel6Enabled = false;
 
 			//! True between beginScene() and endScene(), i.e. exactly when CommandList is open (Reset()
 			//! done, Close() not yet called). Unlike the D3D11 immediate context, which is always
@@ -1801,7 +1856,19 @@ namespace irr
 			//! D3D12_ROOT_PARAMETER1 array in buildMaterialRootSignature(); real signatures are
 			//! almost always far smaller.
 			static const UINT MaxRootParameters =
-				FirstUserCBVRootSlot + ED3D12UCS_COUNT * MaxUserShaderRegisterSpaces;
+				FirstUserCBVRootSlot + ED3D12UCS_COUNT * MaxUserShaderRegisterSpaces + 1; // + the pixel UAV table
+			//! Pixel-stage UAVs (bindPixelShaderBuffer()/bindPixelShaderTexture()): the u0..u7 table
+			//! every graphics root signature ends with, filled per draw from these slots (null UAVs in
+			//! the empty ones) and bound at the renderer's PixelUAVRootSlot.
+			static const UINT MaxPixelUAVSlots = 8;
+			SD3D12ComputeSlot PixelUAV[MaxPixelUAVSlots];
+			bool PixelUAVBound = false;
+			//! The all-null table of the current frame, shared by every draw that binds no UAV;
+			//! rebuilt when the frame's heap was replaced (growth) since it was allocated.
+			D3D12_GPU_DESCRIPTOR_HANDLE NullPixelUAVTable = {};
+			ID3D12DescriptorHeap* NullPixelUAVTableHeap = nullptr;
+			UINT NullPixelUAVTableFrame = ~0u;
+			D3D12_GPU_DESCRIPTOR_HANDLE allocatePixelUAVTable(bool withBindings);
 			//! D3D12 counterpart of CNullDriver::MaterialRenderers, at the SAME index: NativeRenderers[i]
 			//! is the CD3D12MaterialRenderer* for MaterialRenderers[i].Renderer when that renderer was
 			//! actually built by this driver (compiled blobs + reflection needed by
@@ -1922,6 +1989,9 @@ namespace irr
 				std::vector<core::vector3df> Positions; // flattened local geometry, snapshotted at addOcclusionQuery()
 				UINT64 PendingFenceValue = 0; // 0 = no GPU request in flight for this slot
 				u32 LastResult = 0;
+				//! Whether the slot was ever resolved into PredicationBuffer: predication on a node
+				//! that never ran would read a zero and skip everything.
+				bool EverResolved = false;
 			};
 			std::unordered_map<std::shared_ptr<scene::ISceneNode>, SD3D12OcclusionQuery> OcclusionQueries;
 			std::vector<UINT> FreeOcclusionSlots;
@@ -1929,6 +1999,35 @@ namespace irr
 			ComPtr<ID3D12Resource> OcclusionReadback;
 			void* OcclusionReadbackMapped = nullptr;
 			static const UINT OcclusionQueryCapacity = 256;
+
+			// --- The D3D11.x queries (doc/d3d11-feature-api.md): GPU timers, per-frame pipeline
+			// statistics, predication. Query heaps with one range per frame slot, resolved into
+			// mapped readback buffers at endScene() and read at the next beginScene() of the slot,
+			// once waitForFrame() proved the GPU is done with it.
+			static const UINT TimerSlotsPerFrame = EMCS_MAX_TIMER_QUERIES * 2;
+			ComPtr<ID3D12QueryHeap> TimestampHeap;
+			ComPtr<ID3D12Resource> TimestampReadback;
+			void* TimestampReadbackMapped = nullptr;
+			ComPtr<ID3D12QueryHeap> StatsHeap;
+			ComPtr<ID3D12Resource> StatsReadback;
+			void* StatsReadbackMapped = nullptr;
+			UINT64 TimestampFrequency = 0;
+			bool TimerUsed[NativeFrameCount][EMCS_MAX_TIMER_QUERIES] = {};
+			bool TimerEnded[NativeFrameCount][EMCS_MAX_TIMER_QUERIES] = {};
+			bool StatsOpen[NativeFrameCount] = {};
+			u64 TimerResults[EMCS_MAX_TIMER_QUERIES] = {};
+			bool TimerResultValid[EMCS_MAX_TIMER_QUERIES] = {};
+			mutable bool StatsArmed = false;
+			SPipelineStatistics LastStats;
+			bool StatsValid = false;
+			bool QueryResourcesCreated = false;
+			bool WarnedTimerReuse = false;
+			//! Default-heap copy of every occlusion result, what SetPredication() reads. Kept in the
+			//! PREDICATION state between the resolves that refresh it.
+			ComPtr<ID3D12Resource> PredicationBuffer;
+			D3D12_RESOURCE_STATES PredicationBufferState = D3D12_RESOURCE_STATE_COPY_DEST;
+			bool createQueryResources();
+			void harvestQueryFrame(UINT frame);
 
 			// DriverAttributes and the vertex descriptors (CNullDriver::VertexDescriptor, pre-filled
 			// with "standard"/"2tcoords"/"tangents"/"standardcolorf" by
