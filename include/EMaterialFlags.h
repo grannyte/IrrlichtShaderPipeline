@@ -87,7 +87,10 @@ namespace video
 		EMF_POLYGON_OFFSET = 0x80000,
 
         //! Flag for blend factor
-		EMF_BLEND_FACTOR = 0x160000
+		EMF_BLEND_FACTOR = 0x160000,
+
+		//! Conservative rasterization (SMaterial::ConservativeRaster). Default: false
+		EMF_CONSERVATIVE_RASTER = 0x200000
 	};
 
 } // end namespace video

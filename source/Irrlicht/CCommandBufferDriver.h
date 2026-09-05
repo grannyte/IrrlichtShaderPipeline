@@ -420,6 +420,13 @@ namespace irr
 
 			void computeBarrierAll() override;
 
+			// Deferred: the copy is recorded in order with the dispatches that fill the buffer.
+			bool beginComputeReadback(scene::IComputeBuffer* buffer, u32 slot) override;
+
+			// Synchronous passthrough: a poll has nothing to record, and before the deferred
+			// copy above has executed it simply reports "not ready".
+			bool tryReadComputeBuffer(scene::IComputeBuffer* buffer, u32 slot, void* dst, u32 bytes, bool wait) override;
+
 		protected:
 			irr::video::ITexture* CurrentRenderTarget;
 			core::matrix4 Matrices[ETS_COUNT];

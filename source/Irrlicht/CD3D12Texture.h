@@ -22,14 +22,15 @@
 //   DXGI_FORMAT_R8G8B8A8_UNORM, alpha forced to 0xFF since there is no 24-bit DXGI
 //   equivalent; ColorFormat becomes ECF_A8R8G8B8 after creation, cf.
 //   CD3D11Texture::createTexture()), ECF_R5G6B5, ECF_A1R5G5B5, the floating point formats
-//   R16F/G16R16F/A16B16G16R16F/R32F/G32R32F/B32G32R32F/A32B32G32R32F, and
-//   ECF_DXT1-5/ECF_BC6_U/S/ECF_BC7_U/S (block-compressed). Not covered: R10G10B10A2/
-//   R11G11B10_FLOAT/R9G9B9E5 (no corresponding ECOLOR_FORMAT value exists). An
-//   unsupported format fails with a clear message rather than silently producing a
-//   corrupt texture.
-// - .dds loading (compressed or not) via the IImage* constructor mirrors CD3D11Texture,
-//   which for a ".dds" filename bypasses the ECOLOR_FORMAT path entirely and delegates to
-//   a dedicated DDS loader (DDSTextureLoader.h/.cpp on D3D11, DDSTextureLoader12.h/.cpp
+//   R16F/G16R16F/A16B16G16R16F/R32F/G32R32F/B32G32R32F/A32B32G32R32F, and the
+//   block-compressed family ECF_DXT1-5 (+ the sRGB twins), ECF_BC4_U/S, ECF_BC5_U/S,
+//   ECF_BC6_U/S, ECF_BC7_U/S. Not covered: R10G10B10A2/R11G11B10_FLOAT/R9G9B9E5 (no
+//   corresponding ECOLOR_FORMAT value exists). An unsupported format fails with a clear
+//   message rather than silently producing a corrupt texture.
+// - .dds loading via the IImage* constructor mirrors CD3D11Texture: an image the loader
+//   flagged compressed (IImage::isCompressed(), i.e. block-compressed, a wide format, a cube
+//   map, an array or a volume) bypasses the ECOLOR_FORMAT path entirely and goes to a
+//   dedicated DDS loader (DDSTextureLoader.h/.cpp on D3D11, DDSTextureLoader12.h/.cpp
 //   here) operating directly on the raw file bytes (CImage::CompressedSize): DDS_HEADER/
 //   DX10 header parsed, D3D12 resource created with the full mip chain/array slices/cube
 //   faces, uploaded per-subresource (UPLOAD heap + CopyTextureRegion, same mechanism as
@@ -78,6 +79,7 @@
 
 #include <d3d12.h>
 #include <wrl/client.h>
+#include <vector>
 #include <irrArray.h>
 #include "ITexture.h"
 #include "IImage.h"
@@ -170,6 +172,12 @@ namespace irr
 
 			bool hasRenderTargetView() const { return HasRTV; }
 			D3D12_CPU_DESCRIPTOR_HANDLE getRenderTargetView() const { return RTVHandle; }
+			//! RTV over one slice of a render-target array (mip 0), created on first use for
+			//! CD3D12Driver::setRenderTargetSlice(). Slice 0 of a single-slice texture is
+			//! getRenderTargetView() itself. A null handle (ptr == 0, logged) if the heap is full.
+			D3D12_CPU_DESCRIPTOR_HANDLE getRenderTargetView(u32 arraySlice);
+			//! Slices of an array / faces of a cube; depth for ETT_3D. 1 for a plain 2D texture.
+			UINT getArraySliceCount() const { return NumberOfArraySlices; }
 
 			//! True if this texture is a depth buffer (decided by FORMAT, not the caller:
 			//! addRenderTargetTexture(ECF_D32/D24S8/...) produces a DSV, never an RTV). Such
@@ -271,6 +279,16 @@ namespace irr
 			bool HasRTV = false;
 			D3D12_CPU_DESCRIPTOR_HANDLE RTVHandle = {};
 			UINT RTVHeapIndex = 0;
+
+			//! Per-slice RTVs of a render-target array, see getRenderTargetView(u32). Empty until
+			//! a slice is asked for; an entry stays Valid == false if its allocation failed.
+			struct SSliceRTV
+			{
+				bool Valid = false;
+				UINT HeapIndex = 0;
+				D3D12_CPU_DESCRIPTOR_HANDLE Handle = {};
+			};
+			std::vector<SSliceRTV> SliceRTVs;
 
 			//! Depth texture (see isDepthTexture()). Decided by FORMAT in createResource():
 			//! TYPELESS + ALLOW_DEPTH_STENCIL resource, DSV + SRV, never an RTV. The DSV

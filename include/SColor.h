@@ -108,13 +108,38 @@ namespace video
 		//! DXT5 color format.
 		ECF_DXT5,
 
+		//! BC6H, unsigned half floats (HDR).
 		ECF_BC6_U,
 
+		//! BC6H, signed half floats (HDR).
 		ECF_BC6_S,
 
+		//! BC7, linear.
 		ECF_BC7_U,
 
+		//! BC7, sRGB (decoded to linear by the sampler).
 		ECF_BC7_S,
+
+		//! DXT1 / BC1 with sRGB colour.
+		ECF_DXT1_SRGB,
+
+		//! DXT3 / BC2 with sRGB colour.
+		ECF_DXT3_SRGB,
+
+		//! DXT5 / BC3 with sRGB colour.
+		ECF_DXT5_SRGB,
+
+		//! BC4, one unsigned normalized channel (8 bytes per 4x4 block).
+		ECF_BC4_U,
+
+		//! BC4, one signed normalized channel.
+		ECF_BC4_S,
+
+		//! BC5, two unsigned normalized channels (the usual tangent-space normal map format).
+		ECF_BC5_U,
+
+		//! BC5, two signed normalized channels.
+		ECF_BC5_S,
 
 		//! Unknown color format:
 		ECF_UNKNOWN,

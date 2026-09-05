@@ -63,7 +63,7 @@ namespace irr
 		}
 
 		CD3D12HardwareBuffer::CD3D12HardwareBuffer(scene::IComputeBuffer* computeBuffer, CD3D12Driver* driver)
-			: IHardwareBuffer(computeBuffer->getHardwareMappingHint(), 0,
+			: IHardwareBuffer(computeBuffer->getHardwareMappingHint(), computeBuffer->getBufferFlags(),
 				computeBuffer->getBufferSize(), EHBT_COMPUTE, EDT_DIRECT3D12),
 			Driver(driver), Stride(computeBuffer->getStructureStride())
 		{
@@ -99,6 +99,136 @@ namespace irr
 			for (size_t i = 0; i < Resources.size(); ++i)
 				Driver->retireResource(std::move(Resources[i]));
 			Driver->retireResource(std::move(StagingResource));
+			Driver->retireResource(std::move(CounterResource));
+			for (u32 i = 0; i < ReadbackSlotCount; ++i)
+				Driver->retireResource(std::move(Readback[i].Resource));
+		}
+
+		bool CD3D12HardwareBuffer::createCounterResource()
+		{
+			if (CounterResource)
+				return true;
+
+			ID3D12Device2* device = Driver->getDevice();
+			if (!device)
+				return false;
+
+			D3D12_HEAP_PROPERTIES heapProps = {};
+			heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+			// One uint is all it holds; the size is the counter placement alignment so the offset
+			// rules never come into play, and a default-heap buffer is 64 KB granular anyway.
+			D3D12_RESOURCE_DESC desc = {};
+			desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+			desc.Width = D3D12_UAV_COUNTER_PLACEMENT_ALIGNMENT;
+			desc.Height = 1;
+			desc.DepthOrArraySize = 1;
+			desc.MipLevels = 1;
+			desc.Format = DXGI_FORMAT_UNKNOWN;
+			desc.SampleDesc = { 1, 0 };
+			desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+			desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+
+			CounterState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+			HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc,
+				CounterState, nullptr, IID_PPV_ARGS(&CounterResource));
+			if (FAILED(hr))
+			{
+				logD3D12Failure("CD3D12HardwareBuffer: CreateCommittedResource (append counter)", hr, device);
+				CounterResource.Reset();
+				return false;
+			}
+			// A fresh default-heap resource holds garbage: the counter must start at zero.
+			return true;
+		}
+
+		void CD3D12HardwareBuffer::transitionCounterTo(ID3D12GraphicsCommandList* cmdList, D3D12_RESOURCE_STATES newState)
+		{
+			if (!cmdList || !CounterResource || CounterState == newState)
+				return;
+
+			CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+				CounterResource.Get(), CounterState, newState);
+			cmdList->ResourceBarrier(1, &barrier);
+			CounterState = newState;
+		}
+
+		bool CD3D12HardwareBuffer::beginAsyncReadback(u32 slot)
+		{
+			if (slot >= ReadbackSlotCount || Resources.empty() || !Resources[0] || Size == 0)
+				return false;
+
+			ID3D12Device2* device = Driver->getDevice();
+			if (!device)
+				return false;
+
+			SReadbackSlot& readback = Readback[slot];
+			if (readback.Resource && readback.Size < Size)
+			{
+				Driver->retireResource(std::move(readback.Resource));
+				readback = SReadbackSlot();
+			}
+			if (!readback.Resource)
+			{
+				D3D12_HEAP_PROPERTIES heapProps = {};
+				heapProps.Type = D3D12_HEAP_TYPE_READBACK;
+
+				D3D12_RESOURCE_DESC desc = {};
+				desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+				desc.Width = Size;
+				desc.Height = 1;
+				desc.DepthOrArraySize = 1;
+				desc.MipLevels = 1;
+				desc.Format = DXGI_FORMAT_UNKNOWN;
+				desc.SampleDesc = { 1, 0 };
+				desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+				HRESULT hr = device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &desc,
+					D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&readback.Resource));
+				if (FAILED(hr))
+				{
+					logD3D12Failure("CD3D12HardwareBuffer: CreateCommittedResource (readback slot)", hr, device);
+					readback.Resource.Reset();
+					return false;
+				}
+				readback.Size = Size;
+			}
+
+			// Same shape as lock(true): the copy rides the synchronous upload list, so the slot is
+			// complete on return.
+			CD3D12Driver::UploadScope upload(Driver);
+			ID3D12GraphicsCommandList* cmdList = upload.commandList();
+			if (!cmdList)
+				return false;
+
+			const D3D12_RESOURCE_STATES previous = CurrentState;
+			transitionTo(cmdList, D3D12_RESOURCE_STATE_COPY_SOURCE);
+			cmdList->CopyBufferRegion(readback.Resource.Get(), 0, Resources[0].Get(), 0, Size);
+			transitionTo(cmdList, previous);
+			upload.endAndWait();
+
+			readback.Ready = true;
+			return true;
+		}
+
+		bool CD3D12HardwareBuffer::tryAsyncReadback(u32 slot, void* dst, u32 bytes, bool /*wait*/)
+		{
+			if (slot >= ReadbackSlotCount || !dst || bytes == 0)
+				return false;
+
+			SReadbackSlot& readback = Readback[slot];
+			if (!readback.Ready || !readback.Resource)
+				return false;
+
+			const UINT64 count = (bytes < readback.Size) ? bytes : readback.Size;
+			D3D12_RANGE readRange = { 0, static_cast<SIZE_T>(count) };
+			void* mapped = nullptr;
+			if (FAILED(readback.Resource->Map(0, &readRange, &mapped)) || !mapped)
+				return false;
+			memcpy(dst, mapped, static_cast<size_t>(count));
+			D3D12_RANGE noWrite = { 0, 0 };
+			readback.Resource->Unmap(0, &noWrite);
+			return true;
 		}
 
 		bool CD3D12HardwareBuffer::createDynamicResources(const void* initialData)
@@ -308,7 +438,16 @@ namespace irr
 				HasSRV = false;
 			}
 
-			UINT elementCount = (Stride > 0) ? (Size / Stride) : 0;
+			// Same view shapes as CD3D11HardwareBuffer::createInternalBuffer() picks from the flags: an
+			// indirect-args / vertex-bindable / raw buffer is addressed by byte (RWByteAddressBuffer),
+			// everything else by structure.
+			const bool raw = (Flags & (EHBF_COMPUTE_RAW | EHBF_DRAW_INDIRECT_ARGS |
+				EHBF_VERTEX_ADDITIONAL_BIND | EHBF_INDEX_ADDITIONAL_BIND)) != 0;
+			const bool counted = !raw && (Flags & (EHBF_COMPUTE_APPEND | EHBF_COMPUTE_CONSUME)) != 0;
+			const UINT elementCount = raw ? (Size / 4) : ((Stride > 0) ? (Size / Stride) : 0);
+
+			if (counted && !createCounterResource())
+				return false;
 
 			CD3DX12_CPU_DESCRIPTOR_HANDLE uavHandle;
 			if (!Driver->getSRVHeap().allocate(UAVHeapIndex, uavHandle))
@@ -318,12 +457,14 @@ namespace irr
 			}
 			D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 			uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
-			uavDesc.Format = DXGI_FORMAT_UNKNOWN;
+			uavDesc.Format = raw ? DXGI_FORMAT_R32_TYPELESS : DXGI_FORMAT_UNKNOWN;
 			uavDesc.Buffer.FirstElement = 0;
 			uavDesc.Buffer.NumElements = elementCount;
-			uavDesc.Buffer.StructureByteStride = Stride;
-			uavDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
-			device->CreateUnorderedAccessView(Resources[0].Get(), nullptr, &uavDesc, uavHandle);
+			uavDesc.Buffer.StructureByteStride = raw ? 0 : Stride;
+			uavDesc.Buffer.CounterOffsetInBytes = 0;
+			uavDesc.Buffer.Flags = raw ? D3D12_BUFFER_UAV_FLAG_RAW : D3D12_BUFFER_UAV_FLAG_NONE;
+			device->CreateUnorderedAccessView(Resources[0].Get(), counted ? CounterResource.Get() : nullptr,
+				&uavDesc, uavHandle);
 			UAVHandle = uavHandle;
 			HasUAV = true;
 
@@ -335,12 +476,12 @@ namespace irr
 			}
 			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-			srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+			srvDesc.Format = raw ? DXGI_FORMAT_R32_TYPELESS : DXGI_FORMAT_UNKNOWN;
 			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 			srvDesc.Buffer.FirstElement = 0;
 			srvDesc.Buffer.NumElements = elementCount;
-			srvDesc.Buffer.StructureByteStride = Stride;
-			srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
+			srvDesc.Buffer.StructureByteStride = raw ? 0 : Stride;
+			srvDesc.Buffer.Flags = raw ? D3D12_BUFFER_SRV_FLAG_RAW : D3D12_BUFFER_SRV_FLAG_NONE;
 			device->CreateShaderResourceView(Resources[0].Get(), &srvDesc, srvHandle);
 			SRVHandle = srvHandle;
 			HasSRV = true;

@@ -1094,6 +1094,20 @@ void CCommandBufferDriver::computeBarrierAll()
 		});
 }
 
+bool CCommandBufferDriver::beginComputeReadback(scene::IComputeBuffer* buffer, u32 slot)
+{
+	std::lock_guard<std::mutex> lock(QueueMutex);
+	deferedcalls.push([buffer, slot](IVideoDriver* driver) {
+		driver->beginComputeReadback(buffer, slot);
+		});
+	return true;
+}
+
+bool CCommandBufferDriver::tryReadComputeBuffer(scene::IComputeBuffer* buffer, u32 slot, void* dst, u32 bytes, bool wait)
+{
+	return Driver->tryReadComputeBuffer(buffer, slot, dst, bytes, wait);
+}
+
 // --- Newly added: methods only defaulted in CNullDriver, not CNullDriverCommon ---
 
 void CCommandBufferDriver::batchDraw2DRectangles(const irr::core::array<core::rect<s32>>& pos,

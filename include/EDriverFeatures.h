@@ -166,6 +166,55 @@ namespace video
 		//! Supports texture multisampling
 		EVDF_TEXTURE_MULTISAMPLING,
 
+		//! Are bindComputeBuffer()/dispatchComputeShaderBound()/unbindComputeResources() implemented?
+		//! Separate from EVDF_COMPUTING_SHADER_5_0: a driver can compile compute and still only offer
+		//! the legacy one-in/one-out dispatchComputeShader().
+		EVDF_BOUND_COMPUTE_PIPELINE,
+
+		// --- The D3D11.x feature set of doc/d3d11-feature-api.md ---
+
+		//! bindPixelShaderBuffer()/bindPixelShaderTexture(): UAVs bound to the pixel stage.
+		EVDF_PIXEL_SHADER_UAV,
+
+		//! RasterizerOrderedBuffer/RasterizerOrderedTexture2D in the pixel shader (fragment
+		//! shader interlock on Vulkan). Capability only, the shader declares the type.
+		EVDF_RASTERIZER_ORDERED_VIEWS,
+
+		//! EBF_SRC1_* blend factors, render target 0 only.
+		EVDF_DUAL_SOURCE_BLEND,
+
+		//! SMaterial::LogicOp on integer/UNORM targets.
+		EVDF_LOGIC_OP,
+
+		//! SMaterial::ConservativeRaster.
+		EVDF_CONSERVATIVE_RASTERIZATION,
+
+		//! The pixel shader may write SV_StencilRef. Capability only.
+		EVDF_PIXEL_SHADER_STENCIL_REF,
+
+		//! beginPredicatedDraws()/endPredicatedDraws().
+		EVDF_PREDICATION,
+
+		//! beginTimer()/endTimer()/getTimerResult() and getPipelineStatistics().
+		EVDF_TIMER_QUERY,
+
+		//! Shader model 6 (wave intrinsics, 16-bit types) for user shaders.
+		EVDF_SHADER_MODEL_6,
+
+		//! setViewPorts() with more than one entry, selected by SV_ViewportArrayIndex.
+		EVDF_MULTIPLE_VIEWPORTS,
+
+		//! SMaterialLayer::MinMaxFilter (minimum/maximum reduction) and SMaterialLayer::MinLod.
+		EVDF_MINMAX_FILTER,
+
+		//! createTilePool()/addTiledTexture()/updateTileMappings()/updateTiles(). The tier is
+		//! getDriverAttributes() "TiledResourcesTier".
+		EVDF_TILED_RESOURCES,
+
+		//! createDeferredContext() returns a native recording (a real command list/buffer),
+		//! not the software recorder.
+		EVDF_NATIVE_DEFERRED_CONTEXT,
+
 		//! Only used for counting the elements of this enum
 		EVDF_COUNT
 	};

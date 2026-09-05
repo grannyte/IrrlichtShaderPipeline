@@ -205,11 +205,13 @@ namespace irr
 		//! comfortably enough for a reasonable number of drawMeshBuffer() calls per frame). Just a
 		//! starting capacity (SD3D12FrameContext::ConstantRingCapacity): beyond it, allocateConstant()
 		//! grows the ring on demand via growConstantRing() instead of failing.
-		//! Number of SRV/sampler descriptors (t0..t8 / s0..s8) the shared root signature exposes for
-		//! every draw call. Sized from OuterSpace's actual shader catalog (x64\Data\config\Shaders.xml):
-		//! the most texture-hungry shader observed (Atmosphere/Fluid) declares up to 9 t0-t8 registers.
+		//! Number of SRV/sampler descriptors (t0..t8 / s0..s8) the TextureTableSlot/SamplerTableSlot
+		//! tables expose for every draw call. Those two are among the 7 fixed parameters every material
+		//! root signature carries (see getOrCreateRootSignature()), so this count is the same whichever
+		//! material is bound. Sized from a survey of a real user shader catalog, whose most
+		//! texture-hungry shaders declared up to 9 t0-t8 registers.
 		//! A register not declared by a given shader (a built-in with 1-2 textures, or a user shader
-		//! with gaps such as GasGiant skipping t2) is still covered by the table -- see
+		//! with gaps, e.g. one skipping t2) is still covered by the table -- see
 		//! allocateSRVTableSlot()/allocateSamplerTableSlot(), which always fill all 9 slots
 		//! (NullTexture/default sampler for unset registers). This makes non-contiguous registers
 		//! transparent without needing to know precisely which registers a given shader uses: D3D12
@@ -312,6 +314,36 @@ namespace irr
 			virtual void dispatchComputeShaderToTexture(const core::vector3d<u32>& groupCount,
 				scene::IComputeBuffer* Src, ITexture* Dst) _IRR_OVERRIDE_;
 
+			//! The multi-slot compute path CD3D11Driver offers: buffers and textures bound to
+			//! numbered t#/u# registers, then one dispatch (direct or indirect) against the active
+			//! compute material. Every dispatch is synchronous on its own command list, like the two
+			//! above; the SRV/UAV/CBV descriptor tables live in a dedicated shader-visible heap
+			//! (ComputeDescriptorHeap) so a dispatch mid-scene never disturbs the frame's heap.
+			virtual void bindComputeBuffer(u32 slot, scene::IComputeBuffer* buffer,
+				E_HARDWARE_BUFFER_TYPE binding) _IRR_OVERRIDE_;
+			virtual void bindComputeTexture(u32 slot, ITexture* texture, bool asUAV) _IRR_OVERRIDE_;
+			virtual void dispatchComputeShaderBound(const core::vector3d<u32>& groupCount) _IRR_OVERRIDE_;
+			virtual void unbindComputeResources() _IRR_OVERRIDE_;
+			virtual void computeBarrier(scene::IComputeBuffer* buffer) _IRR_OVERRIDE_;
+			virtual void computeBarrierAll() _IRR_OVERRIDE_;
+			virtual void dispatchComputeShaderIndirect(scene::IComputeBuffer* argBuffer, u32 byteOffset) _IRR_OVERRIDE_;
+			//! The hidden counter of an EHBF_COMPUTE_APPEND/CONSUME buffer is a 4096-byte resource of
+			//! its own (CD3D12HardwareBuffer::getCounterResource()): a copy out, and a copy in from a
+			//! throwaway upload resource -- applied at once rather than on the next bind.
+			virtual void copyStructureCount(scene::IComputeBuffer* dst, u32 dstByteOffset,
+				scene::IComputeBuffer* appendBuffer) _IRR_OVERRIDE_;
+			virtual void resetStructureCount(scene::IComputeBuffer* appendBuffer, u32 value = 0) _IRR_OVERRIDE_;
+			virtual bool beginComputeReadback(scene::IComputeBuffer* buffer, u32 slot) _IRR_OVERRIDE_;
+			virtual bool tryReadComputeBuffer(scene::IComputeBuffer* buffer, u32 slot, void* dst,
+				u32 bytes, bool wait) _IRR_OVERRIDE_;
+			//! ExecuteIndirect with a DrawIndexedInstanced command signature on the frame's command
+			//! list; the per-instance stream comes from `instanceBuffer`. Both buffers are put back
+			//! into UNORDERED_ACCESS right after, so the compute dispatches (which run on their own
+			//! list, ahead of this frame's) keep seeing the resting state they track.
+			virtual void drawMeshBufferInstancedIndirect(const scene::IMeshBuffer* mb,
+				scene::IComputeBuffer* instanceBuffer, u32 instanceStride,
+				scene::IComputeBuffer* argBuffer, u32 byteOffset) _IRR_OVERRIDE_;
+
 			// --- IVideoDriver: transformations and current material ---
 			virtual void setTransform(E_TRANSFORMATION_STATE state, const core::matrix4& mat) _IRR_OVERRIDE_;
 			virtual const core::matrix4& getTransform(E_TRANSFORMATION_STATE state) const _IRR_OVERRIDE_;
@@ -332,7 +364,7 @@ namespace irr
 			virtual void clearZBuffer() _IRR_OVERRIDE_;
 
 			//! Copies a whole texture to another of identical size and format.
-			virtual bool copyTexture(ITexture* dest, ITexture* source) _IRR_OVERRIDE_;
+			virtual bool copyTexture(ITexture* dest, ITexture* source, u32 destSlice = 0) _IRR_OVERRIDE_;
 			virtual bool setRenderTarget(video::ITexture* texture, bool clearBackBuffer = true,
 				bool clearZBuffer = true, SColor color = video::SColor(0, 0, 0, 0),
 				video::ITexture* depthStencil = 0) _IRR_OVERRIDE_;
@@ -341,6 +373,11 @@ namespace irr
 				SColor color = video::SColor(0, 0, 0, 0), video::ITexture* depthStencil = 0) _IRR_OVERRIDE_;
 			virtual bool setRenderTarget(E_RENDER_TARGET target, bool clearTarget = true,
 				bool clearZBuffer = true, SColor color = video::SColor(0, 0, 0, 0)) _IRR_OVERRIDE_;
+			//! One slice of a render-target array (addRenderTargetTexture(..., arraySlices > 1)) as
+			//! the only colour target, no depth: slices are filled by full-screen blits, the same
+			//! choice CD3D11Driver and CVulkanDriver make. Restore with setRenderTarget(0).
+			virtual bool setRenderTargetSlice(video::ITexture* texture, u32 arraySlice,
+				bool clearTarget = true, SColor color = video::SColor(0, 0, 0, 0)) _IRR_OVERRIDE_;
 
 			// --- IVideoDriver: 2D drawing ---
 			// All of these funnel through drawImmediate2D() (see the private section): same pipeline
@@ -476,8 +513,8 @@ namespace irr
 			//! Not part of IVideoDriver (see CD3D11Driver::getClipPlane, same reasoning: used by tests /
 			//! a future CD3D12MaterialRenderer rather than by the engine).
 			//! Inline (like getDevice()/getRootSignature() below): a direct call on a concrete
-			//! CD3D12Driver* (outside IVideoDriver virtuals) from another module (OuterSpaceTest) would
-			//! otherwise require a DLL export this class does not have.
+			//! CD3D12Driver* (outside IVideoDriver virtuals) from another module (a test executable,
+			//! say) would otherwise require a DLL export this class does not have.
 			void getClipPlane(u32 index, core::plane3df& plane, bool& enable) const
 			{
 				if (index > 2)
@@ -642,7 +679,7 @@ namespace irr
 			//! ETT_CUBE_ARRAY a multiple of 6; ETT_3D_ARRAY is accepted but treated as ETT_3D (see
 			//! CD3D12Texture.h -- no D3D API supports an array of 3D textures).
 			//! Virtual despite being outside IVideoDriver: CD3D12Driver isn't exported via a class
-			//! dllexport macro, so a direct call from OuterSpaceTest to a non-virtual method defined
+			//! dllexport macro, so a direct call from another module to a non-virtual method defined
 			//! out-of-line (CD3D12Driver.cpp) would be an unresolved symbol at link time -- calling
 			//! through the vtable of a virtual method needs no export (same reasoning as
 			//! setClipPlane()/addTexture() above, which also call unexported things like
@@ -792,9 +829,10 @@ namespace irr
 			UINT getCurrentFrameIndex() const { return CurrentFrameIndex; }
 			UINT getFrameCount() const { return NativeFrameCount; }
 
-			//! Generic root signature shared by all PSOs (see the header comment of CD3D12PSOCache.h
-			//! for its exact layout) and the associated cache. Exposed so D3D12 material renderers can
-			//! call CD3D12PSOCache::getOrCreate() directly.
+			//! The DEFAULT root signature -- the built-in material layout, see createRootSignature()
+			//! and the header comment of CD3D12PSOCache.h. NOT the signature every PSO uses: a user
+			//! shader has its own (CD3D12MaterialRenderer::RootSignature). Exposed alongside the PSO
+			//! cache so D3D12 material renderers can call CD3D12PSOCache::getOrCreate() directly.
 			ID3D12RootSignature* getRootSignature() const { return RootSignature.Get(); }
 			CD3D12PSOCache& getPSOCache() { return PSOCache; }
 
@@ -947,7 +985,58 @@ namespace irr
 			//! sampleCount (default 1) selects/creates the pool entry matching that sample count -- see
 			//! the SD3D12RTTDepthBuffer::SampleCount comment.
 			SD3D12RTTDepthBuffer* checkRTTDepthBuffer(const core::dimension2d<u32>& size, UINT sampleCount = 1);
+			//! Creates RootSignature, the DEFAULT layout: the 7 fixed driver parameters
+			//! (WorldConstantSlot..FogConstantSlot) and no user CBV table, with GS/HS/DS root access
+			//! denied. This is the signature the ~24 built-in materials share (none of them reflects a
+			//! cbuffer, and compileBuiltIn() only ever produces a VS+PS), and the one every path that
+			//! draws with the built-in solid shaders uses directly: getOrCreateAuxPSO() (shadow volumes,
+			//! occlusion queries) and drawStencilShadow(). Just getOrCreateRootSignature() on the
+			//! built-in layout key, so it populates the same cache rather than creating a private object.
 			bool createRootSignature();
+
+			//! Builds `renderer`'s own root signature (CD3D12MaterialRenderer::RootSignature) and its
+			//! per-draw table bind plan (UserCBVTables) from the cbuffers reflectCBuffer() found on each
+			//! stage. Emits the 7 fixed driver parameters, then one CBV b0..b7 descriptor table per
+			//! (stage, register space) pair that stage actually declares a cbuffer at -- walked in
+			//! E_D3D12_USER_CBV_STAGE order, space ascending, so the layout is a pure function of that
+			//! set. Root access is denied for GS/HS/DS when `renderer` has no such blob, and
+			//! ALLOW_STREAM_OUTPUT is set only for a material that has a GS.
+			//!
+			//! Deduplicates through getOrCreateRootSignature(): two materials whose shaders declare the
+			//! same (stage, space) pairs and have the same stages present share one ID3D12RootSignature.
+			//! Returns false (already logged) if serialization/creation fails -- the caller must then
+			//! not register the material, since getPSOForMaterial() cannot build a PSO without it.
+			bool buildMaterialRootSignature(CD3D12MaterialRenderer* renderer);
+
+			//! The root signature to build a PSO against, to hash into SPSOKey::RootSignatureHash and
+			//! to bind with SetGraphicsRootSignature() for a draw using `renderer` -- the SINGLE
+			//! definition of that choice, deliberately not spelled out at each of its call sites
+			//! (buildPSOKeyFromMaterial(), getPSOForMaterial(), bindDrawState(), runOcclusionQuery()).
+			//! D3D12 requires the root signature bound at draw time to be the PSO's, and the PSO cache
+			//! is keyed on it, so three separate copies of "renderer's own, or the default" would be
+			//! three chances to drift apart into a silently mismatched draw.
+			//!
+			//! Falls back to the default layout (RootSignature) for a null renderer -- a "foreign"
+			//! IMaterialRenderer or an unregistered MaterialType, which draws with the built-in
+			//! EMT_SOLID shaders (see choosePixelShaderForMaterial()) and therefore wants exactly the
+			//! signature those were compiled against.
+			ID3D12RootSignature* rootSignatureForRenderer(const CD3D12MaterialRenderer* renderer) const
+			{
+				return (renderer && renderer->RootSignature) ? renderer->RootSignature.Get() : RootSignature.Get();
+			}
+
+			//! Returns the cached root signature for `layoutKey`, creating it on first use. `layoutKey`
+			//! is the bitmask buildMaterialRootSignature() computes: bit
+			//! (stage*MaxUserShaderRegisterSpaces + space) set = that pair needs a CBV table, and bit
+			//! (UserCBVLayoutStageBit + stage) set = that stage's shader exists. Because the key fully
+			//! determines the parameter list, one entry per distinct layout is enough -- every built-in
+			//! material, and every user shader with the same cbuffer shape, resolves to the same object.
+			//! Returns nullptr on failure (already logged).
+			ID3D12RootSignature* getOrCreateRootSignature(u32 layoutKey);
+
+			//! Bit offset, inside a getOrCreateRootSignature() layout key, of the 5 "this stage's shader
+			//! exists" flags -- placed above the ED3D12UCS_COUNT*MaxUserShaderRegisterSpaces table bits.
+			static const u32 UserCBVLayoutStageBit = ED3D12UCS_COUNT * MaxUserShaderRegisterSpaces;
 
 			//! Compiles the mipmap-generation HLSL shader (D3D12MipGenShaderHLSL,
 			//! CD3D12DefaultShaders.h -- full-screen triangle from SV_VertexID, bilinear sampling of the
@@ -1043,6 +1132,25 @@ namespace irr
 			//! blob, reuses it afterward.
 			ID3D12PipelineState* getOrCreateComputePSO(ID3DBlob* computeShader);
 
+			//! Brings a compute buffer's device copy up to date (creating it on first use) and returns
+			//! it; 0 (logged) when the buffer is empty or the allocation failed. Mirrors
+			//! CD3D11Driver::prepareComputeBuffer(). Must be called OUTSIDE an UploadScope: creating
+			//! or updating a buffer opens one of its own and UploadMutex is not recursive.
+			CD3D12HardwareBuffer* prepareComputeBuffer(scene::IComputeBuffer* buffer);
+
+			//! The shared tail of every compute dispatch: prepares the slots' buffers, transitions
+			//! them, fills the three descriptor tables (16 SRV, 16 UAV, 8 CBV) from
+			//! ComputeDescriptorHeap with null descriptors in the unbound slots, runs the material's
+			//! OnSetConstants(), then Dispatch()es -- or ExecuteIndirect()s with `indirectArgs` -- on
+			//! an UploadScope list, UAV barriers after, and waits.
+			void dispatchBoundResources(const core::vector3d<u32>& groupCount,
+				CD3D12HardwareBuffer* indirectArgs, u32 indirectOffset);
+
+			//! Creates ComputeDescriptorHeap and the two null buffer descriptors on first use.
+			bool ensureComputeDescriptorHeap();
+			//! Creates the two ID3D12CommandSignatures (dispatch, draw-indexed) on first use.
+			bool ensureCommandSignatures();
+
 			//! Copies a CPU-only descriptor (SRV or UAV, same CBV/SRV/UAV heap as the CBVs -- see
 			//! allocateUserCBVTable()) into the next free slot of the current frame's shader-visible
 			//! heap. Generalization of allocateSRVTableSlot() for an already-resolved handle
@@ -1062,7 +1170,7 @@ namespace irr
 
 			//! Translates an E_COMPARISON_FUNC (SMaterial::ZBuffer) to the equivalent
 			//! D3D12_COMPARISON_FUNC, a direct mapping with no inversion -- same approach as
-			//! CD3D11Driver::getDepthFunction(). OuterSpace uses a reversed depth convention (see
+			//! CD3D11Driver::getDepthFunction(). This fork uses a reversed depth convention (see
 			//! clearZBuffer()/the SMaterial::ZBuffer=ECFN_GREATER default): this mapping just exposes the
 			//! comparison requested by the material faithfully; the "reversed" semantics come from the
 			//! 0.0f clear value and the projection matrix (CMatrix4::buildProjectionMatrixPerspectiveFovLH),
@@ -1113,12 +1221,31 @@ namespace irr
 			//! ring as-is).
 			bool growConstantRing(SD3D12FrameContext& frame, UINT64 minCapacity);
 
-			//! Maximum number of descriptors a single draw can consume in the frame's shader-visible heap:
-			//! the SRV t0..t8 table (MaxUserShaderTextureSlots) plus one CBV b0..b7 table
-			//! (MaxUserShaderCBVSlotsPerStage) for each of the 5 programmable stages (VS/PS/GS/HS/DS, see
-			//! allocateUserCBVTable() in bindDrawState()).
+			//! Worst case number of descriptors a single draw could consume in the frame's shader-visible
+			//! heap: the SRV t0..t8 table (MaxUserShaderTextureSlots) plus one CBV b0..b7 table
+			//! (MaxUserShaderCBVSlotsPerStage) for every (stage, register space) pair that could exist --
+			//! ED3D12UCS_COUNT stages (VS/PS/GS/HS/DS) x MaxUserShaderRegisterSpaces.
+			//!
+			//! bindDrawState() no longer reserves this: with a per-material root signature it knows
+			//! exactly which tables the material declares (CD3D12MaterialRenderer::UserCBVTables) and
+			//! reserves only those, so a built-in material asks for MaxUserShaderTextureSlots rather
+			//! than this bound. What still uses it is the compute path
+			//! (dispatchComputeShader()/readComputeShaderOutput()), as a deliberately conservative
+			//! bound over the compute root signature's much smaller SRV+UAV+CBV table set --
+			//! reserveShaderVisibleSRVDescriptors() only ENSURES capacity, it does not consume, so
+			//! over-reserving there costs nothing but an earlier heap growth.
+			//!
+			//! The MaxUserShaderRegisterSpaces factor is NOT optional and was missing here: this used to
+			//! reserve ED3D12UCS_COUNT tables while bindDrawState() allocated
+			//! ED3D12UCS_COUNT * MaxUserShaderRegisterSpaces of them, so allocateUserCBVTable() could
+			//! still hit its own growShaderVisibleSRVHeap() path midway through a draw -- exactly what
+			//! reserving up front is meant to prevent (see reserveShaderVisibleSRVDescriptors() below).
+			//! The SRV table handle already written into root argument TextureTableSlot then pointed
+			//! into the abandoned heap: EXECUTION ERROR #554 SET_DESCRIPTOR_HEAP_INVALID / wrong
+			//! textures, varying from frame to frame with when the growth happened.
 			static const UINT MaxShaderVisibleSRVDescriptorsPerDraw =
-				MaxUserShaderTextureSlots + 5 * MaxUserShaderCBVSlotsPerStage;
+				MaxUserShaderTextureSlots +
+				ED3D12UCS_COUNT * MaxUserShaderRegisterSpaces * MaxUserShaderCBVSlotsPerStage;
 
 			//! Ensures `frame`'s shader-visible heap has room for `count` more descriptors, growing it if
 			//! needed.
@@ -1140,7 +1267,7 @@ namespace irr
 			//! the first one (t0) to pass to SetGraphicsRootDescriptorTable -- the table covers t0..t8
 			//! (see createRootSignature()). All 9 slots are always filled (rather than precisely
 			//! reflecting the registers used by the current shader): this makes non-contiguous registers
-			//! (e.g. GasGiant skipping t2) transparent for free, since D3D12 only requires the root
+			//! (e.g. a shader skipping t2) transparent for free, since D3D12 only requires the root
 			//! signature to be a superset, not an exact match -- see the MaxUserShaderTextureSlots
 			//! comment. Grows the frame's shader-visible heap on demand (growShaderVisibleSRVHeap()) if
 			//! needed -- only returns a null handle if THAT growth fails, or if no fallback texture is
@@ -1233,9 +1360,13 @@ namespace irr
 				scene::E_PRIMITIVE_TYPE primitiveType = scene::EPT_TRIANGLES);
 
 			//! The part of bindDrawState() that doesn't pick a PSO -- just the CBV b0/b1/b2, the SRV t0
-			//! table and the sampler s0 table. Used directly by shadow volumes/occlusion queries, which
-			//! need to force a specific auxiliary PSO (getOrCreateAuxPSO()) rather than the one from
-			//! getPSOForMaterial() -- these callers have no relevant SMaterial; a default layer
+			//! table and the sampler s0 table. Used directly by shadow volumes, which need to force a
+			//! specific auxiliary PSO (getOrCreateAuxPSO()) rather than the one from
+			//! getPSOForMaterial(). Occlusion queries USED to be the other such caller and no longer
+			//! are: runOcclusionQuery() goes through the full bindDrawState() instead, because
+			//! partially reproducing the bind protocol here is what made it drop the lighting/fog CBVs
+			//! and then the user CBV tables -- see its comment.
+			//! A caller of this function has no relevant SMaterial; a default layer
 			//! (SMaterialLayer(), the same "normal" settings as a fresh SMaterial) is enough for them
 			//! since they don't depend on texture filtering (stencil marking with no color write, debug
 			//! lines).
@@ -1316,6 +1447,9 @@ namespace irr
 			//! by zero, producing an infinite scale and geometry projected off-screen. Irrlicht's native
 			//! UI never touches the viewport, which is why it kept rendering fine.
 			virtual void setViewPort(const core::rect<s32>& area) _IRR_OVERRIDE_;
+
+			//! Up to 16 viewports (D3D11.x feature set); the shader picks one with SV_ViewportArrayIndex.
+			virtual void setViewPorts(const core::array<core::rect<s32> >& areas) _IRR_OVERRIDE_;
 			virtual const core::rect<s32>& getViewPort() const _IRR_OVERRIDE_;
 
 		private:
@@ -1334,6 +1468,18 @@ namespace irr
 			ComPtr<IDXGIFactory6> DXGIFactory;
 			ComPtr<IDXGIAdapter4> Adapter;
 			ComPtr<ID3D12Device2> Device;
+			//! D3D12_FEATURE_D3D12_OPTIONS of Device, queried once in initDriver(): logic ops,
+			//! conservative rasterization tier, ROVs, pixel-shader stencil ref, tiled resources tier.
+			D3D12_FEATURE_DATA_D3D12_OPTIONS FeatureOptions = {};
+			//! One-time warnings for a material asking for what the device lacks (const key builder).
+			mutable bool WarnedNoLogicOp = false;
+			mutable bool WarnedLogicOpFormat = false;
+			mutable bool WarnedNoConservativeRaster = false;
+			bool WarnedSrc1OnMrtSlot = false;
+			//! D3D12_FORMAT_SUPPORT2_OUTPUT_MERGER_LOGIC_OP per format, asked once each: a PSO with a
+			//! logic op on a format without it is refused by the runtime, so the key builder drops it.
+			mutable std::map<DXGI_FORMAT, bool> LogicOpFormatSupport;
+			bool formatSupportsLogicOp(DXGI_FORMAT format) const;
 
 			ComPtr<ID3D12CommandQueue> DirectQueue;
 			ComPtr<IDXGISwapChain4> SwapChain;
@@ -1418,7 +1564,7 @@ namespace irr
 			//! or D3D12 rejects it. Three possible sources, two different formats:
 			//!   - the back buffer's depth buffer and checkRTTDepthBuffer()'s pool: DepthStencilFormat.
 			//!   - a depth texture passed explicitly to setRenderTarget(..., depthStencil): its own
-			//!     format (OuterSpace's G-buffer creates it as D32_FLOAT), which has no reason to match
+			//!     format (a deferred G-buffer typically creates it as D32_FLOAT), which has no reason to match
 			//!     DepthStencilFormat.
 			//! buildPSOKeyFromMaterial() used to read DepthStencilFormat unconditionally, so every draw
 			//! in the deferred render pass got a PSO in D24_UNORM_S8_UINT against a D32_FLOAT DSV and was
@@ -1534,9 +1680,18 @@ namespace irr
 			//! once per post-process pass and per frame. One warning is enough.
 			bool WarnedDepthStencilWithoutDSV = false;
 
-			// --- Generic root signature + PSO cache ---
-			// See the header comment of CD3D12PSOCache.h for the exact layout.
+			// --- Root signatures + PSO cache ---
+			// See the header comment of CD3D12PSOCache.h for the layout.
+			//! DEFAULT root signature (see createRootSignature()): the 7 fixed driver parameters, no
+			//! user CBV table. Shared by the ~24 built-in materials and used directly by the paths that
+			//! draw with the built-in solid shaders (getOrCreateAuxPSO()/drawStencilShadow()). A user
+			//! shader carries its OWN instead -- CD3D12MaterialRenderer::RootSignature. Also the
+			//! fallback for a "foreign" IMaterialRenderer, which has no blobs to build one from.
 			ComPtr<ID3D12RootSignature> RootSignature;
+			//! Root signatures by layout key, so materials with identical cbuffer shapes share one
+			//! object instead of each creating its own -- see getOrCreateRootSignature(). Owns the
+			//! signatures; CD3D12MaterialRenderer::RootSignature is a counted reference into this.
+			std::unordered_map<u32, ComPtr<ID3D12RootSignature>> RootSignatureCache;
 			CD3D12PSOCache PSOCache;
 
 			// --- Mipmap generation via pixel-shader blit (see createMipGenPipeline() and
@@ -1567,6 +1722,38 @@ namespace irr
 			ComPtr<ID3D12RootSignature> ComputeRootSignature;
 			std::unordered_map<size_t, ComPtr<ID3D12PipelineState>> ComputePSOCache;
 
+			//! The multi-slot bindings for dispatchComputeShaderBound(), valid until
+			//! unbindComputeResources(). A slot holds a buffer or a texture, never both.
+			struct SD3D12ComputeSlot
+			{
+				scene::IComputeBuffer* Buffer = nullptr;
+				ITexture* Texture = nullptr;
+			};
+			SD3D12ComputeSlot ComputeSRV[EMCS_MAX_COMPUTE_SRV_SLOTS];
+			SD3D12ComputeSlot ComputeUAV[EMCS_MAX_COMPUTE_UAV_SLOTS];
+
+			//! Shader-visible heap the compute dispatches take their tables from: a ring of
+			//! ComputeDescriptorsPerDispatch-sized blocks, rewound when full (safe, every dispatch
+			//! is waited on before the next). Separate from the per-frame heaps on purpose: growing
+			//! those mid-scene rebinds heaps behind the frame command list's back.
+			static const UINT ComputeDescriptorsPerDispatch =
+				EMCS_MAX_COMPUTE_SRV_SLOTS + EMCS_MAX_COMPUTE_UAV_SLOTS + MaxUserShaderCBVSlotsPerStage;
+			static const UINT ComputeDescriptorBlocks = 64;
+			ComPtr<ID3D12DescriptorHeap> ComputeDescriptorHeap;
+			D3D12_CPU_DESCRIPTOR_HANDLE ComputeDescriptorHeapStartCPU = {};
+			D3D12_GPU_DESCRIPTOR_HANDLE ComputeDescriptorHeapStartGPU = {};
+			UINT ComputeDescriptorNext = 0;
+			//! Null buffer SRV/UAV in the CPU-only heap, copied into every unbound slot: a shader
+			//! reading one gets zeros, writing one writes nowhere -- the D3D11 null-view semantics.
+			bool HasNullBufferViews = false;
+			UINT NullBufferSRVIndex = 0;
+			UINT NullBufferUAVIndex = 0;
+			CD3DX12_CPU_DESCRIPTOR_HANDLE NullBufferSRV;
+			CD3DX12_CPU_DESCRIPTOR_HANDLE NullBufferUAV;
+
+			ComPtr<ID3D12CommandSignature> DispatchIndirectSignature;
+			ComPtr<ID3D12CommandSignature> DrawIndexedIndirectSignature;
+
 			// --- Material registry (built-in types + user shaders) ---
 			// Each CD3D12MaterialRenderer compiles its own blobs (see createBuiltInMaterialRenderers()/
 			// CD3D12MaterialRenderer::compileBuiltIn()) so the MaterialRenderers registry below is the
@@ -1580,28 +1767,41 @@ namespace irr
 			//! MaterialRenderers[material.MaterialType], which no longer distinguishes built-in from
 			//! user (see choosePixelShaderForMaterial()).
 			static const s32 UserShaderMaterialTypeBase = 24;
-			//! Root parameter index (see createRootSignature()) of the CBV b0..b7 descriptor table
-			//! reserved for user shader VS cbuffers AT A GIVEN SPACE -- indexed by
-			//! CD3D12MaterialRenderer::SD3D12UserShaderCBuffer::Space (0..MaxUserShaderRegisterSpaces-1,
-			//! see MaxUserShaderCBVSlotsPerStage/MaxUserShaderRegisterSpaces, CD3D12MaterialRenderer.h)
-			//! -- fixed shared slots rather than a root signature per shader. PS/GS/HS/DS below are
-			//! the same shape, one array per stage. LightingConstantSlot/FogConstantSlot (further
-			//! down, currently hardcoded 25/26 in bindLighting()/bindFog()) come right after these
-			//! 5*MaxUserShaderRegisterSpaces slots -- renumber them too if this count changes.
-			static constexpr UINT UserShaderConstantSlotVS[MaxUserShaderRegisterSpaces] = { 5, 6, 7, 8 };
-			static constexpr UINT UserShaderConstantSlotPS[MaxUserShaderRegisterSpaces] = { 9, 10, 11, 12 };
-			//! Same tables as VS/PS above, but visible on the GS side (see
-			//! CD3D12MaterialRenderer::GS/GSBuffers).
-			static constexpr UINT UserShaderConstantSlotGS[MaxUserShaderRegisterSpaces] = { 13, 14, 15, 16 };
-			//! Same, for HS/DS (see CD3D12MaterialRenderer::HS/DS, HSBuffers/DSBuffers).
-			static constexpr UINT UserShaderConstantSlotHS[MaxUserShaderRegisterSpaces] = { 17, 18, 19, 20 };
-			static constexpr UINT UserShaderConstantSlotDS[MaxUserShaderRegisterSpaces] = { 21, 22, 23, 24 };
-			//! Root parameter indices of the driver's own Lighting (b3)/Fog (b4) CBVs -- see
-			//! createRootSignature()'s rootParams[25]/[26] and bindLighting()/bindFog(). Named here
-			//! (rather than the literal 10/11 these replaced) so the 5*MaxUserShaderRegisterSpaces
-			//! shift when that constant changes has exactly one place to update.
-			static const UINT LightingConstantSlot = 25;
-			static const UINT FogConstantSlot = 26;
+			// --- Fixed root parameter indices, identical in EVERY material root signature ---
+			// buildMaterialRootSignature() always emits these 7 first and in this order, so
+			// bindTransformsAndTexture()/bindLighting()/bindFog() can hardcode them regardless of which
+			// material is bound. They are emitted even for a shader that reads none of them: a root
+			// signature only has to be a SUPERSET of what the shader declares (an unused parameter
+			// costs its DWORDs and nothing else), whereas a MISSING one fails
+			// CreateGraphicsPipelineState outright. Only the user CBV tables below are pruned.
+			//! CBV b0, space DriverConstantRegisterSpace -- per-object world matrix, VS.
+			static const UINT WorldConstantSlot = 0;
+			//! CBV b1 -- per-frame view+projection+camera position, VS.
+			static const UINT ViewProjConstantSlot = 1;
+			//! Descriptor table, MaxUserShaderTextureSlots SRVs t0.. in space0 -- ALL stages (vertex
+			//! texture fetch, see createRootSignature()'s note on displacement-mapped terrain).
+			static const UINT TextureTableSlot = 2;
+			//! Descriptor table, MaxUserShaderTextureSlots samplers s0.. in space0 -- ALL stages.
+			static const UINT SamplerTableSlot = 3;
+			//! CBV b2 -- user clip planes, PS.
+			static const UINT ClipPlaneConstantSlot = 4;
+			//! CBV b3 -- dynamic lighting, ALL (per-vertex in VSMain, per-pixel in
+			//! PSMainNormalMap*/PSMainParallaxMap*).
+			static const UINT LightingConstantSlot = 5;
+			//! CBV b4 -- fog, PS.
+			static const UINT FogConstantSlot = 6;
+			//! First root parameter index available to a material's own user CBV tables. Everything
+			//! from here up is per-material: see CD3D12MaterialRenderer::UserCBVTables, filled by
+			//! buildMaterialRootSignature() with one entry per (stage, register space) pair the
+			//! shader actually declares a cbuffer at -- so a built-in material stops here (7 root
+			//! parameters, 12 DWORDs) instead of carrying 20 unused tables.
+			static const UINT FirstUserCBVRootSlot = 7;
+			//! Upper bound on a material root signature's parameter count -- the 7 fixed slots plus
+			//! the worst case of every stage declaring a cbuffer in every space. Only sizes the
+			//! D3D12_ROOT_PARAMETER1 array in buildMaterialRootSignature(); real signatures are
+			//! almost always far smaller.
+			static const UINT MaxRootParameters =
+				FirstUserCBVRootSlot + ED3D12UCS_COUNT * MaxUserShaderRegisterSpaces;
 			//! D3D12 counterpart of CNullDriver::MaterialRenderers, at the SAME index: NativeRenderers[i]
 			//! is the CD3D12MaterialRenderer* for MaterialRenderers[i].Renderer when that renderer was
 			//! actually built by this driver (compiled blobs + reflection needed by
@@ -1694,6 +1894,21 @@ namespace irr
 			//! bindings). Without these, anything following a mid-frame flush would draw with no render
 			//! target.
 			D3D12_CPU_DESCRIPTOR_HANDLE CurrentRTVHandles[8] = {};
+
+			//! Per-target blend and colour mask of the bound MRT set, from the IRenderTarget entries of
+			//! the last setRenderTarget(array); copied into SPSOKey::TargetOverrideMask and friends by
+			//! buildPSOKeyFromMaterial(). Bit 0 is never set (slot 0 follows the material, as on
+			//! D3D11); cleared by every other setRenderTarget() form.
+			struct SD3D12MrtBlend
+			{
+				UINT8 Mask = 0;
+				BOOL Enable[8] = {};
+				D3D12_BLEND Src[8] = {};
+				D3D12_BLEND Dest[8] = {};
+				UINT8 Write[8] = {};
+				void reset() { Mask = 0; }
+			};
+			SD3D12MrtBlend MrtBlend;
 
 			// --- Occlusion queries ---
 			// A single ID3D12QueryHeap (D3D12_QUERY_TYPE_BINARY_OCCLUSION) + one shared READBACK

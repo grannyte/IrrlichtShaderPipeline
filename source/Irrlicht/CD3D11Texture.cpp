@@ -84,8 +84,12 @@ namespace irr
 				Device->GetImmediateContext(&Context);
 			}
 
-			// Load a dds file
-			if (core::hasFileExtension(name, "dds") && image)
+			// A raw .dds file: block-compressed, a wide uncompressed format, a cube map, an array or
+			// a volume. The loader hands over the whole file (see CImageLoaderDDS) and
+			// DDSTextureLoader parses it, creating the resource with every mip, face and slice, plus
+			// its shader resource view. A plain 2D uncompressed .dds arrives as pixels like any other
+			// image and takes the createTexture() path below.
+			if (image && image->isCompressed())
 			{
 				CreateDDSTextureFromMemory(
 					Device,
@@ -95,6 +99,7 @@ namespace irr
 					&SRView,
 					0
 				);
+				image->unlock();
 
 				// CreateDDSTextureFromMemory leaves Texture untouched on failure.
 				if (!Texture)
@@ -103,19 +108,46 @@ namespace irr
 					return;
 				}
 
-				D3D11_TEXTURE2D_DESC desc;
-				((ID3D11Texture2D*)Texture)->GetDesc(&desc);
-				NumberOfMipLevels = desc.MipLevels;
-				Size.Width = desc.Width;
-				Size.Height = desc.Height;
+				Texture->GetType(&TextureDimension);
+				DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
+				if (TextureDimension == D3D11_RESOURCE_DIMENSION_TEXTURE3D)
+				{
+					D3D11_TEXTURE3D_DESC desc;
+					((ID3D11Texture3D*)Texture)->GetDesc(&desc);
+					NumberOfMipLevels = desc.MipLevels;
+					Size.Width = desc.Width;
+					Size.Height = desc.Height;
+					NumberOfArraySlices = 1;
+					TextureType = ETT_3D;
+					format = desc.Format;
+				}
+				else
+				{
+					D3D11_TEXTURE2D_DESC desc;
+					((ID3D11Texture2D*)Texture)->GetDesc(&desc);
+					NumberOfMipLevels = desc.MipLevels;
+					Size.Width = desc.Width;
+					Size.Height = desc.Height;
+					NumberOfArraySlices = desc.ArraySize;
+					const bool cube = (desc.MiscFlags & D3D11_RESOURCE_MISC_TEXTURECUBE) != 0;
+					TextureType = cube ? ((desc.ArraySize > 6) ? ETT_CUBE_ARRAY : ETT_CUBE) :
+						((desc.ArraySize > 1) ? ETT_2D_ARRAY : ETT_2D);
+					format = desc.Format;
+				}
+				OriginalSize = Size;
 				MipMaps = NumberOfMipLevels > 1;
 				HardwareMipMaps = false;
 
-				// get color format
-				ColorFormat = Driver->getColorFormatFromD3DFormat(desc.Format);
+				// The loader's format wins where DXGI cannot tell: DXT2/DXT4 (premultiplied alpha)
+				// share BC2/BC3 with DXT3/DXT5.
+				ColorFormat = Driver->getColorFormatFromD3DFormat(format);
+				const ECOLOR_FORMAT loaded = image->getColorFormat();
+				if (loaded == ECF_DXT2 || loaded == ECF_DXT4)
+					ColorFormat = loaded;
+				HasAlpha = IImage::hasAlphaFormat(ColorFormat);
 
 				// This path bypasses createTexture(), which is what normally sets Pitch.
-				setPitch(desc.Format);
+				setPitch(format);
 			}
 			else if (image)
 			{
@@ -263,8 +295,19 @@ namespace irr
 			if (RTView)
 				RTView->Release();
 
+			for (u32 i = 0; i < SliceRTViews.size(); ++i)
+				if (SliceRTViews[i])
+					SliceRTViews[i]->Release();
+			SliceRTViews.clear();
+
 			if (SRView)
 				SRView->Release();
+
+			if (ResolvedSRView)
+				ResolvedSRView->Release();
+
+			if (ResolvedTexture)
+				ResolvedTexture->Release();
 
 			if (UAView)
 				UAView->Release();
@@ -288,9 +331,51 @@ namespace irr
 			return RTView;
 		}
 
+		// Rendering into a slice, rather than copying into it, makes the source format irrelevant.
+		ID3D11RenderTargetView* CD3D11Texture::getRenderTargetView(u32 arraySlice)
+		{
+			if (arraySlice >= NumberOfArraySlices || !Texture || !Device)
+				return 0;
+
+			if (SliceRTViews.size() < NumberOfArraySlices)
+			{
+				const u32 had = SliceRTViews.size();
+				SliceRTViews.set_used(NumberOfArraySlices);
+				for (u32 i = had; i < NumberOfArraySlices; ++i)
+					SliceRTViews[i] = 0;
+			}
+
+			if (!SliceRTViews[arraySlice])
+			{
+				D3D11_TEXTURE2D_DESC desc;
+				((ID3D11Texture2D*)Texture)->GetDesc(&desc);
+
+				D3D11_RENDER_TARGET_VIEW_DESC rtvDesc;
+				ZeroMemory(&rtvDesc, sizeof(rtvDesc));
+				rtvDesc.Format = desc.Format;
+				rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
+				rtvDesc.Texture2DArray.MipSlice = 0;
+				rtvDesc.Texture2DArray.FirstArraySlice = arraySlice;
+				rtvDesc.Texture2DArray.ArraySize = 1;
+
+				if (FAILED(Device->CreateRenderTargetView(Texture, &rtvDesc, &SliceRTViews[arraySlice])))
+					return 0;
+			}
+
+			return SliceRTViews[arraySlice];
+		}
+
 		//! return shader resource view
 		ID3D11ShaderResourceView* CD3D11Texture::getShaderResourceView() const
 		{
+			// A multisampled target is read through its resolved twin, refreshed on every bind:
+			// there is no "changed since the last resolve" tracking, as on the D3D12 side.
+			if (ResolvedSRView && ResolvedTexture)
+			{
+				Context->ResolveSubresource(ResolvedTexture, 0, Texture, 0, ResolveFormat);
+				return ResolvedSRView;
+			}
+
 			// Emulate "auto" mipmap generation
 			if (IsRenderTarget && SRView && MipMaps)
 				Context->GenerateMips(SRView);
@@ -743,25 +828,7 @@ namespace irr
 
 			// get color format
 			ColorFormat = Driver->getColorFormatFromD3DFormat(format);
-
-			switch (ColorFormat)
-			{
-			case ECF_A8R8G8B8:
-			case ECF_A1R5G5B5:
-			case ECF_DXT1:
-			case ECF_DXT2:
-			case ECF_DXT3:
-			case ECF_DXT4:
-			case ECF_DXT5:
-			case ECF_BC7_U:
-			case ECF_BC7_S:
-			case ECF_A16B16G16R16F:
-			case ECF_A32B32G32R32F:
-				HasAlpha = true;
-				break;
-			default:
-				break;
-			}
+			HasAlpha = IImage::hasAlphaFormat(ColorFormat);
 
 			setPitch(format);
 
@@ -1001,6 +1068,20 @@ namespace irr
 					dsDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DARRAY;
 					dsDesc.Texture2DArray.ArraySize = this->NumberOfArraySlices;
 				}
+				// A multisampled depth buffer (the pooled partner of a multisampled render target)
+				// needs the MS view dimension, or the view is refused and the null view crashes
+				// the next ClearDepthStencilView().
+				if (SampleCount > 1)
+				{
+					if (TextureType == ETT_2D_ARRAY)
+					{
+						dsDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DMSARRAY;
+						dsDesc.Texture2DMSArray.FirstArraySlice = 0;
+						dsDesc.Texture2DMSArray.ArraySize = this->NumberOfArraySlices;
+					}
+					else
+						dsDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DMS;
+				}
 				hr = Device->CreateDepthStencilView(Texture, &dsDesc, &dsView);
 
 				if (FAILED(hr))
@@ -1072,6 +1153,53 @@ namespace irr
 			else if (format == DXGI_FORMAT_R8G8B8A8_UNORM)
 			{
 				format = DXGI_FORMAT_B8G8R8A8_UNORM;
+			}
+
+			// A multisampled colour target cannot be sampled as a Texture2D: it gets a single-sample
+			// twin that getShaderResourceView() resolves into on every shader bind, the explicit
+			// resolve CD3D12Texture::resolveIfNeeded() and the Vulkan resolve attachment perform.
+			if (ResolvedSRView)
+			{
+				ResolvedSRView->Release();
+				ResolvedSRView = 0;
+			}
+			if (ResolvedTexture)
+			{
+				ResolvedTexture->Release();
+				ResolvedTexture = 0;
+			}
+			if (IsRenderTarget && SampleCount > 1 && NumberOfArraySlices == 1 && TextureType == ETT_2D)
+			{
+				D3D11_TEXTURE2D_DESC msDesc;
+				((ID3D11Texture2D*)Texture)->GetDesc(&msDesc);
+				D3D11_TEXTURE2D_DESC resolvedDesc = msDesc;
+				resolvedDesc.SampleDesc.Count = 1;
+				resolvedDesc.SampleDesc.Quality = 0;
+				resolvedDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+				resolvedDesc.MiscFlags = 0;
+				resolvedDesc.MipLevels = 1;
+				ResolveFormat = msDesc.Format;
+
+				hr = Device->CreateTexture2D(&resolvedDesc, NULL, &ResolvedTexture);
+				if (SUCCEEDED(hr))
+				{
+					D3D11_SHADER_RESOURCE_VIEW_DESC resolvedSrv;
+					::ZeroMemory(&resolvedSrv, sizeof(resolvedSrv));
+					resolvedSrv.Format = format;
+					resolvedSrv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+					resolvedSrv.Texture2D.MipLevels = 1;
+					hr = Device->CreateShaderResourceView(ResolvedTexture, &resolvedSrv, &ResolvedSRView);
+				}
+				if (FAILED(hr))
+				{
+					logFormatError(hr, "Could not create the resolve texture of a multisampled render target");
+					if (ResolvedSRView)
+						ResolvedSRView->Release();
+					if (ResolvedTexture)
+						ResolvedTexture->Release();
+					ResolvedSRView = 0;
+					ResolvedTexture = 0;
+				}
 			}
 
 			// create shader resource view

@@ -15,6 +15,19 @@ namespace irr
 {
 	class IEventReceiver;
 
+	//! Colour space and bit depth of the swapchain, SIrrlichtCreationParameters::ColorSpace.
+	enum E_SWAPCHAIN_COLOR_SPACE
+	{
+		//! 8-bit UNORM back buffer, values written as-is (today's default).
+		ESCS_SRGB_NONLINEAR = 0,
+		//! 8-bit sRGB back buffer: the hardware encodes linear values on write.
+		ESCS_SRGB_LINEAR,
+		//! 16-bit float back buffer, linear scRGB, values above 1 allowed (HDR displays).
+		ESCS_SCRGB_LINEAR,
+		//! 10-bit back buffer, ST.2084 (PQ) transfer, Rec.2020 primaries (HDR10 displays).
+		ESCS_HDR10_ST2084
+	};
+
 	//! Structure for holding Irrlicht Device creation parameters.
 	/** This structure is used in the createDeviceEx() function. */
 	struct SIrrlichtCreationParameters
@@ -49,6 +62,8 @@ namespace irr
 			Monitor(0),
 			DriverMultithreaded(false),
 			UsePerformanceTimer(true),
+			ColorSpace(ESCS_SRGB_NONLINEAR),
+			PreferShaderModel6(false),
 			SDK_version_do_not_use(IRRLICHT_SDK_VERSION)
 		{
 		}
@@ -83,6 +98,8 @@ namespace irr
 			DisplayAdapter = other.DisplayAdapter;
 			Monitor = other.Monitor;
 			UsePerformanceTimer = other.UsePerformanceTimer;
+			ColorSpace = other.ColorSpace;
+			PreferShaderModel6 = other.PreferShaderModel6;
 			return *this;
 		}
 
@@ -300,6 +317,18 @@ namespace irr
 		problems with speed stepping and other techniques.
 		*/
 		bool UsePerformanceTimer;
+
+		//! Colour space and bit depth of the swapchain (D3D11, D3D12, Vulkan).
+		/** Default ESCS_SRGB_NONLINEAR is today's 8-bit back buffer. The value actually obtained
+		is getDriverAttributes() "SwapchainColorSpace": a driver falls back to the default with a
+		warning when the display or the API refuses. Unrelated to HandleSRGB, which is about
+		textures. */
+		E_SWAPCHAIN_COLOR_SPACE ColorSpace;
+
+		//! D3D12 only: compile user shaders as shader model 6 through DXC when dxcompiler.dll
+		//! (and dxil.dll) sit next to the executable; FXC / SM 5.1 otherwise.
+		/** Off = FXC always, today's behaviour. EVDF_SHADER_MODEL_6 reports whether it took. */
+		bool PreferShaderModel6;
 
 		//! Don't use or change this parameter.
 		/** Always set it to IRRLICHT_SDK_VERSION, which is done by default.

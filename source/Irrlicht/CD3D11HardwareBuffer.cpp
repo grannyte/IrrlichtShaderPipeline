@@ -196,6 +196,7 @@ namespace irr
 					if (TempStagingBuffer)
 					{
 						TempStagingBuffer = NULL;
+						StagingLocked = false;
 					}
 
 					if (SRView)
@@ -230,6 +231,7 @@ namespace irr
 				if (TempStagingBuffer)
 				{
 					TempStagingBuffer = NULL;
+					StagingLocked = false;
 				}
 
 				if (SRView)
@@ -288,8 +290,12 @@ namespace irr
 			}
 			else
 			{
-				TempStagingBuffer = std::make_shared<CD3D11HardwareBuffer>(Driver, EHBT_SYSTEM, scene::EHM_STAGING, Size, 0,Stride);
+				// Reused across locks: creating a staging buffer per readback costs a driver
+				// allocation every frame. Resize/mapping changes null it above, so a survivor fits.
+				if (!TempStagingBuffer)
+					TempStagingBuffer = std::make_shared<CD3D11HardwareBuffer>(Driver, EHBT_SYSTEM, scene::EHM_STAGING, Size, 0, Stride);
 				TempStagingBuffer->copyFromBuffer(shared_from_this(), 0, 0, Size);
+				StagingLocked = true;
 				return TempStagingBuffer->lock(readOnly);
 			}
 		}
@@ -301,19 +307,52 @@ namespace irr
 				return;
 
 			// If using staging, return its pointer
-			if (TempStagingBuffer)
+			if (StagingLocked && TempStagingBuffer)
 			{
 				TempStagingBuffer->unlock();
 
 				// If write, copy staging to this
 				if (LastMapDirection & D3D11_MAP_WRITE)
 					copyFromBuffer(TempStagingBuffer, 0, 0, Size);
-				TempStagingBuffer = NULL;
+				StagingLocked = false;
 				return;
 			}
 
 			// Otherwise, unmap this
 			Context->Unmap(Buffer, 0);
+		}
+
+		bool CD3D11HardwareBuffer::beginAsyncReadback(u32 slot)
+		{
+			if (!Buffer || slot >= ASYNC_READBACK_SLOTS || Mapping == scene::EHM_STAGING)
+				return false;
+
+			// Sized to the live buffer: a resize since the last copy makes the old staging copy a lie.
+			if (!AsyncStaging[slot] || AsyncStaging[slot]->size() != Size || !AsyncStaging[slot]->getBuffer())
+				AsyncStaging[slot] = std::make_shared<CD3D11HardwareBuffer>(Driver, EHBT_SYSTEM, scene::EHM_STAGING, Size, 0, Stride);
+			if (!AsyncStaging[slot]->getBuffer())
+				return false;
+
+			AsyncStaging[slot]->copyFromBuffer(shared_from_this(), 0, 0, Size);
+			return true;
+		}
+
+		bool CD3D11HardwareBuffer::tryAsyncReadback(u32 slot, void* dst, u32 bytes, bool wait)
+		{
+			if (slot >= ASYNC_READBACK_SLOTS || !dst || !AsyncStaging[slot] || !AsyncStaging[slot]->getBuffer())
+				return false;
+
+			// DO_NOT_WAIT turns the usual readback stall into WAS_STILL_DRAWING, which is the poll.
+			D3D11_MAPPED_SUBRESOURCE mappedData;
+			HRESULT hr = Context->Map(AsyncStaging[slot]->getBuffer(), 0, D3D11_MAP_READ,
+				wait ? 0 : D3D11_MAP_FLAG_DO_NOT_WAIT, &mappedData);
+			if (FAILED(hr))
+				return false;
+
+			const u32 avail = AsyncStaging[slot]->size();
+			memcpy(dst, mappedData.pData, bytes < avail ? bytes : avail);
+			Context->Unmap(AsyncStaging[slot]->getBuffer(), 0);
+			return true;
 		}
 
 		//! Copy data from system memory
@@ -354,6 +393,7 @@ namespace irr
 				if (TempStagingBuffer)
 				{
 					TempStagingBuffer = NULL;
+					StagingLocked = false;
 				}
 
 				if (SRView)
@@ -501,6 +541,14 @@ namespace irr
 						desc.StructureByteStride = 0;
 						desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
 					}
+					// D3D11 forbids MISC_BUFFER_STRUCTURED together with BIND_VERTEX_BUFFER, so a
+					// compute-written vertex stream has to be a raw buffer instead of a structured one.
+					else if (Flags & EHBF_VERTEX_ADDITIONAL_BIND)
+					{
+						desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
+						desc.StructureByteStride = 0;
+						desc.BindFlags |= D3D11_BIND_VERTEX_BUFFER;
+					}
 					break;
 			case EHBT_SHADER_RESOURCE:
 				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
@@ -574,9 +622,9 @@ namespace irr
 				if (Flags & (EHBF_COMPUTE_APPEND | EHBF_COMPUTE_CONSUME))
 					UAVDesc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_APPEND;
 
-				if (Flags & EHBF_DRAW_INDIRECT_ARGS)
+				if (Flags & (EHBF_DRAW_INDIRECT_ARGS | EHBF_VERTEX_ADDITIONAL_BIND))
 				{
-					// Raw args buffer: no structure stride to divide by.
+					// Raw view: no structure stride to divide by.
 					UAVDesc.Format = DXGI_FORMAT_R32_TYPELESS;
 					UAVDesc.Buffer.Flags |= D3D11_BUFFER_UAV_FLAG_RAW;
 					UAVDesc.Buffer.NumElements = desc.ByteWidth / 4;
@@ -603,6 +651,25 @@ namespace irr
 				// rather than falling into the divide-by-stride below.
 				if (Flags & EHBF_DRAW_INDIRECT_ARGS)
 					return true;
+
+				// A vertex-bindable compute buffer is raw too, so its SRV must be BUFFEREX/raw.
+				if (Flags & EHBF_VERTEX_ADDITIONAL_BIND)
+				{
+					D3D11_SHADER_RESOURCE_VIEW_DESC RawSRVDesc;
+					ZeroMemory(&RawSRVDesc, sizeof(RawSRVDesc));
+					RawSRVDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+					RawSRVDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
+					RawSRVDesc.BufferEx.NumElements = desc.ByteWidth / 4;
+					RawSRVDesc.BufferEx.Flags = D3D11_BUFFEREX_SRV_FLAG_RAW;
+
+					hr = Device->CreateShaderResourceView(Buffer, &RawSRVDesc, &SRView);
+					if (FAILED(hr))
+					{
+						os::Printer::log("Error creating raw shader resource view for buffer", ELL_ERROR);
+						return false;
+					}
+					return true;
+				}
 
 				// Deliberate fallthrough: a compute buffer also gets an SRV, so it can be bound
 				// read-only to a later dispatch. bindComputeBuffer() relies on this.

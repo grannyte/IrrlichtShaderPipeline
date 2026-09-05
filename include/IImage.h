@@ -160,6 +160,16 @@ public:
 		case ECF_BC7_S:
 		case ECF_BC7_U:
 			return 8;
+		case ECF_DXT1_SRGB:
+			return 16;
+		case ECF_DXT3_SRGB:
+		case ECF_DXT5_SRGB:
+			return 32;
+		case ECF_BC4_U:
+		case ECF_BC4_S:
+		case ECF_BC5_U:
+		case ECF_BC5_S:
+			return 8;
 		default:
 			return 0;
 		}
@@ -168,17 +178,72 @@ public:
 	//! test if this is compressed color format
 	static bool isCompressedFormat(const ECOLOR_FORMAT format)
 	{
+		return getBlockBytes(format) != 0;
+	}
+
+	//! Bytes one 4x4 block of a block-compressed format occupies, 0 for any other format.
+	/** Every compressed format the engine knows is a 4x4 block format: 8 bytes for the
+	one-channel and colour-only families (BC1/DXT1, BC4), 16 for all the others. */
+	static u32 getBlockBytes(const ECOLOR_FORMAT format)
+	{
 		switch(format)
 		{
 			case ECF_DXT1:
+			case ECF_DXT1_SRGB:
+			case ECF_BC4_U:
+			case ECF_BC4_S:
+				return 8;
 			case ECF_DXT2:
 			case ECF_DXT3:
 			case ECF_DXT4:
 			case ECF_DXT5:
+			case ECF_DXT3_SRGB:
+			case ECF_DXT5_SRGB:
+			case ECF_BC5_U:
+			case ECF_BC5_S:
 			case ECF_BC6_U:
 			case ECF_BC6_S:
 			case ECF_BC7_S:
 			case ECF_BC7_U:
+				return 16;
+			default:
+				return 0;
+		}
+	}
+
+	//! Bytes one tightly packed surface of `width` x `height` texels takes in `format`.
+	/** Whole 4x4 blocks for a block-compressed format (a 1x1 mip level still costs one block),
+	rows of getBitsPerPixelFromFormat() otherwise. The layout every .dds / .ktx style container
+	stores its mip levels in. */
+	static u32 getSurfaceSizeInBytes(const ECOLOR_FORMAT format, u32 width, u32 height)
+	{
+		const u32 blockBytes = getBlockBytes(format);
+		if (blockBytes)
+			return ((width + 3) / 4) * ((height + 3) / 4) * blockBytes;
+		return width * height * (getBitsPerPixelFromFormat(format) / 8);
+	}
+
+	//! True if the format carries an alpha channel a shader can read.
+	/** DXT1/BC1 is counted as opaque: its 1 bit alpha is an encoder choice most content
+	never uses, and treating it as transparent would push every DXT1 material onto the
+	transparent path. */
+	static bool hasAlphaFormat(const ECOLOR_FORMAT format)
+	{
+		switch(format)
+		{
+			case ECF_A1R5G5B5:
+			case ECF_A8R8G8B8:
+			case ECF_A8R8G8B8S:
+			case ECF_A16B16G16R16F:
+			case ECF_A32B32G32R32F:
+			case ECF_DXT2:
+			case ECF_DXT3:
+			case ECF_DXT4:
+			case ECF_DXT5:
+			case ECF_DXT3_SRGB:
+			case ECF_DXT5_SRGB:
+			case ECF_BC7_U:
+			case ECF_BC7_S:
 				return true;
 			default:
 				return false;
@@ -221,6 +286,13 @@ public:
 			case ECF_BC6_S:
 			case ECF_BC7_S:
 			case ECF_BC7_U:
+			case ECF_DXT1_SRGB:
+			case ECF_DXT3_SRGB:
+			case ECF_DXT5_SRGB:
+			case ECF_BC4_U:
+			case ECF_BC4_S:
+			case ECF_BC5_U:
+			case ECF_BC5_S:
 				return false;
 			default:
 				return true;

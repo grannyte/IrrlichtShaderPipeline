@@ -315,7 +315,7 @@ namespace scene
 		// The two z-boundary planes of the clip volume (0<=z'<=w' in clip space). Which one is
 		// physically the near plane and which is the far plane depends on the projection's NDC-z
 		// convention: standard (z'=0 at near, z'=w' at far - e.g. the orthographic GUI camera) has
-		// row2 as near, row3-row2 as far; OuterSpace's world/game cameras use a reversed-Z
+		// row2 as near, row3-row2 as far; this fork's world/game cameras use a reversed-Z
 		// perspective matrix (buildProjectionMatrixPerspectiveFovLH maps near to z'~=w', far to
 		// z'~=0 - see CD3D12Driver::clearZBuffer's comment), which swaps that. Assigning by row
 		// index unconditionally silently mislabels near/far for every reversed-Z camera: with

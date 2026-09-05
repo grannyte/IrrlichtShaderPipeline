@@ -463,7 +463,7 @@ namespace core
 #ifdef _IRR_SSE
 	
 	template<>
-	vector3d<f32> vector3d<f32>::operator+(const vector3d<f32>& other) const { 
+	inline vector3d<f32> vector3d<f32>::operator+(const vector3d<f32>& other) const { 
 		vector3d<f32> out;
 		__m128 me,Other,result;
 		me =  _mm_set_ps(X,Y,Z,0);
@@ -476,7 +476,7 @@ namespace core
 		return out;
 	}
 	template<>
-	vector3d<f32> vector3d<f32>::operator+(const f32 val) const {
+	inline vector3d<f32> vector3d<f32>::operator+(const f32 val) const {
 		vector3d<f32> out;
 		__m128 me,Other,result;
 		me =  _mm_set_ps(X,Y,Z,0);
@@ -489,7 +489,7 @@ namespace core
 		return out;
 	}
 	template<>
-	vector3d<f32> vector3d<f32>::operator-(const vector3d<f32>& other) const {
+	inline vector3d<f32> vector3d<f32>::operator-(const vector3d<f32>& other) const {
 		vector3d<f32> out;
 		__m128 me,Other,result;
 		me =  _mm_set_ps(X,Y,Z,0);
@@ -502,7 +502,7 @@ namespace core
 		return out;
 	}
 	template<>
-	vector3d<f32> vector3d<f32>::operator-(const f32 val) const {
+	inline vector3d<f32> vector3d<f32>::operator-(const f32 val) const {
 		vector3d<f32> out;
 		__m128 me,Other,result;
 		me =  _mm_set_ps(X,Y,Z,0);
@@ -515,7 +515,7 @@ namespace core
 		return out;
 	}
 	template<>
-	vector3d<f32> vector3d<f32>::operator*(const vector3d<f32>& other) const {
+	inline vector3d<f32> vector3d<f32>::operator*(const vector3d<f32>& other) const {
 		vector3d<f32> out;
 		__m128 me,Other,result;
 		me =  _mm_set_ps(X,Y,Z,0);
@@ -528,7 +528,7 @@ namespace core
 		return out;
 	}
 	template<>
-	vector3d<f32> vector3d<f32>::operator*(const f32 val) const {
+	inline vector3d<f32> vector3d<f32>::operator*(const f32 val) const {
 		vector3d<f32> out;
 		__m128 me,Other,result;
 		me =  _mm_set_ps(X,Y,Z,0);
@@ -541,7 +541,7 @@ namespace core
 		return out;
 	}
 	template<>
-	vector3d<f32> vector3d<f32>::operator/(const vector3d<f32>& other) const {
+	inline vector3d<f32> vector3d<f32>::operator/(const vector3d<f32>& other) const {
 		vector3d<f32> out;
 		__m128 me,Other,result;
 		me =  _mm_set_ps(X,Y,Z,0);
@@ -554,7 +554,7 @@ namespace core
 		return out;
 	}
 	template<>
-	vector3d<f32> vector3d<f32>::operator/(const f32 val) const {
+	inline vector3d<f32> vector3d<f32>::operator/(const f32 val) const {
 		vector3d<f32> out;
 		__m128 me,Other,result;
 		me =  _mm_set_ps(X,Y,Z,0);

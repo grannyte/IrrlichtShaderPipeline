@@ -67,6 +67,11 @@ namespace irr
 			//! queries the features of the driver, returns true if feature is available
 			virtual bool queryFeature(E_VIDEO_DRIVER_FEATURE feature) const _IRR_OVERRIDE_;
 
+			//! See IVideoDriver: the flag is stored here, the drivers read PerTargetBlend in their
+			//! setRenderTarget(array).
+			virtual void setPerTargetBlend(bool enable) _IRR_OVERRIDE_ { PerTargetBlend = enable; }
+			virtual bool getPerTargetBlend() const _IRR_OVERRIDE_ { return PerTargetBlend; }
+
 			//! Get attributes of the actual video driver
 			virtual const io::IAttributes& getDriverAttributes() const _IRR_OVERRIDE_;
 
@@ -911,6 +916,9 @@ namespace irr
 			irr::core::array<CVertexDescriptor*> VertexDescriptor;
 
 			bool FeatureEnabled[video::EVDF_COUNT];
+
+			//! setPerTargetBlend(); off, so an MRT set blends like the material unless asked otherwise.
+			bool PerTargetBlend = false;
 		};
 
 	} // end namespace video

@@ -106,7 +106,15 @@ namespace irr
 			//! lensing, ...) that accumulate screen-space displacement into a dedicated RTT.
 			//! Deliberately its own pass rather than reusing ESNRP_TRANSPARENT_EFFECT or
 			//! ESNRP_VOLUMETRIC_EFFECT, both of which already have their own real meaning/users.
-			ESNRP_DISPLACEMENT_EFFECT = 256
+			ESNRP_DISPLACEMENT_EFFECT = 256,
+
+			//! Own pass for CInstancedReachManager's coverage volumes -- a pass is the unit of RTT
+			//! binding, so they cannot share the displacement pass and its accumulation target.
+			ESNRP_REACH_OVERLAY = 512,
+
+			//! Own pass for CloudVolumeSceneNode's near-field cloud march, which renders at reduced
+			//! resolution into its own target before being composited back.
+			ESNRP_CLOUD_VOLUME = 1024
 		};
 
 		class IAnimatedMesh;
@@ -1780,6 +1788,15 @@ namespace irr
 
 			virtual std::shared_ptr<IMeshSceneNode> addOctreeSceneNode(const core::array<scene::IMeshBuffer*>& meshes, IMesh* origMesh, std::shared_ptr<ISceneNode> parent = 0,
 				s32 id = -1, s32 minimalPolysPerNode = 512) = 0;
+
+		public:
+
+			//!Explicitly render all ESNRP_REACH_OVERLAY scenenodes
+			//!Declared last: inserting a virtual mid-class shifts every later vtable slot.
+			virtual void RenderReachOverlay() = 0;
+
+			//!Explicitly render all ESNRP_CLOUD_VOLUME scenenodes
+			virtual void RenderCloudVolume() = 0;
 		};
 
 

@@ -22,6 +22,7 @@
 #include "CImage.h"
 #include "irrString.h"
 #include <dxgiformat.h>
+#include <string.h>
 
 // Header flag values
 #define DDSD_CAPS			0x00000001
@@ -72,11 +73,15 @@ namespace video
 	} DDS_HEADER_DXT10;
 
 
+#ifdef _IRR_COMPILE_WITH_DDS_DECODER_LOADER_
+
 /*
 DDSGetInfo()
-extracts relevant info from a dds texture, returns 0 on success
+extracts relevant info from a dds texture, returns 0 on success. The CPU decoder only knows
+the legacy DXT1-5 FourCCs and 32 bit ARGB; anything else (a DX10 header included) is
+DDS_PF_UNKNOWN to it.
 */
-	__declspec(noinline) s32 DDSGetInfo(ddsHeader* dds, s32* width, s32* height, eDDSPixelFormat* pf, io::IReadFile* file)
+	__declspec(noinline) s32 DDSGetInfo(ddsHeader* dds, s32* width, s32* height, eDDSPixelFormat* pf)
 {
 	/* dummy test */
 	if( dds == NULL )
@@ -116,23 +121,6 @@ extracts relevant info from a dds texture, returns 0 on success
 		*pf = DDS_PF_DXT4;
 	else if( fourCC == *((u32*) "DXT5") )
 		*pf = DDS_PF_DXT5;
-	else if (fourCC == *((u32*)"DX10"))
-	{
-		DDS_HEADER_DXT10 d10header;
-		file->read(&d10header, sizeof(DDS_HEADER_DXT10));
-		if (d10header.dxgiFormat == DXGI_FORMAT_BC7_UNORM)
-			*pf = DDS_PF_BC7_U;
-		else if (d10header.dxgiFormat == DXGI_FORMAT_BC7_UNORM_SRGB)
-			*pf = DDS_PF_BC7_S;
-		else if (d10header.dxgiFormat == DXGI_FORMAT_BC6H_UF16)
-			*pf = DDS_PF_BC6_U;
-		else if (d10header.dxgiFormat == DXGI_FORMAT_BC6H_SF16)
-			*pf = DDS_PF_BC6_S;
-		else if (d10header.dxgiFormat == DXGI_FORMAT_R16G16B16A16_FLOAT)
-			*pf = DDS_PF_R16G16B16A16F;
-		else
-			__debugbreak();
-	}
 	else
 		*pf = DDS_PF_UNKNOWN;
 
@@ -140,8 +128,6 @@ extracts relevant info from a dds texture, returns 0 on success
 	return 0;
 }
 
-
-#ifdef _IRR_COMPILE_WITH_DDS_DECODER_LOADER_
 
 /*
 DDSDecompressARGB8888()
@@ -711,330 +697,690 @@ bool CImageLoaderDDS::isALoadableFileFormat(io::IReadFile* file) const
 
 	return (MagicWord[0] == 'D' && MagicWord[1] == 'D' && MagicWord[2] == 'S');
 }
-#define minmipsize 16
+#ifdef _IRR_COMPILE_WITH_DDS_DECODER_LOADER_
+
+//! creates a surface from the file: the CPU decoder, always an A8R8G8B8 image of the top level.
+IImage* CImageLoaderDDS::loadImage(io::IReadFile* file) const
+{
+	ddsHeader header;
+	s32 width, height;
+	eDDSPixelFormat pixelFormat;
+
+	file->seek(0);
+	file->read(&header, sizeof(ddsHeader));
+	if (0 != DDSGetInfo(&header, &width, &height, &pixelFormat))
+		return 0;
+
+	const u32 newSize = file->getSize() - sizeof(ddsHeader);
+	u8* memFile = new u8[newSize];
+	file->read(memFile, newSize);
+
+	IImage* image = new CImage(ECF_A8R8G8B8, core::dimension2d<u32>(width, height));
+	if (DDSDecompress(&header, memFile, (u8*)image->lock()) == -1)
+	{
+		image->unlock();
+		image->drop();
+		image = 0;
+	}
+
+	delete[] memFile;
+	return image;
+}
+
+#else // _IRR_COMPILE_WITH_DDS_DECODER_LOADER_
+
+// The GPU path. What a driver receives is one of two things:
+//
+//  - a plain CImage of the top surface, for a 2D uncompressed file (the legacy 16/24/32 bit
+//    layouts, luminance, alpha-only, the 8/16 bit DXGI layouts). Decoded to A8R8G8B8 unless the
+//    layout is one CImage holds natively. Lockable, mip-mapped by the driver like any other image.
+//
+//  - the RAW FILE, header included, as a CImage flagged compressed with CImage::CompressedSize set
+//    to the byte count. Used for every block-compressed format, for the uncompressed formats no
+//    CImage can hold (floats, R8/R8G8/R16/R16G16, signed), and for any cube map, array or volume,
+//    because that is where the mip chain, the faces and the slices live. CD3D11Texture and
+//    CD3D12Texture hand it to DDSTextureLoader, CVulkanTexture parses it itself. An uncompressed
+//    multi-surface file is repacked first into a tightly-pitched file in a layout all three drivers
+//    accept (A8R8G8B8, or one of the 16 bit natives), so a legacy A8B8G8R8 or X8R8G8B8 cube map
+//    arrives in a canonical form.
+//
+// Any file the table below does not know is refused with a log line naming the format; there is
+// no fall-through into a driver-side crash.
+namespace
+{
+	inline u32 ddsFourCC(c8 a, c8 b, c8 c, c8 d)
+	{
+		return (u32)(u8)a | ((u32)(u8)b << 8) | ((u32)(u8)c << 16) | ((u32)(u8)d << 24);
+	}
+
+	// D3DFORMAT numbers some writers put in the FourCC field for the wide formats.
+	enum E_DDS_D3DFMT
+	{
+		EDF_R16F = 111,
+		EDF_G16R16F = 112,
+		EDF_A16B16G16R16F = 113,
+		EDF_R32F = 114,
+		EDF_G32R32F = 115,
+		EDF_A32B32G32R32F = 116
+	};
+
+	const u32 DdsCaps2AllCubeFaces = DDSCAPS2_CUBEMAP_POSITIVEX | DDSCAPS2_CUBEMAP_NEGATIVEX |
+		DDSCAPS2_CUBEMAP_POSITIVEY | DDSCAPS2_CUBEMAP_NEGATIVEY |
+		DDSCAPS2_CUBEMAP_POSITIVEZ | DDSCAPS2_CUBEMAP_NEGATIVEZ;
+	const u32 Dx10MiscTextureCube = 0x4;
+	const u32 Dx10DimensionTexture1D = 2;
+	const u32 Dx10DimensionTexture3D = 4;
+
+	//! Channel layout of an uncompressed surface: legacy masks, or a DXGI format reduced to masks.
+	struct SDdsPixelLayout
+	{
+		u32 BitCount;
+		u32 RMask, GMask, BMask, AMask;
+		bool Luminance; //!< RMask is a grey value to replicate into G and B
+		bool AlphaOnly; //!< colour is white, AMask is all there is
+	};
+
+	//! Everything loadImage() decides from the headers.
+	struct SDdsFile
+	{
+		u32 HeaderBytes;  //!< 128, or 148 with a DX10 header
+		u32 Width, Height, Depth, MipLevels, Faces, ArraySize;
+		bool Volume;
+		ECOLOR_FORMAT Format; //!< what the texture ends up as
+		bool RawOnly;         //!< uncompressed, but only deliverable as the raw file
+		bool HasLayout;       //!< uncompressed with a decodable channel layout
+		bool Decode;          //!< the layout is not one CImage holds natively: decode to A8R8G8B8
+		SDdsPixelLayout Layout;
+	};
+
+	//! The four layouts a CImage holds as-is (what CColorConverter speaks), else ECF_UNKNOWN.
+	ECOLOR_FORMAT nativePixelFormat(const SDdsPixelLayout& l)
+	{
+		if (l.Luminance || l.AlphaOnly)
+			return ECF_UNKNOWN;
+		if (l.BitCount == 32 && l.RMask == 0xff0000 && l.GMask == 0xff00 && l.BMask == 0xff && l.AMask == 0xff000000)
+			return ECF_A8R8G8B8;
+		if (l.BitCount == 24 && l.RMask == 0xff0000 && l.GMask == 0xff00 && l.BMask == 0xff)
+			return ECF_R8G8B8;
+		if (l.BitCount == 16 && l.RMask == 0xf800 && l.GMask == 0x7e0 && l.BMask == 0x1f && l.AMask == 0)
+			return ECF_R5G6B5;
+		if (l.BitCount == 16 && l.RMask == 0x7c00 && l.GMask == 0x3e0 && l.BMask == 0x1f && l.AMask == 0x8000)
+			return ECF_A1R5G5B5;
+		return ECF_UNKNOWN;
+	}
+
+	//! Layouts with channels wider than 8 bits that no CImage holds but every driver takes raw.
+	ECOLOR_FORMAT rawPixelFormat(const SDdsPixelLayout& l)
+	{
+		if (l.BitCount == 32 && l.RMask == 0xffff && l.GMask == 0xffff0000 && !l.Luminance)
+			return ECF_R16G16;
+		if (l.BitCount == 16 && l.RMask == 0xffff)
+			return ECF_R16;
+		return ECF_UNKNOWN;
+	}
+
+	//! DXGI format the drivers' own .dds parsers read a repacked file's format as.
+	DXGI_FORMAT dxgiFormatOf(ECOLOR_FORMAT format)
+	{
+		switch (format)
+		{
+		case ECF_A8R8G8B8: return DXGI_FORMAT_B8G8R8A8_UNORM;
+		case ECF_R5G6B5:   return DXGI_FORMAT_B5G6R5_UNORM;
+		case ECF_A1R5G5B5: return DXGI_FORMAT_B5G5R5A1_UNORM;
+		case ECF_R16G16:   return DXGI_FORMAT_R16G16_UNORM;
+		case ECF_R16:      return DXGI_FORMAT_R16_UNORM;
+		default:           return DXGI_FORMAT_UNKNOWN;
+		}
+	}
+
+	//! Legacy pixel format block describing a repacked file's format.
+	void writeLegacyPixelFormat(ddsPixelFormat& pf, ECOLOR_FORMAT format)
+	{
+		pf.Size = sizeof(ddsPixelFormat);
+		pf.FourCC = 0;
+		pf.Flags = DDPF_RGB;
+		pf.ABitMask = 0;
+		switch (format)
+		{
+		case ECF_A8R8G8B8:
+			pf.Flags |= DDPF_ALPHAPIXELS;
+			pf.RGBBitCount = 32; pf.RBitMask = 0xff0000; pf.GBitMask = 0xff00; pf.BBitMask = 0xff; pf.ABitMask = 0xff000000;
+			break;
+		case ECF_R5G6B5:
+			pf.RGBBitCount = 16; pf.RBitMask = 0xf800; pf.GBitMask = 0x7e0; pf.BBitMask = 0x1f;
+			break;
+		case ECF_A1R5G5B5:
+			pf.Flags |= DDPF_ALPHAPIXELS;
+			pf.RGBBitCount = 16; pf.RBitMask = 0x7c00; pf.GBitMask = 0x3e0; pf.BBitMask = 0x1f; pf.ABitMask = 0x8000;
+			break;
+		case ECF_R16G16:
+			pf.RGBBitCount = 32; pf.RBitMask = 0xffff; pf.GBitMask = 0xffff0000; pf.BBitMask = 0;
+			break;
+		case ECF_R16:
+			pf.Flags = DDPF_LUMINANCE;
+			pf.RGBBitCount = 16; pf.RBitMask = 0xffff; pf.GBitMask = 0; pf.BBitMask = 0;
+			break;
+		default:
+			break;
+		}
+	}
+
+	//! One channel of a packed pixel widened (or narrowed) to 8 bits; `missing` if it has no mask.
+	u8 channel8(u32 pixel, u32 mask, u8 missing)
+	{
+		if (!mask)
+			return missing;
+		u32 shift = 0;
+		while (!((mask >> shift) & 1u))
+			++shift;
+		u32 bits = 0;
+		while (shift + bits < 32 && ((mask >> (shift + bits)) & 1u))
+			++bits;
+		const u32 value = (pixel & mask) >> shift;
+		if (bits >= 8)
+			return (u8)(value >> (bits - 8));
+		// Replicate the top bits downwards so full scale stays 255 (5 bits: v<<3 | v>>2).
+		u32 out = 0;
+		u32 filled = 0;
+		while (filled < 8)
+		{
+			out = (out << bits) | value;
+			filled += bits;
+		}
+		return (u8)(out >> (filled - 8));
+	}
+
+	//! Decodes one row of `width` pixels into A8R8G8B8.
+	void decodeRow(const u8* src, u32 width, const SDdsPixelLayout& l, u32* dst)
+	{
+		const u32 bytes = l.BitCount / 8;
+		for (u32 x = 0; x < width; ++x, src += bytes)
+		{
+			u32 p = 0;
+			for (u32 b = 0; b < bytes; ++b)
+				p |= (u32)src[b] << (8 * b);
+
+			u8 r, g, bl, a;
+			if (l.Luminance)
+			{
+				r = g = bl = channel8(p, l.RMask, 0);
+				a = channel8(p, l.AMask, 255);
+			}
+			else if (l.AlphaOnly)
+			{
+				r = g = bl = 255;
+				a = channel8(p, l.AMask, 255);
+			}
+			else
+			{
+				r = channel8(p, l.RMask, 0);
+				g = channel8(p, l.GMask, 0);
+				bl = channel8(p, l.BMask, 0);
+				a = channel8(p, l.AMask, 255);
+			}
+			dst[x] = ((u32)a << 24) | ((u32)r << 16) | ((u32)g << 8) | bl;
+		}
+	}
+
+	//! Legacy header: the FourCC formats.
+	ECOLOR_FORMAT formatFromFourCC(u32 fourCC, bool& rawOnly)
+	{
+		rawOnly = false;
+		if (fourCC == ddsFourCC('D', 'X', 'T', '1')) return ECF_DXT1;
+		if (fourCC == ddsFourCC('D', 'X', 'T', '2')) return ECF_DXT2;
+		if (fourCC == ddsFourCC('D', 'X', 'T', '3')) return ECF_DXT3;
+		if (fourCC == ddsFourCC('D', 'X', 'T', '4')) return ECF_DXT4;
+		if (fourCC == ddsFourCC('D', 'X', 'T', '5')) return ECF_DXT5;
+		if (fourCC == ddsFourCC('A', 'T', 'I', '1') || fourCC == ddsFourCC('B', 'C', '4', 'U')) return ECF_BC4_U;
+		if (fourCC == ddsFourCC('B', 'C', '4', 'S')) return ECF_BC4_S;
+		if (fourCC == ddsFourCC('A', 'T', 'I', '2') || fourCC == ddsFourCC('B', 'C', '5', 'U')) return ECF_BC5_U;
+		if (fourCC == ddsFourCC('B', 'C', '5', 'S')) return ECF_BC5_S;
+
+		rawOnly = true;
+		switch (fourCC)
+		{
+		case EDF_R16F:          return ECF_R16F;
+		case EDF_G16R16F:       return ECF_G16R16F;
+		case EDF_A16B16G16R16F: return ECF_A16B16G16R16F;
+		case EDF_R32F:          return ECF_R32F;
+		case EDF_G32R32F:       return ECF_G32R32F;
+		case EDF_A32B32G32R32F: return ECF_A32B32G32R32F;
+		default:
+			rawOnly = false;
+			return ECF_UNKNOWN;
+		}
+	}
+
+	//! DX10 header: block-compressed and wide formats map to an ECOLOR_FORMAT, the 8/16 bit
+	//! colour layouts come back as a mask layout (hasLayout) to be decided like a legacy file.
+	ECOLOR_FORMAT formatFromDxgi(u32 dxgi, bool& rawOnly, SDdsPixelLayout& layout, bool& hasLayout)
+	{
+		rawOnly = false;
+		hasLayout = false;
+		layout = SDdsPixelLayout();
+		switch (dxgi)
+		{
+		case DXGI_FORMAT_BC1_TYPELESS:
+		case DXGI_FORMAT_BC1_UNORM:       return ECF_DXT1;
+		case DXGI_FORMAT_BC1_UNORM_SRGB:  return ECF_DXT1_SRGB;
+		case DXGI_FORMAT_BC2_TYPELESS:
+		case DXGI_FORMAT_BC2_UNORM:       return ECF_DXT3;
+		case DXGI_FORMAT_BC2_UNORM_SRGB:  return ECF_DXT3_SRGB;
+		case DXGI_FORMAT_BC3_TYPELESS:
+		case DXGI_FORMAT_BC3_UNORM:       return ECF_DXT5;
+		case DXGI_FORMAT_BC3_UNORM_SRGB:  return ECF_DXT5_SRGB;
+		case DXGI_FORMAT_BC4_TYPELESS:
+		case DXGI_FORMAT_BC4_UNORM:       return ECF_BC4_U;
+		case DXGI_FORMAT_BC4_SNORM:       return ECF_BC4_S;
+		case DXGI_FORMAT_BC5_TYPELESS:
+		case DXGI_FORMAT_BC5_UNORM:       return ECF_BC5_U;
+		case DXGI_FORMAT_BC5_SNORM:       return ECF_BC5_S;
+		case DXGI_FORMAT_BC6H_TYPELESS:
+		case DXGI_FORMAT_BC6H_UF16:       return ECF_BC6_U;
+		case DXGI_FORMAT_BC6H_SF16:       return ECF_BC6_S;
+		case DXGI_FORMAT_BC7_TYPELESS:
+		case DXGI_FORMAT_BC7_UNORM:       return ECF_BC7_U;
+		case DXGI_FORMAT_BC7_UNORM_SRGB:  return ECF_BC7_S;
+		default:
+			break;
+		}
+
+		rawOnly = true;
+		switch (dxgi)
+		{
+		case DXGI_FORMAT_R16G16B16A16_FLOAT: return ECF_A16B16G16R16F;
+		case DXGI_FORMAT_R32G32B32A32_FLOAT: return ECF_A32B32G32R32F;
+		case DXGI_FORMAT_R32G32B32_FLOAT:    return ECF_B32G32R32F;
+		case DXGI_FORMAT_R32G32_FLOAT:       return ECF_G32R32F;
+		case DXGI_FORMAT_R32_FLOAT:          return ECF_R32F;
+		case DXGI_FORMAT_R16G16_FLOAT:       return ECF_G16R16F;
+		case DXGI_FORMAT_R16_FLOAT:          return ECF_R16F;
+		case DXGI_FORMAT_R8_UNORM:           return ECF_R8;
+		case DXGI_FORMAT_R8_SNORM:           return ECF_R8S;
+		case DXGI_FORMAT_R8G8_UNORM:         return ECF_R8G8;
+		case DXGI_FORMAT_R16_UNORM:          return ECF_R16;
+		case DXGI_FORMAT_R16G16_UNORM:       return ECF_R16G16;
+		case DXGI_FORMAT_R8G8B8A8_SNORM:     return ECF_A8R8G8B8S;
+		default:
+			break;
+		}
+		rawOnly = false;
+
+		hasLayout = true;
+		switch (dxgi)
+		{
+		case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+		case DXGI_FORMAT_R8G8B8A8_UNORM:
+		case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+			layout.BitCount = 32; layout.RMask = 0xff; layout.GMask = 0xff00; layout.BMask = 0xff0000; layout.AMask = 0xff000000;
+			break;
+		case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+		case DXGI_FORMAT_B8G8R8A8_UNORM:
+		case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+			layout.BitCount = 32; layout.RMask = 0xff0000; layout.GMask = 0xff00; layout.BMask = 0xff; layout.AMask = 0xff000000;
+			break;
+		case DXGI_FORMAT_B8G8R8X8_TYPELESS:
+		case DXGI_FORMAT_B8G8R8X8_UNORM:
+		case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+			layout.BitCount = 32; layout.RMask = 0xff0000; layout.GMask = 0xff00; layout.BMask = 0xff;
+			break;
+		case DXGI_FORMAT_B5G6R5_UNORM:
+			layout.BitCount = 16; layout.RMask = 0xf800; layout.GMask = 0x7e0; layout.BMask = 0x1f;
+			break;
+		case DXGI_FORMAT_B5G5R5A1_UNORM:
+			layout.BitCount = 16; layout.RMask = 0x7c00; layout.GMask = 0x3e0; layout.BMask = 0x1f; layout.AMask = 0x8000;
+			break;
+		case DXGI_FORMAT_B4G4R4A4_UNORM:
+			layout.BitCount = 16; layout.RMask = 0xf00; layout.GMask = 0xf0; layout.BMask = 0xf; layout.AMask = 0xf000;
+			break;
+		case DXGI_FORMAT_A8_UNORM:
+			layout.BitCount = 8; layout.AMask = 0xff; layout.AlphaOnly = true;
+			break;
+		default:
+			hasLayout = false;
+			break;
+		}
+		return ECF_UNKNOWN;
+	}
+
+	//! Legacy header without FourCC: RGB, luminance and alpha-only masks.
+	bool layoutFromLegacyMasks(const ddsPixelFormat& pf, SDdsPixelLayout& layout)
+	{
+		layout = SDdsPixelLayout();
+		const u32 bits = pf.RGBBitCount;
+		if (bits != 8 && bits != 16 && bits != 24 && bits != 32)
+			return false;
+		layout.BitCount = bits;
+		const u32 alphaMask = (pf.Flags & DDPF_ALPHAPIXELS) ? pf.ABitMask : 0;
+
+		if (pf.Flags & DDPF_RGB)
+		{
+			layout.RMask = pf.RBitMask; layout.GMask = pf.GBitMask; layout.BMask = pf.BBitMask; layout.AMask = alphaMask;
+		}
+		else if (pf.Flags & DDPF_LUMINANCE)
+		{
+			layout.Luminance = true;
+			layout.RMask = pf.RBitMask; layout.AMask = alphaMask;
+		}
+		else if (pf.Flags & DDPF_ALPHA)
+		{
+			layout.AlphaOnly = true;
+			layout.AMask = pf.ABitMask ? pf.ABitMask : ((bits == 32) ? 0xffffffffu : ((1u << bits) - 1));
+		}
+		else
+			return false; // DDPF_BUMPDUDV, YUV and friends
+
+		return (layout.RMask | layout.GMask | layout.BMask | layout.AMask) != 0;
+	}
+
+	inline u32 mipExtent(u32 base, u32 level)
+	{
+		const u32 e = base >> level;
+		return e ? e : 1;
+	}
+
+	//! Bytes of the tightly packed payload of every surface of the file in `format`.
+	u32 payloadBytes(const SDdsFile& d, ECOLOR_FORMAT format)
+	{
+		u32 total = 0;
+		for (u32 layer = 0; layer < d.Faces * d.ArraySize; ++layer)
+			for (u32 level = 0; level < d.MipLevels; ++level)
+				total += IImage::getSurfaceSizeInBytes(format, mipExtent(d.Width, level), mipExtent(d.Height, level)) *
+					mipExtent(d.Depth, level);
+		return total;
+	}
+
+	//! Row pitch of a level-0 surface in a legacy uncompressed file: the header's when it names one
+	//! that is at least tight, tight otherwise. Every other level is assumed tight, as DDSTextureLoader
+	//! assumes for all of them.
+	u32 legacyRowPitch(const ddsHeader& header, const SDdsFile& d, u32 level, u32 width)
+	{
+		const u32 tight = width * (d.Layout.BitCount / 8);
+		if (level == 0 && d.HeaderBytes == sizeof(ddsHeader) && (header.Flags & DDSD_PITCH) &&
+			header.PitchOrLinearSize > tight)
+			return header.PitchOrLinearSize;
+		return tight;
+	}
+
+	//! Header validation and geometry / format decisions. False (logged) for anything refused.
+	bool describeDds(const ddsHeader& header, const DDS_HEADER_DXT10* dx10, const io::path& name, SDdsFile& d)
+	{
+		d = SDdsFile();
+		d.HeaderBytes = dx10 ? sizeof(ddsHeader) + sizeof(DDS_HEADER_DXT10) : sizeof(ddsHeader);
+		d.Width = header.Width ? header.Width : 1;
+		d.Height = header.Height ? header.Height : 1;
+		d.MipLevels = ((header.Flags & DDSD_MIPMAPCOUNT) && header.MipMapCount > 1) ? header.MipMapCount : 1;
+		d.Volume = ((header.Flags & DDSD_DEPTH) && header.Depth > 1) || (header.Caps.caps2 & DDSCAPS2_VOLUME) != 0 ||
+			(dx10 && dx10->resourceDimension == Dx10DimensionTexture3D);
+		d.Depth = (d.Volume && header.Depth) ? header.Depth : 1;
+		d.Faces = 1;
+		d.ArraySize = 1;
+		d.Format = ECF_UNKNOWN;
+
+		if (dx10)
+		{
+			if (dx10->resourceDimension == Dx10DimensionTexture1D)
+			{
+				os::Printer::log("DDS: 1D textures are not supported", name, ELL_ERROR);
+				return false;
+			}
+			if (dx10->miscFlag & Dx10MiscTextureCube)
+				d.Faces = 6;
+			if (dx10->arraySize > 1)
+				d.ArraySize = dx10->arraySize;
+		}
+		else if (header.Caps.caps2 & DDSCAPS2_CUBEMAP)
+		{
+			if ((header.Caps.caps2 & DdsCaps2AllCubeFaces) != DdsCaps2AllCubeFaces)
+			{
+				os::Printer::log("DDS: partial cube maps (fewer than 6 faces) are not supported", name, ELL_ERROR);
+				return false;
+			}
+			d.Faces = 6;
+		}
+		if (d.Volume && (d.Faces > 1 || d.ArraySize > 1))
+		{
+			os::Printer::log("DDS: a volume texture cannot also be a cube map or an array", name, ELL_ERROR);
+			return false;
+		}
+
+		if (dx10)
+			d.Format = formatFromDxgi(dx10->dxgiFormat, d.RawOnly, d.Layout, d.HasLayout);
+		else if (header.PixelFormat.Flags & DDPF_FOURCC)
+			d.Format = formatFromFourCC(header.PixelFormat.FourCC, d.RawOnly);
+		else
+			d.HasLayout = layoutFromLegacyMasks(header.PixelFormat, d.Layout);
+
+		if (d.HasLayout)
+		{
+			const ECOLOR_FORMAT raw = rawPixelFormat(d.Layout);
+			if (raw != ECF_UNKNOWN)
+			{
+				d.Format = raw;
+				d.RawOnly = true;
+			}
+			else
+			{
+				const ECOLOR_FORMAT native = nativePixelFormat(d.Layout);
+				d.Decode = (native == ECF_UNKNOWN);
+				d.Format = d.Decode ? ECF_A8R8G8B8 : native;
+			}
+		}
+
+		if (d.Format == ECF_UNKNOWN)
+		{
+			core::stringc what = "DDS: unsupported pixel format";
+			if (dx10)
+			{
+				what += " (DXGI_FORMAT ";
+				what += (s32)dx10->dxgiFormat;
+				what += ")";
+			}
+			else if (header.PixelFormat.Flags & DDPF_FOURCC)
+			{
+				const u32 cc = header.PixelFormat.FourCC;
+				what += " (FourCC ";
+				if (cc >= 0x20202020u)
+				{
+					const c8 text[5] = { (c8)(cc & 0xff), (c8)((cc >> 8) & 0xff), (c8)((cc >> 16) & 0xff), (c8)((cc >> 24) & 0xff), 0 };
+					what += text;
+				}
+				else
+					what += (s32)cc;
+				what += ")";
+			}
+			else
+			{
+				what += " (";
+				what += (s32)header.PixelFormat.RGBBitCount;
+				what += " bit masks)";
+			}
+			os::Printer::log(what.c_str(), name, ELL_ERROR);
+			return false;
+		}
+		return true;
+	}
+
+	//! The raw file as a "compressed" CImage; takes ownership of `bytes` (deleted on failure).
+	IImage* takeRawFile(u8* bytes, u32 byteCount, const SDdsFile& d, const io::path& name)
+	{
+		if (byteCount < d.HeaderBytes + payloadBytes(d, d.Format))
+		{
+			os::Printer::log("DDS: file is shorter than its header claims", name, ELL_ERROR);
+			delete[] bytes;
+			return 0;
+		}
+		CImage* image = new CImage(d.Format, core::dimension2d<u32>(d.Width, d.Height), bytes, true, true, true, d.MipLevels);
+		image->CompressedSize = byteCount;
+		return image;
+	}
+
+	//! Plain CImage of the top surface of a 2D uncompressed file; frees `bytes`.
+	IImage* loadTopSurface(u8* bytes, u32 byteCount, const SDdsFile& d, const ddsHeader& header, const io::path& name)
+	{
+		const u32 srcBytesPerPixel = d.Layout.BitCount / 8;
+		const u32 srcPitch = legacyRowPitch(header, d, 0, d.Width);
+		const u32 needed = d.HeaderBytes + srcPitch * (d.Height - 1) + d.Width * srcBytesPerPixel;
+		if (byteCount < needed)
+		{
+			os::Printer::log("DDS: file is shorter than its header claims", name, ELL_ERROR);
+			delete[] bytes;
+			return 0;
+		}
+
+		CImage* image = new CImage(d.Format, core::dimension2d<u32>(d.Width, d.Height));
+		u8* dst = (u8*)image->lock();
+		const u32 dstPitch = image->getPitch();
+		const u8* src = bytes + d.HeaderBytes;
+		for (u32 y = 0; y < d.Height; ++y, src += srcPitch, dst += dstPitch)
+		{
+			if (d.Decode)
+				decodeRow(src, d.Width, d.Layout, (u32*)dst);
+			else
+				memcpy(dst, src, d.Width * srcBytesPerPixel);
+		}
+		image->unlock();
+		delete[] bytes;
+		return image;
+	}
+
+	//! Repacks an uncompressed cube map / array / volume into a tightly pitched file in d.Format,
+	//! decoding each row when the source layout is not native; frees `bytes`.
+	IImage* repackRawFile(u8* bytes, u32 byteCount, const SDdsFile& d, const ddsHeader& header, const io::path& name)
+	{
+		const u32 srcBytesPerPixel = d.Layout.BitCount / 8;
+		const u32 dstBytesPerPixel = IImage::getBitsPerPixelFromFormat(d.Format) / 8;
+		const u32 outBytes = d.HeaderBytes + payloadBytes(d, d.Format);
+		u8* out = new u8[outBytes];
+
+		// Header: geometry and caps as they were, pixel format replaced by the canonical one.
+		memcpy(out, bytes, d.HeaderBytes);
+		ddsHeader* outHeader = (ddsHeader*)out;
+		outHeader->Flags = DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_PIXELFORMAT | DDSD_PITCH |
+			(d.MipLevels > 1 ? DDSD_MIPMAPCOUNT : 0) | (d.Volume ? DDSD_DEPTH : 0);
+		outHeader->PitchOrLinearSize = d.Width * dstBytesPerPixel;
+		outHeader->MipMapCount = d.MipLevels;
+		outHeader->Depth = d.Volume ? d.Depth : 0;
+		if (d.HeaderBytes > sizeof(ddsHeader))
+			((DDS_HEADER_DXT10*)(out + sizeof(ddsHeader)))->dxgiFormat = dxgiFormatOf(d.Format);
+		else
+			writeLegacyPixelFormat(outHeader->PixelFormat, d.Format);
+
+		const u8* src = bytes + d.HeaderBytes;
+		const u8* srcEnd = bytes + byteCount;
+		u8* dst = out + d.HeaderBytes;
+		for (u32 layer = 0; layer < d.Faces * d.ArraySize; ++layer)
+		{
+			for (u32 level = 0; level < d.MipLevels; ++level)
+			{
+				const u32 width = mipExtent(d.Width, level);
+				const u32 height = mipExtent(d.Height, level);
+				const u32 depth = mipExtent(d.Depth, level);
+				const u32 srcPitch = legacyRowPitch(header, d, level, width);
+				for (u32 slice = 0; slice < depth; ++slice)
+				{
+					for (u32 y = 0; y < height; ++y, src += srcPitch, dst += width * dstBytesPerPixel)
+					{
+						if (src + width * srcBytesPerPixel > srcEnd)
+						{
+							os::Printer::log("DDS: file is shorter than its header claims", name, ELL_ERROR);
+							delete[] out;
+							delete[] bytes;
+							return 0;
+						}
+						if (d.Decode)
+							decodeRow(src, width, d.Layout, (u32*)dst);
+						else
+							memcpy(dst, src, width * srcBytesPerPixel);
+					}
+				}
+			}
+		}
+		delete[] bytes;
+
+		CImage* image = new CImage(d.Format, core::dimension2d<u32>(d.Width, d.Height), out, true, true, true, d.MipLevels);
+		image->CompressedSize = outBytes;
+		return image;
+	}
+}
 
 //! creates a surface from the file
 IImage* CImageLoaderDDS::loadImage(io::IReadFile* file) const
 {
-	ddsHeader header;
-	IImage* image = 0;
-	s32 width, height;
-	eDDSPixelFormat pixelFormat;
-	ECOLOR_FORMAT format = ECF_UNKNOWN;
-	u32 dataSize = 0;
-	bool is3D = false;
-	bool useAlpha = false;
-	u32 mipMapCount = 0;
-
-	file->seek(0);
-	file->read(&header, sizeof(ddsHeader));
-
-	if (0 == DDSGetInfo(&header, &width, &height, &pixelFormat,file))
+	const io::path& name = file->getFileName();
+	const u32 byteCount = (u32)file->getSize();
+	if (byteCount < sizeof(ddsHeader))
 	{
-		is3D = header.Depth > 0 && (header.Flags & DDSD_DEPTH);
-
-		if (!is3D)
-			header.Depth = 1;
-
-		useAlpha = header.PixelFormat.Flags & DDPF_ALPHAPIXELS;
-
-		if (header.MipMapCount > 0 && (header.Flags & DDSD_MIPMAPCOUNT))
-			mipMapCount = header.MipMapCount;
-
-#ifdef _IRR_COMPILE_WITH_DDS_DECODER_LOADER_
-		u32 newSize = file->getSize() - sizeof(ddsHeader);
-		u8* memFile = new u8[newSize];
-		file->read(memFile, newSize);
-
-		image = new CImage(ECF_A8R8G8B8, core::dimension2d<u32>(width, height));
-
-		if (DDSDecompress(&header, memFile, (u8*)image->lock()) == -1)
-		{
-			image->unlock();
-			image->drop();
-			image = 0;
-		}
-
-		delete[] memFile;
-#else
-		if (header.PixelFormat.Flags & DDPF_RGB) // Uncompressed formats
-		{
-			u32 byteCount = header.PixelFormat.RGBBitCount / 8;
-
-			if( header.Flags & DDSD_PITCH )
-				dataSize = header.PitchOrLinearSize * header.Height * header.Depth * (header.PixelFormat.RGBBitCount / 8);
-			else
-				dataSize = header.Width * header.Height * header.Depth * (header.PixelFormat.RGBBitCount / 8);
-
-			u8* data = new u8[dataSize];
-			file->read(data, dataSize);
-
-			switch (header.PixelFormat.RGBBitCount) // Bytes per pixel
-			{
-				case 16:
-				{
-					if (useAlpha)
-					{
-						if (header.PixelFormat.ABitMask == 0x8000)
-							format = ECF_A1R5G5B5;
-					}
-					else
-					{
-						if (header.PixelFormat.RBitMask == 0xf800)
-							format = ECF_R5G6B5;
-					}
-
-					break;
-				}
-				case 24:
-				{
-					if (!useAlpha)
-					{
-						if (header.PixelFormat.RBitMask == 0xff0000)
-							format = ECF_R8G8B8;
-					}
-
-					break;
-				}
-				case 32:
-				{
-					if (useAlpha)
-					{
-						if (header.PixelFormat.RBitMask & 0xff0000)
-							format = ECF_A8R8G8B8;
-						else if (header.PixelFormat.RBitMask & 0xff)
-						{
-							// convert from A8B8G8R8 to A8R8G8B8
-							u8 tmp = 0;
-
-							for (u32 i = 0; i < dataSize; i += 4)
-							{
-								tmp = data[i];
-								data[i] = data[i+2];
-								data[i+2] = tmp;
-							}
-						}
-					}
-
-					break;
-				}
-			}
-
-			if (format != ECF_UNKNOWN)
-			{
-				if (!is3D) // Currently 3D textures are unsupported.
-				{
-					image = new CImage(format, core::dimension2d<u32>(header.Width, header.Height ), data, true, true, false);
-				}
-			}
-			else
-			{
-				delete[] data;
-			}
-		}
-		else if (header.PixelFormat.Flags & DDPF_FOURCC) // Compressed formats
-		{
-			switch(pixelFormat)
-			{
-				case DDS_PF_DXT1:
-				{
-					u32 curWidth = header.Width;
-					u32 curHeight = header.Height;
-
-					dataSize = ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 8;
-
-					do
-					{
-						if (curWidth > 1)
-							curWidth >>= 1;
-
-						if (curHeight > 1)
-							curHeight >>= 1;
-
-						dataSize += ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 8;
-					}
-					while (curWidth != 1 || curHeight != 1);
-
-					format = ECF_DXT1;
-					break;
-				}
-				case DDS_PF_DXT2:
-				case DDS_PF_DXT3:
-				{
-					u32 curWidth = header.Width;
-					u32 curHeight = header.Height;
-
-					dataSize = ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
-
-					do
-					{
-						if (curWidth > 1)
-							curWidth >>= 1;
-
-						if (curHeight > 1)
-							curHeight >>= 1;
-
-						dataSize += ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
-					}
-					while (curWidth != 1 || curHeight != 1);
-
-					format = ECF_DXT3;
-					break;
-				}
-				case DDS_PF_DXT4:
-				case DDS_PF_DXT5:
-				{
-					u32 curWidth = header.Width;
-					u32 curHeight = header.Height;
-
-					dataSize = ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
-
-					do
-					{
-						if (curWidth > 1)
-							curWidth >>= 1;
-
-						if (curHeight > 1)
-							curHeight >>= 1;
-
-						dataSize += ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
-					}
-					while (curWidth != 1 || curHeight != 1);
-
-					format = ECF_DXT5;
-					break;
-				}
-				case DDS_PF_R16G16B16A16F:
-				{
-					// Uncompressed half-float RGBA, straight copy - no decompression function, unlike
-					// the BC6/BC7 cases below. Still goes through the SAME post-switch "bundle the
-					// whole file" path as every other FourCC format here, though: CD3D11Texture's
-					// IImage* constructor (CD3D11Texture.cpp) branches purely on the FILE EXTENSION
-					// being ".dds", not on whether the format is block-compressed, and unconditionally
-					// hands the whole buffer to CreateDDSTextureFromMemory (a DirectXTex-style loader
-					// that parses the DDS/DX10 headers itself and needs them present, sized via
-					// CImage::CompressedSize = the full file size). A stripped-down, header-free
-					// buffer was tried here and made CreateDDSTextureFromMemory fail outright (null
-					// texture, then an access violation on the next line's GetDesc call) - confirmed
-					// against a real in-engine load, not just reasoned about.
-					dataSize = header.Width * header.Height * 8;
-					format = ECF_A16B16G16R16F;
-				}
-				break;
-				case DDS_PF_BC6_U:
-				{
-					u32 curHeight = header.Height;
-					u32 curWidth = header.Width;
-					dataSize = ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
-					do
-					{
-						if (curWidth > 1)
-							curWidth >>= 1;
-
-						if (curHeight > 1)
-							curHeight >>= 1;
-
-						dataSize += ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
-					} while (curWidth != 1 || curHeight != 1);
-					format = ECF_BC6_U;
-				}
-				break;
-				case DDS_PF_BC6_S:
-				{
-					u32 curHeight = header.Height;
-					u32 curWidth = header.Width;
-					dataSize = ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
-					do
-					{
-						if (curWidth > 1)
-							curWidth >>= 1;
-
-						if (curHeight > 1)
-							curHeight >>= 1;
-
-						dataSize += ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
-					} while (curWidth != 1 || curHeight != 1);
-					format = ECF_BC6_S;
-				}
-				break;
-				case DDS_PF_BC7_U:
-				{
-					u32 curHeight = header.Height;
-					u32 curWidth = header.Width;
-					dataSize = ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16; 
-					do
-					{
-						if (curWidth > 1)
-							curWidth >>= 1;
-
-						if (curHeight > 1)
-							curHeight >>= 1;
-
-						dataSize += ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
-					} while (curWidth != 1 || curHeight != 1);
-					format = ECF_BC7_U;
-				}
-					break;
-				case DDS_PF_BC7_S:
-				{
-					u32 curHeight = header.Height;
-					u32 curWidth = header.Width;
-					dataSize = ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
-					do
-					{
-						if (curWidth > 1)
-							curWidth >>= 1;
-
-						if (curHeight > 1)
-							curHeight >>= 1;
-
-						dataSize += ((curWidth + 3) / 4) * ((curHeight + 3) / 4) * 16;
-					} while (curWidth != 1 || curHeight != 1);
-					format = ECF_BC7_S;
-				}
-					break;
-			}
-
-
-			if( format != ECF_UNKNOWN )
-			{
-				if (!is3D) // Currently 3D textures are unsupported.
-				{
-
-					if (format == ECF_BC7_S || format == ECF_BC7_U || format == ECF_BC6_S || format == ECF_BC6_U)
-					{
-						dataSize += sizeof(DDS_HEADER_DXT10);
-						dataSize += sizeof(ddsHeader);
-						file->seek(0);
-					}
-					else if (header.PixelFormat.Flags & DDPF_FOURCC)
-					{
-
-						dataSize += sizeof(DDS_HEADER_DXT10);
-						file->seek(0);
-					}
-
-					file->getSize();
-					u8* data = new u8[file->getSize()*2+1];
-					u32 readsize = file->read(data, file->getSize());
-
-					bool hasMipMap = (mipMapCount > 0) ? true : false;
-
-
-					image = new CImage(format, core::dimension2d<u32>(header.Width, header.Height), data, true, true, true, mipMapCount);
-
-					((CImage*)image)->CompressedSize = file->getSize();
-
-
-
-				}
-			}
-		}
-#endif
+		os::Printer::log("DDS: file too short for a header", name, ELL_ERROR);
+		return 0;
 	}
 
-	return image;
+	u8* bytes = new u8[byteCount];
+	file->seek(0);
+	if ((u32)file->read(bytes, byteCount) != byteCount)
+	{
+		os::Printer::log("DDS: could not read the file", name, ELL_ERROR);
+		delete[] bytes;
+		return 0;
+	}
+
+	ddsHeader header;
+	memcpy(&header, bytes, sizeof(header));
+	if (memcmp(header.Magic, "DDS ", 4) != 0 || header.Size != 124 ||
+		!(header.Flags & DDSD_PIXELFORMAT) || !(header.Flags & DDSD_CAPS))
+	{
+		os::Printer::log("DDS: not a .dds header", name, ELL_ERROR);
+		delete[] bytes;
+		return 0;
+	}
+
+	DDS_HEADER_DXT10 dx10;
+	const bool hasDx10 = (header.PixelFormat.Flags & DDPF_FOURCC) && header.PixelFormat.FourCC == ddsFourCC('D', 'X', '1', '0');
+	if (hasDx10)
+	{
+		if (byteCount < sizeof(ddsHeader) + sizeof(DDS_HEADER_DXT10))
+		{
+			os::Printer::log("DDS: file too short for its DX10 header", name, ELL_ERROR);
+			delete[] bytes;
+			return 0;
+		}
+		memcpy(&dx10, bytes + sizeof(ddsHeader), sizeof(dx10));
+	}
+
+	SDdsFile d;
+	if (!describeDds(header, hasDx10 ? &dx10 : 0, name, d))
+	{
+		delete[] bytes;
+		return 0;
+	}
+
+	if (IImage::isCompressedFormat(d.Format))
+		return takeRawFile(bytes, byteCount, d, name);
+
+	const bool multiSurface = d.Faces > 1 || d.ArraySize > 1 || d.Volume;
+	if (d.RawOnly)
+	{
+		// A padded legacy file has to be repacked, the drivers read every level tightly.
+		if (d.HasLayout && legacyRowPitch(header, d, 0, d.Width) != d.Width * (d.Layout.BitCount / 8))
+			return repackRawFile(bytes, byteCount, d, header, name);
+		return takeRawFile(bytes, byteCount, d, name);
+	}
+
+	if (multiSurface)
+	{
+		// No driver stores 24 bit texels; widen to A8R8G8B8 while repacking.
+		if (d.Format == ECF_R8G8B8)
+		{
+			d.Format = ECF_A8R8G8B8;
+			d.Decode = true;
+		}
+		return repackRawFile(bytes, byteCount, d, header, name);
+	}
+
+	return loadTopSurface(bytes, byteCount, d, header, name);
 }
+
+#endif // _IRR_COMPILE_WITH_DDS_DECODER_LOADER_
 
 
 //! creates a loader which is able to load dds images

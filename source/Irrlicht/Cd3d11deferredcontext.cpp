@@ -28,6 +28,14 @@ CD3D11DeferredContext::CD3D11DeferredContext(CD3D11Driver* immediate)
 	// Share the device -- no new device created.
 	Device = immediate->Device;
 	Device->AddRef();
+	// The 11.1+ views of it and its feature options, so queryFeature() and the material state
+	// answer the same on both sides. Released by ~CD3D11Driver().
+	Device1 = immediate->Device1; if (Device1) Device1->AddRef();
+	Device2 = immediate->Device2; if (Device2) Device2->AddRef();
+	Device3 = immediate->Device3; if (Device3) Device3->AddRef();
+	FeatureOptions = immediate->FeatureOptions;
+	FeatureOptions1 = immediate->FeatureOptions1;
+	FeatureOptions2 = immediate->FeatureOptions2;
 
 	// initDriver()'s swapchain setup (skipped here) is the only other place this gets set; anything
 	// reading it off a deferred context (e.g. CD3D11HardwareBuffer's device pointer) needs it too.
@@ -68,10 +76,22 @@ CD3D11DeferredContext::CD3D11DeferredContext(CD3D11Driver* immediate)
 	// object -- callers scaling by getScreenSize() (e.g. scissor rects) would drift after a resize.
 	ScreenSize = immediate->getScreenSize();
 
+	// Stage 0 of every material without a texture binds NullTexture (setActiveTexture()); with it
+	// null the shader samples an unbound slot and everything drawn from here comes out black.
+	// Shared with the immediate driver's cache; grabbed because ~CD3D11Driver() drops it.
+	NullTexture = immediate->NullTexture;
+	if (NullTexture)
+		NullTexture->grab();
+
 	// Deliberately NOT called: initDriver(), BuildDriverInternal(),
 	// createMaterialRenderers(). No swapchain, no backbuffer, no adapter
 	// enumeration, no duplicate material renderer table -- getRendererFor()
 	// forwards to `immediate` instead.
+	//
+	// No render target is bound here on purpose: a deferred ID3D11DeviceContext starts with
+	// default state and FinishCommandList() puts it back there, and binding the target is the
+	// caller's job -- production code records setRenderTarget(<its own RTT>) at the start of each
+	// recording and draws that texture from the immediate driver afterwards.
 }
 
 CD3D11DeferredContext::~CD3D11DeferredContext()

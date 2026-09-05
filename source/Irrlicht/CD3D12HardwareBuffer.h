@@ -92,11 +92,32 @@ namespace irr
 			D3D12_INDEX_BUFFER_VIEW getIndexBufferView() const;
 
 			//! Compute buffer views (EHBT_COMPUTE only, otherwise return false / a null handle).
-			//! Always created together, see the file header comment.
+			//! Always created together, see the file header comment. Their shape follows the
+			//! E_HARDWARE_BUFFER_FLAGS the IComputeBuffer was created with, as on D3D11: raw
+			//! (R32_TYPELESS, ByteAddressBuffer) for EHBF_COMPUTE_RAW / EHBF_DRAW_INDIRECT_ARGS /
+			//! EHBF_VERTEX_ADDITIONAL_BIND / EHBF_INDEX_ADDITIONAL_BIND, structured otherwise, and the
+			//! UAV of an EHBF_COMPUTE_APPEND/CONSUME buffer carries a hidden counter (see below).
 			bool hasUnorderedAccessView() const { return HasUAV; }
 			D3D12_CPU_DESCRIPTOR_HANDLE getUnorderedAccessView() const { return UAVHandle; }
 			bool hasShaderResourceView() const { return HasSRV; }
 			D3D12_CPU_DESCRIPTOR_HANDLE getShaderResourceView() const { return SRVHandle; }
+
+			//! The append/consume counter: D3D12 keeps it in a resource of its own rather than inside
+			//! the view, so copyStructureCount()/resetStructureCount() copy 4 bytes from/into it.
+			//! Only an EHBF_COMPUTE_APPEND/CONSUME buffer has one; it rests in UNORDERED_ACCESS.
+			bool hasCounterResource() const { return CounterResource != nullptr; }
+			ID3D12Resource* getCounterResource() const { return CounterResource.Get(); }
+			void transitionCounterTo(ID3D12GraphicsCommandList* cmdList, D3D12_RESOURCE_STATES newState);
+
+			//! Readback slots behind IVideoDriver::beginComputeReadback()/tryReadComputeBuffer(). The
+			//! copy goes through the synchronous UploadScope, so a queued readback is complete on
+			//! return and tryAsyncReadback() never has to poll -- correct, if not overlapped with GPU
+			//! work the way the D3D11 staging copies are.
+			static const u32 ReadbackSlotCount = 4;
+			bool beginAsyncReadback(u32 slot);
+			//! Copies a completed readback into `dst` (at most `bytes`). False while nothing was
+			//! queued in that slot; `wait` is accepted for interface parity and changes nothing.
+			bool tryAsyncReadback(u32 slot, void* dst, u32 bytes, bool wait);
 
 			//! Emits a CurrentState -> newState barrier on cmdList if needed (no-op otherwise).
 			//! Only relevant on the default-heap path (IsDefaultHeapPath): upload-heap resources
@@ -129,10 +150,15 @@ namespace irr
 			//! UNORDERED_ACCESS for a compute buffer).
 			bool createStaticOrComputeResource(const void* initialData, bool asUAV, D3D12_RESOURCE_STATES finalState);
 
-			//! EHBT_COMPUTE only: allocates a UAV + SRV (structured buffer views, stride = Stride)
+			//! EHBT_COMPUTE only: allocates a UAV + SRV (structured or raw per Flags, see above)
 			//! in Driver->getSRVHeap() -- same heap as textures' CBV/SRV/UAV, just a different view
 			//! type created in it (D3D12 has no separate heap for UAVs).
 			bool createComputeViews();
+
+			//! The 4-byte (4096-byte allocated: UAV counter placement alignment) default-heap
+			//! resource an append/consume UAV counts into. Kept across update()s so the count
+			//! survives a CPU re-upload of the data, as it does on D3D11.
+			bool createCounterResource();
 
 			//! Index of the "active" resource in Resources: always 0 on the default-heap path (a
 			//! single element), otherwise Driver->getCurrentFrameIndex() modulo N.
@@ -163,6 +189,19 @@ namespace irr
 			ComPtr<ID3D12Resource> StagingResource;
 			void* MappedStagingData = nullptr;
 			bool StagingIsReadback = false;
+
+			//! See getCounterResource().
+			ComPtr<ID3D12Resource> CounterResource;
+			D3D12_RESOURCE_STATES CounterState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+
+			//! One READBACK-heap copy per readback slot, sized to the buffer on first use.
+			struct SReadbackSlot
+			{
+				ComPtr<ID3D12Resource> Resource;
+				UINT64 Size = 0;
+				bool Ready = false;
+			};
+			SReadbackSlot Readback[ReadbackSlotCount];
 		};
 
 	}

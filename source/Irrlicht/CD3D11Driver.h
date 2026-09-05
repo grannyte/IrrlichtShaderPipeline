@@ -26,15 +26,13 @@
 
 #include <queue>
 #include <map>
-#include <d3d11.h>
+#include <d3d11_3.h>	// ID3D11Device1..3 / ID3D11DeviceContext1..3: logic ops, tiled resources, conservative raster
 #include <sal.h>
 #include <dxgi1_6.h>
 #include <unordered_map>
 #include <array>
 #include <memory>
 
-//#include <d3d11_1.h>
-//#include <d3d11_2.h>
 namespace irr
 {
 	namespace video
@@ -218,6 +216,14 @@ namespace irr
 
 			virtual void resetStructureCount(scene::IComputeBuffer* appendBuffer, u32 value = 0) override;
 
+			virtual bool beginComputeReadback(scene::IComputeBuffer* buffer, u32 slot) override;
+
+			virtual bool tryReadComputeBuffer(scene::IComputeBuffer* buffer, u32 slot, void* dst, u32 bytes, bool wait) override;
+
+			virtual void drawMeshBufferInstancedIndirect(const scene::IMeshBuffer* mb,
+				scene::IComputeBuffer* instanceBuffer, u32 instanceStride,
+				scene::IComputeBuffer* argBuffer, u32 byteOffset) override;
+
 			virtual void draw2DVertexPrimitiveList(const void* vertices, u32 vertexCount, const void* indices,
 				u32 primitiveCount, E_VERTEX_TYPE vType, scene::E_PRIMITIVE_TYPE pType, E_INDEX_TYPE iType) _IRR_OVERRIDE_;
 
@@ -257,12 +263,18 @@ namespace irr
 			virtual bool setRenderTarget(video::ITexture* texture, bool clearBackBuffer,
 				bool clearZBuffer, SColor color, video::ITexture* depthStencil) _IRR_OVERRIDE_;
 
+			virtual bool setRenderTargetSlice(video::ITexture* texture, u32 arraySlice,
+				bool clearTarget = true, SColor color = video::SColor(0, 0, 0, 0)) _IRR_OVERRIDE_;
+
 			//! Sets multiple render targets
 			virtual bool setRenderTarget(const core::array<video::IRenderTarget>& targets,
 				const core::array<bool>& clearBackBuffer, bool clearZBuffer, SColor color, video::ITexture* depthStencil) _IRR_OVERRIDE_;
 
 			//! sets a viewport
 			virtual void setViewPort(const core::rect<s32>& area);
+
+			//! Up to 16 viewports (D3D11.x feature set); the shader picks one with SV_ViewportArrayIndex.
+			virtual void setViewPorts(const core::array<core::rect<s32> >& areas) _IRR_OVERRIDE_;
 
 			//! gets the area of the current viewport
 			virtual const core::rect<s32>& getViewPort() const;
@@ -489,7 +501,7 @@ namespace irr
 				const io::path& name = "uav", const ECOLOR_FORMAT format = ECF_A32B32G32R32F) override;
 
 			//! Copies a whole texture to another of identical size and format.
-			virtual bool copyTexture(ITexture* dest, ITexture* source) override;
+			virtual bool copyTexture(ITexture* dest, ITexture* source, u32 destSlice = 0) override;
 
 			//! Clears the ZBuffer.
 			virtual void clearZBuffer();
@@ -609,6 +621,32 @@ namespace irr
 			ID3D11DeviceContext* Context;
 			core::stringw Name;
 
+			//! The 11.1+ interfaces of Device/Context, null on a runtime that lacks them (queried in
+			//! BuildDriverInternal(), copied by the deferred context). Device1: logic ops. Device2 /
+			//! Context2: tiled resources. Device3: conservative rasterization.
+			ID3D11Device1* Device1 = NULL;
+			ID3D11Device2* Device2 = NULL;
+			ID3D11Device3* Device3 = NULL;
+			ID3D11DeviceContext1* Context1 = NULL;
+			ID3D11DeviceContext2* Context2 = NULL;
+			//! CheckFeatureSupport() results, zero when the query is unavailable. What queryFeature()
+			//! answers for the D3D11.x additions.
+			D3D11_FEATURE_DATA_D3D11_OPTIONS FeatureOptions = {};
+			D3D11_FEATURE_DATA_D3D11_OPTIONS1 FeatureOptions1 = {};
+			D3D11_FEATURE_DATA_D3D11_OPTIONS2 FeatureOptions2 = {};
+			//! One-time warnings for a material asking for what the device lacks.
+			bool WarnedNoLogicOp = false;
+			bool WarnedLogicOpFormat = false;
+			bool WarnedNoConservativeRaster = false;
+			bool WarnedNoMinMaxFilter = false;
+			bool WarnedSrc1OnMrtSlot = false;
+			//! D3D11_FORMAT_SUPPORT2_OUTPUT_MERGER_LOGIC_OP per format, asked once each: a logic op
+			//! on a format without it is undefined, so setBasicRenderStates() drops it (warned once).
+			std::map<DXGI_FORMAT, bool> LogicOpFormatSupport;
+			bool formatSupportsLogicOp(DXGI_FORMAT format);
+			//! The format of the render target view currently bound (the back buffer's when none).
+			DXGI_FORMAT currentRenderTargetFormat() const;
+
 			// Back and depth buffers
 			ID3D11RenderTargetView* DefaultBackBuffer;
 			CD3D11Texture* DefaultDepthBuffer;
@@ -624,6 +662,10 @@ namespace irr
 			SD3D11_DEPTH_STENCIL_DESC DepthStencilDesc;
 
 			SD3D11_BLEND_DESC BlendDesc;
+			//! Slots 1..7 of the bound MRT set (IRenderTarget blend/mask), re-applied after every
+			//! BlendDesc.reset() in setBasicRenderStates(); MrtBlendActive while such a set is bound.
+			SD3D11_BLEND_DESC MrtBlendDesc;
+			bool MrtBlendActive = false;
 
 			SD3D11_SAMPLER_DESC SamplerDesc[MATERIAL_MAX_TEXTURES];
 
@@ -809,7 +851,10 @@ namespace irr
 			void removeDepthSurface(CD3D11Texture* depth);
 
 			// creates a depth buffer view
-			CD3D11Texture* createDepthStencilView(core::dimension2d<u32> size, ECOLOR_FORMAT depthformat);
+			//! A pooled depth buffer for render target textures; `sampleCount` has to match the
+			//! colour target it will be bound with.
+			CD3D11Texture* createDepthStencilView(core::dimension2d<u32> size, ECOLOR_FORMAT depthformat,
+				u32 sampleCount = 1, u32 sampleQuality = 0);
 
 			void EvaluateBestDepthFormat()
 			{

@@ -46,6 +46,13 @@ namespace irr
 			// a mutex would be a genuine race (CD3D12PSOCache::getOrCreate() isn't thread-safe) --
 			// the accepted cost is that a handful of PSOs may be duplicated rather than reused
 			// between this context and the immediate driver.
+			//
+			// RootSignatureCache is likewise NOT copied, and needs no equivalent of the PSO caveat:
+			// nothing on a deferred context ever populates it. Root signatures are built once at
+			// registration time on the immediate driver (createBuiltInMaterialRenderers()/
+			// registerUserShaderMaterial() -> buildMaterialRootSignature()) and reached from here
+			// through the delegated material registry, as CD3D12MaterialRenderer::RootSignature. Only
+			// the DEFAULT one is copied below, as the fallback rootSignatureForRenderer() needs.
 			Device = immediate->Device;
 			DirectQueue = immediate->DirectQueue;
 			RootSignature = immediate->RootSignature;
@@ -63,12 +70,19 @@ namespace irr
 			// cache (CD3D12Driver::createNullTexture()): ~CNullDriver() on THIS context therefore
 			// drops nothing and cannot destroy a texture still used elsewhere.
 
-			HRESULT hr = Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
-				IID_PPV_ARGS(&Frames[0].CommandAllocator));
-			if (FAILED(hr))
+			// One allocator per ring slot: beginRecording() rotates through them so it never resets
+			// one the GPU may still be executing, which is the only way to avoid blocking on the
+			// previous submission (the caller cannot wait -- see beginRecording).
+			HRESULT hr = S_OK;
+			for (UINT i = 0; i < NativeFrameCount; ++i)
 			{
-				os::Printer::log("CD3D12DeferredContext: CreateCommandAllocator failed", ELL_ERROR);
-				return;
+				hr = Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+					IID_PPV_ARGS(&Frames[i].CommandAllocator));
+				if (FAILED(hr))
+				{
+					os::Printer::log("CD3D12DeferredContext: CreateCommandAllocator failed", ELL_ERROR);
+					return;
+				}
 			}
 
 			// Builds the constant ring, shader-visible SRV heap and vertex ring for all of
@@ -156,44 +170,99 @@ namespace irr
 
 		void CD3D12DeferredContext::prepareRecordingState()
 		{
-			if (!CommandList || !Frames[0].ShaderVisibleSRVHeap)
+			// Per-slot, not slot 0: the rings and heap bound here must belong to the same frame as
+			// the allocator beginRecording() just reset, or a still-in-flight submission's data is
+			// overwritten under it.
+			SD3D12FrameContext& frame = Frames[CurrentFrameIndex];
+			if (!CommandList || !frame.ShaderVisibleSRVHeap)
 				return;
 
-			Frames[0].ConstantRingOffset = 0;
-			Frames[0].ShaderVisibleSRVNext = 0;
-			Frames[0].VertexRingOffset = 0;
-			ID3D12DescriptorHeap* heaps[] = { Frames[0].ShaderVisibleSRVHeap.Get() };
+			frame.ConstantRingOffset = 0;
+			frame.ShaderVisibleSRVNext = 0;
+			frame.VertexRingOffset = 0;
+			ID3D12DescriptorHeap* heaps[] = { frame.ShaderVisibleSRVHeap.Get() };
 			CommandList->SetDescriptorHeaps(1, heaps);
 
 			if (!Target)
 				return;
 
-			// Draws into its OWN offscreen render target texture -- see the .h file header
-			// comment for why this context doesn't target the immediate driver's back buffer.
-			// Already created in the RENDER_TARGET state at construction time
-			// (CD3D12Texture::createResource()) -- no transition barrier needed here, unlike
-			// CD3D12Driver::beginScene() on the back buffer.
-			const core::dimension2d<u32>& size = Target->getSize();
-			D3D12_VIEWPORT viewport = { 0.0f, 0.0f, static_cast<float>(size.Width),
-				static_cast<float>(size.Height), 0.0f, 1.0f };
-			CommandList->RSSetViewports(1, &viewport);
-			D3D12_RECT scissor = { 0, 0, static_cast<LONG>(size.Width), static_cast<LONG>(size.Height) };
-			CommandList->RSSetScissorRects(1, &scissor);
-
-			D3D12_CPU_DESCRIPTOR_HANDLE* dsvPtr = nullptr;
-			if (HasDepthStencilBuffer)
-				dsvPtr = &static_cast<D3D12_CPU_DESCRIPTOR_HANDLE&>(DSVHandle);
-			D3D12_CPU_DESCRIPTOR_HANDLE rtv = static_cast<CD3D12Texture*>(Target)->getRenderTargetView();
-			CommandList->OMSetRenderTargets(1, &rtv, FALSE, dsvPtr);
+			// The command list is open: bindDrawState() refuses every draw while SceneOpen is false
+			// (its "draw outside beginScene()" guard), and this context's beginScene() is a no-op,
+			// so the recording itself is the open scene here.
+			SceneOpen = true;
 
 			// Clears on every (re)start of recording -- makes an execute() reproducible even
 			// with no draw calls (useful for tests), and resets the target to a clean state
 			// after reuse via beginRecording().
-			FLOAT clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-			CommandList->ClearRenderTargetView(rtv, clearColor, 0, nullptr);
-			if (dsvPtr)
+			bindOwnTarget(true, true, SColor(255, 0, 0, 0));
+		}
+
+		void CD3D12DeferredContext::bindOwnTarget(bool clearColor, bool clearDepth, SColor color)
+		{
+			// Draws into its OWN offscreen render target texture -- see the .h file header
+			// comment for why this context doesn't target the immediate driver's back buffer.
+			CD3D12Texture* target = static_cast<CD3D12Texture*>(Target);
+			// Created in RENDER_TARGET, but the immediate driver drawing the previous recording's
+			// result as a texture left it in PIXEL_SHADER_RESOURCE; a no-op the first time round.
+			target->transitionTo(CommandList.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+			// The same bookkeeping CD3D12Driver::setRenderTarget() keeps: buildPSOKeyFromMaterial()
+			// reads the formats and sample count, the 2D projection reads the size. Without it a
+			// recording that bound a user texture leaves those describing that texture, and the next
+			// recording into this target draws with the wrong size (nothing visible) or a rejected PSO.
+			const core::dimension2d<u32>& size = Target->getSize();
+			CurrentRenderTarget = Target;
+			CurrentRenderTargetSize = size;
+			CurrentRTVCount = 1;
+			CurrentRTVFormats[0] = target->getDxgiFormat();
+			CurrentRTVSampleCount = 1;
+			MrtBlend.reset();
+
+			D3D12_CPU_DESCRIPTOR_HANDLE* dsvPtr = nullptr;
+			if (HasDepthStencilBuffer)
+			{
+				CurrentDSVHandle = DSVHandle;
+				CurrentDSVFormat = DepthStencilFormat;
+				dsvPtr = &CurrentDSVHandle;
+			}
+			else
+				CurrentDSVHandle = {};
+			CurrentSceneHasDepthStencil = (dsvPtr != nullptr);
+
+			D3D12_CPU_DESCRIPTOR_HANDLE rtv = target->getRenderTargetView();
+			if (clearColor)
+			{
+				FLOAT clear[4] = { color.getRed() / 255.0f, color.getGreen() / 255.0f,
+					color.getBlue() / 255.0f, color.getAlpha() / 255.0f };
+				CommandList->ClearRenderTargetView(rtv, clear, 0, nullptr);
+			}
+			if (dsvPtr && clearDepth)
 				CommandList->ClearDepthStencilView(*dsvPtr,
 					D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+			CommandList->OMSetRenderTargets(1, &rtv, FALSE, dsvPtr);
+			CurrentRTVHandles[0] = rtv;
+
+			D3D12_VIEWPORT viewport = { 0.0f, 0.0f, static_cast<float>(size.Width),
+				static_cast<float>(size.Height), 0.0f, 1.0f };
+			CommandList->RSSetViewports(1, &viewport);
+			ViewPort = core::rect<s32>(0, 0, static_cast<s32>(size.Width), static_cast<s32>(size.Height));
+			setScissorFromClip(nullptr);
+		}
+
+		bool CD3D12DeferredContext::setRenderTarget(video::ITexture* texture, bool clearBackBuffer,
+			bool clearZBuffer, SColor color, video::ITexture* depthStencil)
+		{
+			// "The frame buffer" of this context is its own target; the immediate driver's back
+			// buffer RTV lives in its frame ring, which this context does not have.
+			if (texture && texture != Target)
+				return CD3D12Driver::setRenderTarget(texture, clearBackBuffer, clearZBuffer, color, depthStencil);
+			if (!SceneOpen || !Target)
+			{
+				os::Printer::log("CD3D12DeferredContext::setRenderTarget: no recording is open", ELL_WARNING);
+				return false;
+			}
+			bindOwnTarget(clearBackBuffer, clearZBuffer, color);
+			return true;
 		}
 
 		void CD3D12DeferredContext::beginRecording()
@@ -210,14 +279,30 @@ namespace irr
 			// defeating the point of recording in parallel): it's up to the caller to have called
 			// waitForCompletion() (or otherwise know the previous submission is done) before
 			// calling beginRecording() again.
-			if (Fence && Fence->GetCompletedValue() < FenceValue)
-				os::Printer::log("CD3D12DeferredContext::beginRecording: previous submission not"
-					" confirmed complete on the GPU -- call waitForCompletion() before"
-					" beginRecording() (see IDeferredContext::beginRecording contract)",
-					ELL_WARNING);
+			// Rotate through the frame ring instead of resetting one allocator every frame: an
+			// allocator may only be Reset() once the GPU has finished every list that used it, and
+			// the caller cannot wait here (blocking on the UI submission deadlocks against
+			// Present). With NativeFrameCount slots the wait below is effectively never taken,
+			// which is what makes recording in parallel safe rather than merely unblocked.
+			CurrentFrameIndex = (CurrentFrameIndex + 1) % NativeFrameCount;
+			SD3D12FrameContext& frame = Frames[CurrentFrameIndex];
 
-			Frames[0].CommandAllocator->Reset();
-			CommandList->Reset(Frames[0].CommandAllocator.Get(), nullptr);
+			if (Fence && frame.FenceValue != 0 && Fence->GetCompletedValue() < frame.FenceValue)
+			{
+				if (FenceEvent)
+				{
+					Fence->SetEventOnCompletion(frame.FenceValue, FenceEvent);
+					WaitForSingleObject(FenceEvent, INFINITE);
+				}
+				else
+				{
+					while (Fence->GetCompletedValue() < frame.FenceValue)
+						/* spin: no event to wait on */;
+				}
+			}
+
+			frame.CommandAllocator->Reset();
+			CommandList->Reset(frame.CommandAllocator.Get(), nullptr);
 			prepareRecordingState();
 		}
 
@@ -237,6 +322,8 @@ namespace irr
 				return;
 			}
 
+			// Closed either way: nothing may be recorded until beginRecording() reopens it.
+			SceneOpen = false;
 			HRESULT hr = CommandList->Close();
 			if (FAILED(hr))
 			{
@@ -251,6 +338,9 @@ namespace irr
 			{
 				++FenceValue;
 				target->DirectQueue->Signal(Fence.Get(), FenceValue);
+				// Stamp the slot this submission used, so beginRecording() knows when it may be
+				// reset. Without this the ring rotates but never actually waits for anything.
+				Frames[CurrentFrameIndex].FenceValue = FenceValue;
 			}
 		}
 

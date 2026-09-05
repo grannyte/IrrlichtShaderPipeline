@@ -14,13 +14,15 @@ namespace irr
 	namespace video
 	{
 		CD3D11CallBridge::CD3D11CallBridge(ID3D11Device* device, CD3D11Driver* driver, ID3D11DeviceContext* explicitContext)
-			: Context(NULL), Device(device), Driver(driver), InputLayout(NULL),
+			: Context(NULL), Device(device), Device1(NULL), Device3(NULL), Driver(driver), InputLayout(NULL),
 			Topology(D3D_PRIMITIVE_TOPOLOGY_UNDEFINED), VtxDescriptor(NULL), ShaderByteCode(NULL), ShaderByteCodeSize(0),
 			samplersChanged(0), texturesChanged(0)
 		{
 			if (Device)
 			{
 				Device->AddRef();
+				Device->QueryInterface(__uuidof(ID3D11Device1), reinterpret_cast<void**>(&Device1));
+				Device->QueryInterface(__uuidof(ID3D11Device3), reinterpret_cast<void**>(&Device3));
 				if (explicitContext)
 				{
 					// Used for a deferred recording context: target the
@@ -140,6 +142,10 @@ namespace irr
 			if (Context)
 				Context->Release();
 
+			if (Device3)
+				Device3->Release();
+			if (Device1)
+				Device1->Release();
 			if (Device)
 				Device->Release();
 		}
@@ -326,7 +332,8 @@ namespace irr
 
 		void CD3D11CallBridge::setHullShader(SShader* shader)
 		{
-			if (shaders[EST_HULL_SHADER] != shader)
+			const bool stageChanged = (shaders[EST_HULL_SHADER] != shader);
+			if (stageChanged)
 			{
 				shaders[EST_HULL_SHADER] = shader;
 
@@ -348,9 +355,9 @@ namespace irr
 
 			if (shader)
 			{
-				// only set samplers and textures if a shader is set and if samplers / textures are used, setted and changed
-				u32 samplersToSet = shader->samplersUsed & samplersChanged;
-				u32 texturesToSet = shader->texturesUsed & texturesChanged;
+				// Same newly-bound-stage rebind as setDomainShader -- see there.
+				const u32 samplersToSet = stageChanged ? shader->samplersUsed : (shader->samplersUsed & samplersChanged);
+				const u32 texturesToSet = stageChanged ? shader->texturesUsed : (shader->texturesUsed & texturesChanged);
 
 				if (samplersToSet || texturesToSet)
 				{
@@ -359,7 +366,7 @@ namespace irr
 						if (samplersToSet & (1 << i))
 							Context->HSSetSamplers(i, 1, &SamplerStates[i]);
 
-						if (texturesChanged & (1 << i))
+						if (texturesToSet & (1 << i))
 						{
 							ID3D11ShaderResourceView* views = NULL;
 
@@ -375,7 +382,8 @@ namespace irr
 
 		void CD3D11CallBridge::setDomainShader(SShader* shader)
 		{
-			if (shaders[EST_DOMAIN_SHADER] != shader)
+			const bool stageChanged = (shaders[EST_DOMAIN_SHADER] != shader);
+			if (stageChanged)
 			{
 				shaders[EST_DOMAIN_SHADER] = shader;
 
@@ -397,9 +405,10 @@ namespace irr
 
 			if (shader)
 			{
-				// only set samplers and textures if a shader is set and if samplers / textures are used, setted and changed
-				u32 samplersToSet = shader->samplersUsed & samplersChanged;
-				u32 texturesToSet = shader->texturesUsed & texturesChanged;
+				// texturesChanged tracks texture IDENTITY changes, not per-stage binding state, so a
+				// newly bound stage would inherit nothing and sample zeros. Bind all it uses instead.
+				const u32 samplersToSet = stageChanged ? shader->samplersUsed : (shader->samplersUsed & samplersChanged);
+				const u32 texturesToSet = stageChanged ? shader->texturesUsed : (shader->texturesUsed & texturesChanged);
 
 				if (samplersToSet || texturesToSet)
 				{
@@ -408,7 +417,7 @@ namespace irr
 						if (samplersToSet & (1 << i))
 							Context->DSSetSamplers(i, 1, &SamplerStates[i]);
 
-						if (texturesChanged & (1 << i))
+						if (texturesToSet & (1 << i))
 						{
 							ID3D11ShaderResourceView* views = NULL;
 
@@ -518,7 +527,30 @@ namespace irr
 				else	// if not found, create and insert into map
 				{
 					HRESULT hr;
-					if (SUCCEEDED(hr = Device->CreateRasterizerState(&RasterizerDesc, &state)))
+					if (RasterizerDesc.ConservativeRaster && Device3)
+					{
+						// The 11.3 description carries the flag; an ID3D11RasterizerState2 is an
+						// ID3D11RasterizerState, so the map stores it like any other.
+						D3D11_RASTERIZER_DESC2 desc2 = {};
+						desc2.FillMode = RasterizerDesc.FillMode;
+						desc2.CullMode = RasterizerDesc.CullMode;
+						desc2.FrontCounterClockwise = RasterizerDesc.FrontCounterClockwise;
+						desc2.DepthBias = RasterizerDesc.DepthBias;
+						desc2.DepthBiasClamp = RasterizerDesc.DepthBiasClamp;
+						desc2.SlopeScaledDepthBias = RasterizerDesc.SlopeScaledDepthBias;
+						desc2.DepthClipEnable = RasterizerDesc.DepthClipEnable;
+						desc2.ScissorEnable = RasterizerDesc.ScissorEnable;
+						desc2.MultisampleEnable = RasterizerDesc.MultisampleEnable;
+						desc2.AntialiasedLineEnable = RasterizerDesc.AntialiasedLineEnable;
+						desc2.ForcedSampleCount = 0;
+						desc2.ConservativeRaster = D3D11_CONSERVATIVE_RASTERIZATION_MODE_ON;
+						ID3D11RasterizerState2* state2 = NULL;
+						hr = Device3->CreateRasterizerState2(&desc2, &state2);
+						state = state2;
+					}
+					else
+						hr = Device->CreateRasterizerState(&RasterizerDesc, &state);
+					if (SUCCEEDED(hr))
 					{
 						RasterizerMap.insert(RasterizerDesc, state);
 					}
@@ -550,7 +582,35 @@ namespace irr
 				else	// if not found, create and insert into map
 				{
 					HRESULT hr;
-					if (SUCCEEDED(hr = Device->CreateBlendState(&BlendDesc, &state)))
+					if (BlendDesc.LogicOpEnable && Device1)
+					{
+						// A logic op replaces blending on every target (the two are exclusive per
+						// slot), through the 11.1 description. ID3D11BlendState1 is an ID3D11BlendState.
+						D3D11_BLEND_DESC1 desc1 = {};
+						desc1.AlphaToCoverageEnable = BlendDesc.AlphaToCoverageEnable;
+						desc1.IndependentBlendEnable = BlendDesc.IndependentBlendEnable;
+						for (u32 i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i)
+						{
+							const D3D11_RENDER_TARGET_BLEND_DESC& src = BlendDesc.RenderTarget[i];
+							D3D11_RENDER_TARGET_BLEND_DESC1& dst = desc1.RenderTarget[i];
+							dst.BlendEnable = FALSE;
+							dst.LogicOpEnable = TRUE;
+							dst.LogicOp = BlendDesc.LogicOp;
+							dst.SrcBlend = src.SrcBlend;
+							dst.DestBlend = src.DestBlend;
+							dst.BlendOp = src.BlendOp;
+							dst.SrcBlendAlpha = src.SrcBlendAlpha;
+							dst.DestBlendAlpha = src.DestBlendAlpha;
+							dst.BlendOpAlpha = src.BlendOpAlpha;
+							dst.RenderTargetWriteMask = src.RenderTargetWriteMask;
+						}
+						ID3D11BlendState1* state1 = NULL;
+						hr = Device1->CreateBlendState1(&desc1, &state1);
+						state = state1;
+					}
+					else
+						hr = Device->CreateBlendState(&BlendDesc, &state);
+					if (SUCCEEDED(hr))
 					{
 						BlendMap.insert(BlendDesc, state);
 					}
@@ -562,7 +622,7 @@ namespace irr
 					}
 				}
 
-				Context->OMSetBlendState(state, 0, 0xffffffff);
+				Context->OMSetBlendState(state, 0, BlendDesc.SampleMask);
 			}
 		}
 

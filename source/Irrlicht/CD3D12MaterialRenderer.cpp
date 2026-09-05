@@ -495,6 +495,10 @@ namespace irr
 #ifdef _DEBUG
 			compileFlags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 #endif
+			// Same opt-in the D3D11 driver honours: a kernel whose branches must survive (per-body
+			// selects, traversal loops) says so with this marker in its top-level source.
+			if (strstr(computeShaderProgram, "PREFER_FLOW_CONTROL") != nullptr)
+				compileFlags |= D3DCOMPILE_PREFER_FLOW_CONTROL;
 
 			ComPtr<ID3DBlob> cs, errors;
 			HRESULT hr = D3DCompile(computeShaderProgram, strlen(computeShaderProgram), "user_compute_shader",
@@ -540,6 +544,27 @@ namespace irr
 #endif
 
 			return true;
+		}
+
+		std::vector<SD3D12UserShaderCBuffer>* CD3D12MaterialRenderer::getStageBuffers(E_D3D12_USER_CBV_STAGE stage)
+		{
+			// const_cast on the const overload rather than duplicating the switch -- the object is
+			// non-const here by construction, so this hands back a legitimately mutable reference.
+			return const_cast<std::vector<SD3D12UserShaderCBuffer>*>(
+				static_cast<const CD3D12MaterialRenderer*>(this)->getStageBuffers(stage));
+		}
+
+		const std::vector<SD3D12UserShaderCBuffer>* CD3D12MaterialRenderer::getStageBuffers(E_D3D12_USER_CBV_STAGE stage) const
+		{
+			switch (stage)
+			{
+			case ED3D12UCS_VERTEX:   return &VSBuffers;
+			case ED3D12UCS_PIXEL:    return &PSBuffers;
+			case ED3D12UCS_GEOMETRY: return &GSBuffers;
+			case ED3D12UCS_HULL:     return &HSBuffers;
+			case ED3D12UCS_DOMAIN:   return &DSBuffers;
+			default:                 return nullptr;
+			}
 		}
 
 		s32 CD3D12MaterialRenderer::getConstantBufferID(const c8* name, E_SHADER_TYPE stage) const

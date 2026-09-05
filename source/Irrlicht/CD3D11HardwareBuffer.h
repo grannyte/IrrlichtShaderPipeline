@@ -56,6 +56,14 @@ public:
 	//! return DX 11 buffer
 	ID3D11Buffer* getBuffer() const;
 
+	//! Queue a copy into the staging buffer of slot; no wait. See IVideoDriver::beginComputeReadback.
+	bool beginAsyncReadback(u32 slot);
+
+	//! Map slot's staging copy; wait=false returns false while the GPU still owns it.
+	bool tryAsyncReadback(u32 slot, void* dst, u32 bytes, bool wait);
+
+	enum { ASYNC_READBACK_SLOTS = 4 };
+
 private:
 	bool createInternalBuffer(const void* initialData);
 
@@ -66,7 +74,9 @@ private:
 	ID3D11ShaderResourceView* SRView;
 
 	CD3D11Driver* Driver;
-	std::shared_ptr<CD3D11HardwareBuffer> TempStagingBuffer;
+	std::shared_ptr<CD3D11HardwareBuffer> TempStagingBuffer;   // kept across locks; freed on resize
+	std::shared_ptr<CD3D11HardwareBuffer> AsyncStaging[ASYNC_READBACK_SLOTS];   // recreated when Size changes
+	bool StagingLocked = false;
 	D3D11_MAP LastMapDirection;
 	irr::scene::IBuffer* LinkedBuffer;
 };

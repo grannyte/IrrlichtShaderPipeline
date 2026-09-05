@@ -485,6 +485,12 @@ namespace irr
 				case EBF_DST_ALPHA:				r = D3D11_BLEND_DEST_ALPHA; break;
 				case EBF_ONE_MINUS_DST_ALPHA:	r = D3D11_BLEND_INV_DEST_ALPHA; break;
 				case EBF_SRC_ALPHA_SATURATE:	r = D3D11_BLEND_SRC_ALPHA_SAT; break;
+				// Dual-source: the pixel shader's SV_Target1. Only ever applied to RenderTarget[0] here.
+				case EBF_SRC1_COLOR:			r = D3D11_BLEND_SRC1_COLOR; break;
+				case EBF_ONE_MINUS_SRC1_COLOR:	r = D3D11_BLEND_INV_SRC1_COLOR; break;
+				case EBF_SRC1_ALPHA:			r = D3D11_BLEND_SRC1_ALPHA; break;
+				case EBF_ONE_MINUS_SRC1_ALPHA:	r = D3D11_BLEND_INV_SRC1_ALPHA; break;
+				default:						r = D3D11_BLEND_ONE; break;
 				}
 				return r;
 			}
