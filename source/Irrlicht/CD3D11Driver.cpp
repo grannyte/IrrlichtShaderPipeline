@@ -161,6 +161,12 @@ namespace irr
 			if (Adapter)
 				Adapter->Release();
 
+			if (Context2) Context2->Release();
+			if (Context1) Context1->Release();
+			if (Device3) Device3->Release();
+			if (Device2) Device2->Release();
+			if (Device1) Device1->Release();
+
 			if (Context)
 			{
 				// Unbound all shader resources
@@ -406,6 +412,19 @@ namespace irr
 		{
 			printVersion();
 
+			// The 11.1+ interfaces, absent on an old runtime: every user checks for null.
+			Device->QueryInterface(__uuidof(ID3D11Device1), reinterpret_cast<void**>(&Device1));
+			Device->QueryInterface(__uuidof(ID3D11Device2), reinterpret_cast<void**>(&Device2));
+			Device->QueryInterface(__uuidof(ID3D11Device3), reinterpret_cast<void**>(&Device3));
+			Context->QueryInterface(__uuidof(ID3D11DeviceContext1), reinterpret_cast<void**>(&Context1));
+			Context->QueryInterface(__uuidof(ID3D11DeviceContext2), reinterpret_cast<void**>(&Context2));
+			if (FAILED(Device->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS, &FeatureOptions, sizeof(FeatureOptions))))
+				::ZeroMemory(&FeatureOptions, sizeof(FeatureOptions));
+			if (FAILED(Device->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS1, &FeatureOptions1, sizeof(FeatureOptions1))))
+				::ZeroMemory(&FeatureOptions1, sizeof(FeatureOptions1));
+			if (FAILED(Device->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS2, &FeatureOptions2, sizeof(FeatureOptions2))))
+				::ZeroMemory(&FeatureOptions2, sizeof(FeatureOptions2));
+
 			// Get adapter used by this device and query informations
 			IDXGIDevice4* DXGIDevice = NULL;
 			Device->QueryInterface(__uuidof(IDXGIDevice4), reinterpret_cast<void**>(&DXGIDevice));
@@ -622,6 +641,10 @@ namespace irr
 			DriverAttributes->setAttribute("MaxTextureLODBias", (s32)SamplerDesc->MipLODBias);
 			DriverAttributes->setAttribute("Version", Params.DriverType == EDT_DIRECT3D11 ? 110 : 101);
 			DriverAttributes->setAttribute("ShaderLanguageVersion", Params.DriverType == EDT_DIRECT3D11 ? 50 : 40);
+			// The D3D11.x additions, see doc/d3d11-feature-api.md.
+			DriverAttributes->setAttribute("LogicOpOnUnorm", queryFeature(EVDF_LOGIC_OP) && formatSupportsLogicOp(D3DColorFormat));
+			DriverAttributes->setAttribute("TiledResourcesTier", (s32)FeatureOptions2.TiledResourcesTier);
+			DriverAttributes->setAttribute("ConservativeRasterizationTier", (s32)FeatureOptions2.ConservativeRasterizationTier);
 			DriverAttributes->setAttribute("AntiAlias", Params.AntiAlias);
 
 			// clear textures
@@ -793,6 +816,7 @@ namespace irr
 				return DriverType == D3D_DRIVER_TYPE_HARDWARE;
 
 			case EVDF_MRT_BLEND:
+			case EVDF_MRT_COLOR_MASK:
 			case EVDF_ALPHA_TO_COVERAGE:
 			case EVDF_MRT_BLEND_FUNC:
 			case EVDF_TEXTURE_NSQUARE:
@@ -849,6 +873,24 @@ namespace irr
 			}
 			case EVDF_OCCLUSION_QUERY:
 				return true;
+
+			// --- The D3D11.x additions, see doc/d3d11-feature-api.md ---
+			case EVDF_DUAL_SOURCE_BLEND:
+				return FeatureLevel >= D3D_FEATURE_LEVEL_10_0;
+			case EVDF_LOGIC_OP:
+				return Device1 != NULL && FeatureOptions.OutputMergerLogicOp != 0;
+			case EVDF_CONSERVATIVE_RASTERIZATION:
+				return Device3 != NULL && FeatureOptions2.ConservativeRasterizationTier != D3D11_CONSERVATIVE_RASTERIZATION_NOT_SUPPORTED;
+			case EVDF_PIXEL_SHADER_STENCIL_REF:
+				return FeatureOptions2.PSSpecifiedStencilRefSupported != 0;
+			case EVDF_RASTERIZER_ORDERED_VIEWS:
+				return FeatureOptions2.ROVsSupported != 0;
+			case EVDF_NATIVE_DEFERRED_CONTEXT:
+				return Params.DriverMultithreaded;
+			case EVDF_MULTIPLE_VIEWPORTS:
+				return FeatureLevel >= D3D_FEATURE_LEVEL_10_0; // SV_ViewportArrayIndex from a geometry shader
+			case EVDF_MINMAX_FILTER:
+				return FeatureOptions1.MinMaxFiltering != 0;
 
 			default:
 				return false;
@@ -1524,6 +1566,7 @@ namespace irr
 
 			// No depth: slices are written by a full-screen blit, never depth-tested.
 			CurrentDepthBuffer = 0;
+			MrtBlendActive = false;
 			Context->OMSetRenderTargets(1, &view, NULL);
 
 			if (clearTarget)
@@ -1619,6 +1662,7 @@ namespace irr
 
 			// set blend
 			BlendDesc.IndependentBlendEnable = FALSE;
+			MrtBlendActive = false;
 
 			if (tex && CurrentRendertargetSize != tex->getSize())
 				CurrentRendertargetSize = tex->getSize();
@@ -1708,35 +1752,47 @@ namespace irr
 			// set source blend
 			for (i = 0; i < maxMultipleRTTs; ++i)
 			{
-				E_BLEND_FACTOR blendFac = targets[i].BlendFuncSrc;
+				// The dual-source factors exist on slot 0 only; any other slot gets ONE and a warning.
+				auto toD3D11Blend = [&](E_BLEND_FACTOR blendFac) -> D3D11_BLEND
+				{
+					switch (blendFac)
+					{
+					case EBF_ZERO: return D3D11_BLEND_ZERO;
+					case EBF_ONE: return D3D11_BLEND_ONE;
+					case EBF_DST_COLOR: return D3D11_BLEND_DEST_COLOR;
+					case EBF_ONE_MINUS_DST_COLOR: return D3D11_BLEND_INV_DEST_COLOR;
+					case EBF_SRC_COLOR: return D3D11_BLEND_SRC_COLOR;
+					case EBF_ONE_MINUS_SRC_COLOR: return D3D11_BLEND_INV_SRC_COLOR;
+					case EBF_SRC_ALPHA: return D3D11_BLEND_SRC_ALPHA;
+					case EBF_ONE_MINUS_SRC_ALPHA: return D3D11_BLEND_INV_SRC_ALPHA;
+					case EBF_DST_ALPHA: return D3D11_BLEND_DEST_ALPHA;
+					case EBF_ONE_MINUS_DST_ALPHA: return D3D11_BLEND_INV_DEST_ALPHA;
+					case EBF_SRC_ALPHA_SATURATE: return D3D11_BLEND_SRC_ALPHA_SAT;
+					case EBF_SRC1_COLOR:
+					case EBF_ONE_MINUS_SRC1_COLOR:
+					case EBF_SRC1_ALPHA:
+					case EBF_ONE_MINUS_SRC1_ALPHA:
+						if (i != 0)
+						{
+							if (!WarnedSrc1OnMrtSlot)
+								os::Printer::log("CD3D11Driver::setRenderTarget: EBF_SRC1_* is only valid on "
+									"render target 0, using EBF_ONE on the other slots", ELL_WARNING);
+							WarnedSrc1OnMrtSlot = true;
+							return D3D11_BLEND_ONE;
+						}
+						return blendFac == EBF_SRC1_COLOR ? D3D11_BLEND_SRC1_COLOR :
+							blendFac == EBF_ONE_MINUS_SRC1_COLOR ? D3D11_BLEND_INV_SRC1_COLOR :
+							blendFac == EBF_SRC1_ALPHA ? D3D11_BLEND_SRC1_ALPHA : D3D11_BLEND_INV_SRC1_ALPHA;
+					default: return D3D11_BLEND_ONE;
+					}
+				};
 
 				BlendDesc.RenderTarget[i].SrcBlend = BlendDesc.RenderTarget[i].SrcBlendAlpha =
-					blendFac == EBF_ZERO ? D3D11_BLEND_ZERO :
-					blendFac == EBF_ONE ? D3D11_BLEND_ONE :
-					blendFac == EBF_DST_COLOR ? D3D11_BLEND_DEST_COLOR :
-					blendFac == EBF_ONE_MINUS_DST_COLOR ? D3D11_BLEND_INV_DEST_COLOR :
-					blendFac == EBF_SRC_COLOR ? D3D11_BLEND_SRC_COLOR :
-					blendFac == EBF_ONE_MINUS_SRC_COLOR ? D3D11_BLEND_INV_SRC_COLOR :
-					blendFac == EBF_SRC_ALPHA ? D3D11_BLEND_SRC_ALPHA :
-					blendFac == EBF_ONE_MINUS_SRC_ALPHA ? D3D11_BLEND_INV_SRC_ALPHA :
-					blendFac == EBF_DST_ALPHA ? D3D11_BLEND_DEST_ALPHA :
-					blendFac == EBF_ONE_MINUS_DST_ALPHA ? D3D11_BLEND_INV_DEST_ALPHA :
-					D3D11_BLEND_SRC_ALPHA_SAT;
+					toD3D11Blend(targets[i].BlendFuncSrc);
 
 				// set destination blend
-				blendFac = targets[i].BlendFuncDst;
 				BlendDesc.RenderTarget[i].DestBlend = BlendDesc.RenderTarget[i].DestBlendAlpha =
-					blendFac == EBF_ZERO ? D3D11_BLEND_ZERO :
-					blendFac == EBF_ONE ? D3D11_BLEND_ONE :
-					blendFac == EBF_DST_COLOR ? D3D11_BLEND_DEST_COLOR :
-					blendFac == EBF_ONE_MINUS_DST_COLOR ? D3D11_BLEND_INV_DEST_COLOR :
-					blendFac == EBF_SRC_COLOR ? D3D11_BLEND_SRC_COLOR :
-					blendFac == EBF_ONE_MINUS_SRC_COLOR ? D3D11_BLEND_INV_SRC_COLOR :
-					blendFac == EBF_SRC_ALPHA ? D3D11_BLEND_SRC_ALPHA :
-					blendFac == EBF_ONE_MINUS_SRC_ALPHA ? D3D11_BLEND_INV_SRC_ALPHA :
-					blendFac == EBF_DST_ALPHA ? D3D11_BLEND_DEST_ALPHA :
-					blendFac == EBF_ONE_MINUS_DST_ALPHA ? D3D11_BLEND_INV_DEST_ALPHA :
-					D3D11_BLEND_SRC_ALPHA_SAT;
+					toD3D11Blend(targets[i].BlendFuncDst);
 
 				// set blend operation
 				BlendDesc.RenderTarget[i].BlendOp = D3D11_BLEND_OP_ADD;
@@ -1758,8 +1814,13 @@ namespace irr
 					Context->ClearRenderTargetView(RTViews[i], c);
 			}
 
-			//if (BlendDesc.RenderTarget[2].RenderTargetWriteMask != D3D11_COLOR_WRITE_ENABLE_ALL)
-			//	std::cout << "Sumthingwong" << std::endl;
+			// Kept for setBasicRenderStates(), which resets BlendDesc whenever the material changes
+			// and has to put slots 1..7 back -- only when the application opted in with
+			// setPerTargetBlend(): by default the per-target values above last until that reset,
+			// after which every target follows the material, as this driver has always behaved.
+			MrtBlendDesc = BlendDesc;
+			MrtBlendActive = PerTargetBlend && maxMultipleRTTs > 1;
+
 			// set depth buffer
 			//os::Printer::log(tex->getName().getPath().c_str(), irr::ELL_INFORMATION);
 			if (depthStencil)
@@ -2774,6 +2835,14 @@ namespace irr
 			{
 				// init states description
 				BlendDesc.reset();
+				// The per-target blend/mask of the bound MRT set survives the reset: the material
+				// only owns RenderTarget[0], slots 1..7 belong to setRenderTarget(array).
+				if (MrtBlendActive)
+				{
+					BlendDesc.IndependentBlendEnable = TRUE;
+					for (u32 i = 1; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i)
+						BlendDesc.RenderTarget[i] = MrtBlendDesc.RenderTarget[i];
+				}
 				RasterizerDesc.reset();
 				DepthStencilDesc.reset();
 				for (u32 i = 0; i < MATERIAL_MAX_TEXTURES; ++i)
@@ -2881,6 +2950,44 @@ namespace irr
 					RasterizerDesc.AntialiasedLineEnable = FALSE;
 			}
 
+			// Sample mask: OMSetBlendState()'s third argument, carried by the blend description.
+			BlendDesc.SampleMask = material.SampleMask;
+
+			// Logic op (11.1): E_LOGIC_OP minus ELO_NONE lists the D3D11_LOGIC_OP values in order.
+			// Only on a target format that reports logic-op support (integer formats everywhere,
+			// UNORM on some hardware; getDriverAttributes() "LogicOpOnUnorm" says which).
+			BlendDesc.LogicOpEnable = FALSE;
+			BlendDesc.LogicOp = D3D11_LOGIC_OP_NOOP;
+			if (material.LogicOp != ELO_NONE)
+			{
+				if (!queryFeature(EVDF_LOGIC_OP))
+				{
+					if (!WarnedNoLogicOp)
+						os::Printer::log("CD3D11Driver: SMaterial::LogicOp needs EVDF_LOGIC_OP, ignored", ELL_WARNING);
+					WarnedNoLogicOp = true;
+				}
+				else if (!formatSupportsLogicOp(currentRenderTargetFormat()))
+				{
+					if (!WarnedLogicOpFormat)
+						os::Printer::log("CD3D11Driver: the bound render target format does not support "
+							"logic ops (use an integer format), SMaterial::LogicOp ignored", ELL_WARNING);
+					WarnedLogicOpFormat = true;
+				}
+				else
+				{
+					BlendDesc.LogicOpEnable = TRUE;
+					BlendDesc.LogicOp = static_cast<D3D11_LOGIC_OP>(material.LogicOp - 1);
+				}
+			}
+
+			// Conservative rasterization (11.3).
+			if (material.ConservativeRaster && !queryFeature(EVDF_CONSERVATIVE_RASTERIZATION) && !WarnedNoConservativeRaster)
+			{
+				os::Printer::log("CD3D11Driver: SMaterial::ConservativeRaster needs EVDF_CONSERVATIVE_RASTERIZATION, ignored", ELL_WARNING);
+				WarnedNoConservativeRaster = true;
+			}
+			RasterizerDesc.ConservativeRaster = (material.ConservativeRaster && queryFeature(EVDF_CONSERVATIVE_RASTERIZATION)) ? TRUE : FALSE;
+
 			// thickness
 			// handled in MaterialRenderers (shader)
 
@@ -2912,7 +3019,82 @@ namespace irr
 					SamplerDesc[st].Filter = D3D11_FILTER_ANISOTROPIC;
 					SamplerDesc[st].MaxAnisotropy = material.TextureLayer[st].AnisotropicFilter;
 				}
+
+				// Min/max reduction (11.2): the D3D11_FILTER_MINIMUM_* / MAXIMUM_* values are the base
+				// filter with bits 8 (and 7) set, so the reduction is added on top of the choice above.
+				SamplerDesc[st].Filter = static_cast<D3D11_FILTER>(SamplerDesc[st].Filter & 0x7F);
+				if (material.TextureLayer[st].MinMaxFilter != ETMINF_AVERAGE)
+				{
+					if (queryFeature(EVDF_MINMAX_FILTER))
+						SamplerDesc[st].Filter = static_cast<D3D11_FILTER>(SamplerDesc[st].Filter |
+							(material.TextureLayer[st].MinMaxFilter == ETMINF_MINIMUM ? 0x100 : 0x180));
+					else if (!WarnedNoMinMaxFilter)
+					{
+						os::Printer::log("CD3D11Driver: SMaterialLayer::MinMaxFilter needs EVDF_MINMAX_FILTER, ignored", ELL_WARNING);
+						WarnedNoMinMaxFilter = true;
+					}
+				}
+				// SMaterialLayer::MinLod: the finest mip the sampler may reach.
+				SamplerDesc[st].MinLOD = material.TextureLayer[st].MinLod;
 			}
+		}
+
+		void CD3D11Driver::setViewPorts(const core::array<core::rect<s32> >& areas)
+		{
+			if (areas.empty())
+				return;
+			// The first entry goes through the ordinary path (cache, getViewPort()); the full array
+			// then replaces it on the context. setRenderTarget() puts a single viewport back, as on
+			// the other drivers.
+			setViewPort(areas[0]);
+			if (areas.size() < 2 || !queryFeature(EVDF_MULTIPLE_VIEWPORTS))
+				return;
+
+			const core::dimension2du size = getCurrentRenderTargetSize();
+			const core::rect<s32> bounds(0, 0, (s32)size.Width, (s32)size.Height);
+			D3D11_VIEWPORT viewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+			u32 count = 0;
+			for (u32 i = 0; i < areas.size() && count < D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE; ++i)
+			{
+				core::rect<s32> vp = areas[i];
+				vp.clipAgainst(bounds);
+				if (vp.getWidth() <= 0 || vp.getHeight() <= 0)
+					continue;
+				D3D11_VIEWPORT& d = viewports[count++];
+				d.TopLeftX = (FLOAT)vp.UpperLeftCorner.X;
+				d.TopLeftY = (FLOAT)vp.UpperLeftCorner.Y;
+				d.Width = (FLOAT)vp.getWidth();
+				d.Height = (FLOAT)vp.getHeight();
+				d.MinDepth = 0.f;
+				d.MaxDepth = 1.f;
+			}
+			if (count)
+				Context->RSSetViewports(count, viewports);
+		}
+
+		bool CD3D11Driver::formatSupportsLogicOp(DXGI_FORMAT format)
+		{
+			std::map<DXGI_FORMAT, bool>::iterator cached = LogicOpFormatSupport.find(format);
+			if (cached != LogicOpFormatSupport.end())
+				return cached->second;
+			D3D11_FEATURE_DATA_FORMAT_SUPPORT2 support = {};
+			support.InFormat = format;
+			bool ok = false;
+			if (Device && SUCCEEDED(Device->CheckFeatureSupport(D3D11_FEATURE_FORMAT_SUPPORT2, &support, sizeof(support))))
+				ok = (support.OutFormatSupport2 & D3D11_FORMAT_SUPPORT2_OUTPUT_MERGER_LOGIC_OP) != 0;
+			LogicOpFormatSupport[format] = ok;
+			return ok;
+		}
+
+		DXGI_FORMAT CD3D11Driver::currentRenderTargetFormat() const
+		{
+			if (CurrentBackBuffer)
+			{
+				D3D11_RENDER_TARGET_VIEW_DESC desc = {};
+				CurrentBackBuffer->GetDesc(&desc);
+				return desc.Format;
+			}
+			return D3DColorFormat;
 		}
 
 		E_DRIVER_TYPE CD3D11Driver::getDriverType() const
@@ -3222,11 +3404,34 @@ namespace irr
 			case ECF_R8:
 				return DXGI_FORMAT_R8_UNORM;
 			case ECF_R8G8:
-				return DXGI_FORMAT_UNKNOWN;
+				return DXGI_FORMAT_R8G8_UNORM;
 			case ECF_R16:
 				return DXGI_FORMAT_R16_UNORM;
 			case ECF_R16G16:
 				return DXGI_FORMAT_R16G16_UNORM;
+			// Block-compressed. DXT2/DXT4 (premultiplied alpha) share BC2/BC3 with DXT3/DXT5.
+			case ECF_DXT1:
+				return DXGI_FORMAT_BC1_UNORM;
+			case ECF_DXT1_SRGB:
+				return DXGI_FORMAT_BC1_UNORM_SRGB;
+			case ECF_DXT2:
+			case ECF_DXT3:
+				return DXGI_FORMAT_BC2_UNORM;
+			case ECF_DXT3_SRGB:
+				return DXGI_FORMAT_BC2_UNORM_SRGB;
+			case ECF_DXT4:
+			case ECF_DXT5:
+				return DXGI_FORMAT_BC3_UNORM;
+			case ECF_DXT5_SRGB:
+				return DXGI_FORMAT_BC3_UNORM_SRGB;
+			case ECF_BC4_U:
+				return DXGI_FORMAT_BC4_UNORM;
+			case ECF_BC4_S:
+				return DXGI_FORMAT_BC4_SNORM;
+			case ECF_BC5_U:
+				return DXGI_FORMAT_BC5_UNORM;
+			case ECF_BC5_S:
+				return DXGI_FORMAT_BC5_SNORM;
 			case ECF_BC6_U:
 				return DXGI_FORMAT_BC6H_UF16;
 			case ECF_BC6_S:
@@ -3251,8 +3456,19 @@ namespace irr
 			case DXGI_FORMAT_B5G6R5_UNORM:
 				return ECF_R5G6B5;
 			case DXGI_FORMAT_B8G8R8A8_UNORM:
+			case DXGI_FORMAT_B8G8R8X8_UNORM:
 			case DXGI_FORMAT_R8G8B8A8_UNORM:
 				return ECF_A8R8G8B8;
+			case DXGI_FORMAT_R8_UNORM:
+				return ECF_R8;
+			case DXGI_FORMAT_R8_SNORM:
+				return ECF_R8S;
+			case DXGI_FORMAT_R8G8_UNORM:
+				return ECF_R8G8;
+			case DXGI_FORMAT_R16_UNORM:
+				return ECF_R16;
+			case DXGI_FORMAT_R16G16_UNORM:
+				return ECF_R16G16;
 
 			case DXGI_FORMAT_R16_FLOAT:
 				return ECF_R16F;
@@ -3291,11 +3507,37 @@ namespace irr
 			case DXGI_FORMAT_X32_TYPELESS_G8X24_UINT:
 			case DXGI_FORMAT_R32G8X24_TYPELESS:
 				return ECF_DF32S8;
+			case DXGI_FORMAT_BC1_TYPELESS:
+			case DXGI_FORMAT_BC1_UNORM:
+				return ECF_DXT1;
+			case DXGI_FORMAT_BC1_UNORM_SRGB:
+				return ECF_DXT1_SRGB;
+			case DXGI_FORMAT_BC2_TYPELESS:
+			case DXGI_FORMAT_BC2_UNORM:
+				return ECF_DXT3;
+			case DXGI_FORMAT_BC2_UNORM_SRGB:
+				return ECF_DXT3_SRGB;
+			case DXGI_FORMAT_BC3_TYPELESS:
+			case DXGI_FORMAT_BC3_UNORM:
+				return ECF_DXT5;
+			case DXGI_FORMAT_BC3_UNORM_SRGB:
+				return ECF_DXT5_SRGB;
+			case DXGI_FORMAT_BC4_TYPELESS:
+			case DXGI_FORMAT_BC4_UNORM:
+				return ECF_BC4_U;
+			case DXGI_FORMAT_BC4_SNORM:
+				return ECF_BC4_S;
+			case DXGI_FORMAT_BC5_TYPELESS:
+			case DXGI_FORMAT_BC5_UNORM:
+				return ECF_BC5_U;
+			case DXGI_FORMAT_BC5_SNORM:
+				return ECF_BC5_S;
+			case DXGI_FORMAT_BC6H_TYPELESS:
 			case DXGI_FORMAT_BC6H_UF16:
 				return ECF_BC6_U;
 			case DXGI_FORMAT_BC6H_SF16:
 				return ECF_BC6_S;
-
+			case DXGI_FORMAT_BC7_TYPELESS:
 			case DXGI_FORMAT_BC7_UNORM:
 				return ECF_BC7_U;
 			case DXGI_FORMAT_BC7_UNORM_SRGB:
@@ -3680,11 +3922,17 @@ namespace irr
 			const core::dimension2du optSize = tex->getSize().getOptimalSize(
 				!queryFeature(EVDF_TEXTURE_NPOT),
 				!queryFeature(EVDF_TEXTURE_NSQUARE), true);
+			// The pool key is size AND sample count: a multisampled target cannot bind a
+			// single-sample depth buffer (OMSetRenderTargets rejects the pair and nothing draws).
+			const CD3D11Texture* target = static_cast<const CD3D11Texture*>(tex);
+			const u32 sampleCount = target->SampleCount ? target->SampleCount : 1;
+			const u32 sampleQuality = target->SampleQuality;
 			CD3D11Texture* depth = 0;
 			core::dimension2du destSize(0x7fffffff, 0x7fffffff);
 			for (u32 i = 0; i < DepthBuffers.size(); ++i)
 			{
-				if (tex->getSize() == DepthBuffers[i]->Size)
+				const u32 depthSamples = DepthBuffers[i]->SampleCount ? DepthBuffers[i]->SampleCount : 1;
+				if (tex->getSize() == DepthBuffers[i]->Size && depthSamples == sampleCount)
 				{
 					DepthBuffers[i]->grab();
 					depth = DepthBuffers[i];
@@ -3696,7 +3944,19 @@ namespace irr
 			if (!depth)
 			{
 				// create depth buffer
-				depth = createDepthStencilView(optSize, getColorFormatFromD3DFormat(DepthStencilFormat));
+				depth = createDepthStencilView(optSize, getColorFormatFromD3DFormat(DepthStencilFormat),
+					sampleCount, sampleQuality);
+
+				// A depth texture whose view failed would be bound as a null DSV and crash the next
+				// clear; render without depth instead, as the D3D12 driver does when its pool fails.
+				if (depth && !depth->dsView)
+				{
+					os::Printer::log("CD3D11Driver: the pooled depth buffer has no depth stencil view, "
+						"rendering this target without depth", ELL_WARNING);
+					depth->drop();
+					depth = 0;
+					return 0;
+				}
 
 				if (depth)
 				{
@@ -3811,11 +4071,13 @@ namespace irr
 			return true;
 		}
 
-		CD3D11Texture* CD3D11Driver::createDepthStencilView(core::dimension2d<u32> size, ECOLOR_FORMAT depthformat)
+		CD3D11Texture* CD3D11Driver::createDepthStencilView(core::dimension2d<u32> size, ECOLOR_FORMAT depthformat,
+			u32 sampleCount, u32 sampleQuality)
 		{
 			irr::core::stringc depthname = "Depth : ";
 			depthname += DepthBuffers.size();
-			CD3D11Texture* DeptStencil = new CD3D11Texture(this, size, depthname, depthformat);
+			CD3D11Texture* DeptStencil = new CD3D11Texture(this, size, depthname, depthformat, 1,
+				sampleCount ? sampleCount : 1, sampleQuality);
 			return DeptStencil;
 		}
 

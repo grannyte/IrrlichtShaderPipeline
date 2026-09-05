@@ -385,7 +385,7 @@ namespace irr
 
 			bool compileHlslWithDxc(const c8* source, u32 length, const c8* entryPoint,
 				E_SHADER_TYPE stage, std::vector<u32>& outSpirv, core::stringc& outError,
-				io::IFileSystem* includeFileSystem, const c8* includeDirectory)
+				io::IFileSystem* includeFileSystem, const c8* includeDirectory, bool reflectSemantics)
 			{
 				const wchar_t* const profile = dxcTargetProfile(stage);
 
@@ -434,6 +434,14 @@ namespace irr
 				arguments.push_back(profile);
 				arguments.push_back(L"-spirv");
 				arguments.push_back(L"-fspv-target-env=vulkan1.0");
+				// So one HLSL source can carry the Vulkan-only attributes (dual-source
+				// [[vk::location(0), vk::index(1)]], explicit bindings) behind #ifdef IRR_VULKAN;
+				// FXC on the D3D drivers never sees them.
+				arguments.push_back(L"-D");
+				arguments.push_back(L"IRR_VULKAN=1");
+				// UserSemantic decorations on the stage variables, for the stream-output patch.
+				if (reflectSemantics)
+					arguments.push_back(L"-fspv-reflect");
 				if (stage == EST_COMPUTE_SHADER)
 				{
 					static const wchar_t* const shifts[] =
@@ -511,10 +519,11 @@ namespace irr
 		bool CVulkanShaderCompiler::compileToSpirv(const c8* source, u32 sourceLength,
 			const c8* entryPoint, E_SHADER_TYPE stage, E_GPU_SHADING_LANGUAGE lang,
 			std::vector<u32>& outSpirv, core::stringc& outError,
-			io::IFileSystem* includeFileSystem, const c8* includeDirectory)
+			io::IFileSystem* includeFileSystem, const c8* includeDirectory, bool reflectSemantics)
 		{
 			(void)includeFileSystem;
 			(void)includeDirectory;
+			(void)reflectSemantics;
 			outSpirv.clear();
 			outError = "";
 
@@ -545,7 +554,7 @@ namespace irr
 				// Only DXC is built in, so EGSL_DEFAULT falls back to meaning HLSL -- the same
 				// sources the Direct3D backends take, which is the useful reading of "default" here.
 				if (compileHlslWithDxc(source, length, effectiveEntryPoint(entryPoint), stage,
-						outSpirv, outError, includeFileSystem, includeDirectory))
+						outSpirv, outError, includeFileSystem, includeDirectory, reflectSemantics))
 					return true;
 #else
 				outError = "The Vulkan driver was built without a shader source compiler. Define "

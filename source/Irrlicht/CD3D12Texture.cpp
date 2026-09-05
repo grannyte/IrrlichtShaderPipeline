@@ -38,10 +38,17 @@ namespace irr
 				// Block-compressed formats. ECF_DXT2/4 (premultiplied alpha) share DXT3/5's
 				// DXGI format; there's no dedicated one for them.
 				case ECF_DXT1:           return DXGI_FORMAT_BC1_UNORM;
+				case ECF_DXT1_SRGB:      return DXGI_FORMAT_BC1_UNORM_SRGB;
 				case ECF_DXT2:
 				case ECF_DXT3:           return DXGI_FORMAT_BC2_UNORM;
+				case ECF_DXT3_SRGB:      return DXGI_FORMAT_BC2_UNORM_SRGB;
 				case ECF_DXT4:
 				case ECF_DXT5:           return DXGI_FORMAT_BC3_UNORM;
+				case ECF_DXT5_SRGB:      return DXGI_FORMAT_BC3_UNORM_SRGB;
+				case ECF_BC4_U:          return DXGI_FORMAT_BC4_UNORM;
+				case ECF_BC4_S:          return DXGI_FORMAT_BC4_SNORM;
+				case ECF_BC5_U:          return DXGI_FORMAT_BC5_UNORM;
+				case ECF_BC5_S:          return DXGI_FORMAT_BC5_SNORM;
 				case ECF_BC6_U:          return DXGI_FORMAT_BC6H_UF16;
 				case ECF_BC6_S:          return DXGI_FORMAT_BC6H_SF16;
 				case ECF_BC7_U:          return DXGI_FORMAT_BC7_UNORM;
@@ -155,17 +162,38 @@ namespace irr
 		{
 			switch (format)
 			{
+			case DXGI_FORMAT_BC1_TYPELESS:
 			case DXGI_FORMAT_BC1_UNORM:       return ECF_DXT1;
+			case DXGI_FORMAT_BC1_UNORM_SRGB:  return ECF_DXT1_SRGB;
+			case DXGI_FORMAT_BC2_TYPELESS:
 			case DXGI_FORMAT_BC2_UNORM:       return ECF_DXT3;
+			case DXGI_FORMAT_BC2_UNORM_SRGB:  return ECF_DXT3_SRGB;
+			case DXGI_FORMAT_BC3_TYPELESS:
 			case DXGI_FORMAT_BC3_UNORM:       return ECF_DXT5;
+			case DXGI_FORMAT_BC3_UNORM_SRGB:  return ECF_DXT5_SRGB;
+			case DXGI_FORMAT_BC4_TYPELESS:
+			case DXGI_FORMAT_BC4_UNORM:       return ECF_BC4_U;
+			case DXGI_FORMAT_BC4_SNORM:       return ECF_BC4_S;
+			case DXGI_FORMAT_BC5_TYPELESS:
+			case DXGI_FORMAT_BC5_UNORM:       return ECF_BC5_U;
+			case DXGI_FORMAT_BC5_SNORM:       return ECF_BC5_S;
+			case DXGI_FORMAT_BC6H_TYPELESS:
 			case DXGI_FORMAT_BC6H_UF16:       return ECF_BC6_U;
 			case DXGI_FORMAT_BC6H_SF16:       return ECF_BC6_S;
+			case DXGI_FORMAT_BC7_TYPELESS:
 			case DXGI_FORMAT_BC7_UNORM:       return ECF_BC7_U;
 			case DXGI_FORMAT_BC7_UNORM_SRGB:  return ECF_BC7_S;
 			case DXGI_FORMAT_B8G8R8A8_UNORM:
+			case DXGI_FORMAT_B8G8R8X8_UNORM:
 			case DXGI_FORMAT_R8G8B8A8_UNORM:  return ECF_A8R8G8B8;
+			case DXGI_FORMAT_R8G8B8A8_SNORM:  return ECF_A8R8G8B8S;
 			case DXGI_FORMAT_B5G5R5A1_UNORM:  return ECF_A1R5G5B5;
 			case DXGI_FORMAT_B5G6R5_UNORM:    return ECF_R5G6B5;
+			case DXGI_FORMAT_R8_UNORM:        return ECF_R8;
+			case DXGI_FORMAT_R8_SNORM:        return ECF_R8S;
+			case DXGI_FORMAT_R8G8_UNORM:      return ECF_R8G8;
+			case DXGI_FORMAT_R16_UNORM:       return ECF_R16;
+			case DXGI_FORMAT_R16G16_UNORM:    return ECF_R16G16;
 			case DXGI_FORMAT_R16_FLOAT:       return ECF_R16F;
 			case DXGI_FORMAT_R16G16_FLOAT:    return ECF_G16R16F;
 			case DXGI_FORMAT_R16G16B16A16_FLOAT: return ECF_A16B16G16R16F;
@@ -192,10 +220,11 @@ namespace irr
 				return;
 			}
 
-			// A .dds file bypasses the ECOLOR_FORMAT/uploadInitialData() path below: the
-			// IImage holds the raw .dds bytes (header included, see CImageLoaderDDS),
-			// and DDSTextureLoader12 parses the header and loads mips/slices/faces itself.
-			if (core::hasFileExtension(name, "dds"))
+			// A raw .dds file (block-compressed, wide format, cube map, array or volume) bypasses the
+			// ECOLOR_FORMAT/uploadInitialData() path below: the IImage holds the raw .dds bytes
+			// (header included, see CImageLoaderDDS), and DDSTextureLoader12 parses the header and
+			// loads mips/slices/faces itself. A plain 2D uncompressed .dds arrives as pixels.
+			if (image->isCompressed())
 			{
 				void* rawDdsBytes = image->lock();
 				SDDSTexture12Result ddsResult;
@@ -214,6 +243,7 @@ namespace irr
 				DxgiFormat = ddsResult.Format;
 				OriginalSize = Size = core::dimension2d<u32>(ddsResult.Width, ddsResult.Height);
 				MipLevelCount = ddsResult.MipLevels;
+				MipMaps = MipLevelCount > 1;
 				NumberOfArraySlices = ddsResult.ArraySize;
 				CurrentState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 				TextureType = ddsResult.IsCubeMap ?
@@ -223,8 +253,13 @@ namespace irr
 				// ColorFormat becomes ECF_UNKNOWN for an exotic DXGI .dds format with no
 				// matching ECOLOR_FORMAT; the GPU texture stays valid and sampleable.
 				// Pitch is left unset here: meaningless for a block-compressed format
-				// and recomputed by lock() anyway.
+				// and recomputed by lock() anyway. The loader's format wins where DXGI
+				// cannot tell: DXT2/DXT4 (premultiplied alpha) share BC2/BC3 with DXT3/DXT5.
 				ColorFormat = getColorFormatFromD3D12Format(DxgiFormat);
+				const ECOLOR_FORMAT loaded = image->getColorFormat();
+				if (loaded == ECF_DXT2 || loaded == ECF_DXT4)
+					ColorFormat = loaded;
+				HasAlpha = IImage::hasAlphaFormat(ColorFormat);
 
 				createShaderResourceView();
 				return;
@@ -338,6 +373,9 @@ namespace irr
 
 			if (HasRTV)
 				Driver->retireDescriptor(Driver->getRTVHeap(), RTVHeapIndex);
+			for (size_t i = 0; i < SliceRTVs.size(); ++i)
+				if (SliceRTVs[i].Valid)
+					Driver->retireDescriptor(Driver->getRTVHeap(), SliceRTVs[i].HeapIndex);
 			if (HasSRV)
 				Driver->retireDescriptor(Driver->getSRVHeap(), SRVHeapIndex);
 			if (HasUAV)
@@ -631,6 +669,41 @@ namespace irr
 			RTVHandle = handle;
 			HasRTV = true;
 			return true;
+		}
+
+		D3D12_CPU_DESCRIPTOR_HANDLE CD3D12Texture::getRenderTargetView(u32 arraySlice)
+		{
+			const D3D12_CPU_DESCRIPTOR_HANDLE none = {};
+			if (!HasRTV || arraySlice >= NumberOfArraySlices)
+				return none;
+			if (NumberOfArraySlices == 1)
+				return RTVHandle;
+
+			if (SliceRTVs.size() < NumberOfArraySlices)
+				SliceRTVs.resize(NumberOfArraySlices);
+			SSliceRTV& slice = SliceRTVs[arraySlice];
+			if (slice.Valid)
+				return slice.Handle;
+
+			CD3DX12_CPU_DESCRIPTOR_HANDLE handle;
+			if (!Driver->getRTVHeap().allocate(slice.HeapIndex, handle))
+			{
+				os::Printer::log("CD3D12Texture: RTV heap full (slice view)", ELL_ERROR);
+				return none;
+			}
+
+			// A one-slice array view rather than a plain 2D view: the resource is an array and
+			// the whole-array RTV of createRenderTargetView() is TEXTURE2DARRAY too.
+			D3D12_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+			rtvDesc.Format = DxgiFormat;
+			rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DARRAY;
+			rtvDesc.Texture2DArray.MipSlice = 0;
+			rtvDesc.Texture2DArray.FirstArraySlice = arraySlice;
+			rtvDesc.Texture2DArray.ArraySize = 1;
+			Driver->getDevice()->CreateRenderTargetView(Resource.Get(), &rtvDesc, handle);
+			slice.Handle = handle;
+			slice.Valid = true;
+			return slice.Handle;
 		}
 
 		bool CD3D12Texture::createResolveResource()

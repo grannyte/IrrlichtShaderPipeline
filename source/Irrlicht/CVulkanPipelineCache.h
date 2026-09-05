@@ -111,9 +111,56 @@ namespace irr
 			f32 DepthBiasConstant = 0.0f;
 			f32 DepthBiasSlope = 0.0f;
 
+			//! SMaterial::AntiAliasing & EAAM_ALPHA_TO_COVERAGE: the fragment's alpha becomes its
+			//! sample coverage mask. Meaningful on a multisampled target, harmless on a single-sample one.
+			bool AlphaToCoverage = false;
+
+			//! A stream-output geometry material: primitives are captured by transform feedback and
+			//! never rasterized, the D3D11_SO_NO_RASTERIZED_STREAM of the D3D drivers.
+			bool RasterizerDiscard = false;
+
+			//! SMaterial::LogicOp: replaces blending on every attachment when enabled (logicOp feature).
+			bool LogicOpEnable = false;
+			VkLogicOp LogicOp = VK_LOGIC_OP_NO_OP;
+			//! SMaterial::ConservativeRaster (VK_EXT_conservative_rasterization, overestimate).
+			bool ConservativeRaster = false;
+			//! SMaterial::SampleMask, VkPipelineMultisampleStateCreateInfo::pSampleMask.
+			u32 SampleMask = 0xffffffffu;
+			//! setViewPorts(): the count is pipeline state even with dynamic viewports.
+			u32 ViewportCount = 1;
+
+			//! Per-attachment blend overrides for an MRT draw, from the IRenderTarget entries of
+			//! setRenderTarget(array). Bit i of TargetOverrideMask set means attachment i takes the
+			//! fields below instead of the material blend; the driver never sets bit 0 (the first
+			//! target follows the material, as on D3D11). Needs the independentBlend feature.
+			u8 TargetOverrideMask = 0;
+			bool TargetBlendEnable[8] = {};
+			VkBlendFactor TargetSrcFactor[8] = { VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE,
+				VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE };
+			VkBlendFactor TargetDstFactor[8] = { VK_BLEND_FACTOR_ZERO, VK_BLEND_FACTOR_ZERO, VK_BLEND_FACTOR_ZERO,
+				VK_BLEND_FACTOR_ZERO, VK_BLEND_FACTOR_ZERO, VK_BLEND_FACTOR_ZERO, VK_BLEND_FACTOR_ZERO, VK_BLEND_FACTOR_ZERO };
+			VkColorComponentFlags TargetWriteMask[8] = {};
+
 			bool operator==(const SVulkanPipelineKey& other) const
 			{
+				if (TargetOverrideMask != other.TargetOverrideMask)
+					return false;
+				for (u32 i = 0; i < 8; ++i)
+				{
+					if (!(TargetOverrideMask & (1u << i)))
+						continue;
+					if (TargetBlendEnable[i] != other.TargetBlendEnable[i] ||
+						TargetSrcFactor[i] != other.TargetSrcFactor[i] ||
+						TargetDstFactor[i] != other.TargetDstFactor[i] ||
+						TargetWriteMask[i] != other.TargetWriteMask[i])
+						return false;
+				}
 				return VSHash == other.VSHash && PSHash == other.PSHash &&
+					AlphaToCoverage == other.AlphaToCoverage &&
+					RasterizerDiscard == other.RasterizerDiscard &&
+					LogicOpEnable == other.LogicOpEnable && LogicOp == other.LogicOp &&
+					ConservativeRaster == other.ConservativeRaster &&
+					SampleMask == other.SampleMask && ViewportCount == other.ViewportCount &&
 					GSHash == other.GSHash &&
 					HSHash == other.HSHash && DSHash == other.DSHash &&
 					PipelineLayoutHash == other.PipelineLayoutHash &&
@@ -187,6 +234,23 @@ namespace irr
 				// static_cast<size_t> on a negative f32 is UB - go through a same-width signed int.
 				combine(static_cast<size_t>(*reinterpret_cast<const s32*>(&DepthBiasConstant)));
 				combine(static_cast<size_t>(*reinterpret_cast<const s32*>(&DepthBiasSlope)));
+				combine(static_cast<size_t>(AlphaToCoverage));
+				combine(static_cast<size_t>(RasterizerDiscard));
+				combine(static_cast<size_t>(LogicOpEnable));
+				combine(static_cast<size_t>(LogicOp));
+				combine(static_cast<size_t>(ConservativeRaster));
+				combine(static_cast<size_t>(SampleMask));
+				combine(static_cast<size_t>(ViewportCount));
+				combine(static_cast<size_t>(TargetOverrideMask));
+				for (u32 i = 0; i < 8; ++i)
+				{
+					if (!(TargetOverrideMask & (1u << i)))
+						continue;
+					combine(static_cast<size_t>(TargetBlendEnable[i]));
+					combine(static_cast<size_t>(TargetSrcFactor[i]));
+					combine(static_cast<size_t>(TargetDstFactor[i]));
+					combine(static_cast<size_t>(TargetWriteMask[i]));
+				}
 				return h;
 			}
 		};
@@ -235,6 +299,17 @@ namespace irr
 			std::unordered_map<size_t, VkPipelineLayout> PipelineLayouts;
 		};
 
+		//! The entry point of each stage a pipeline is built from. HLSL authored for D3D names them
+		//! per stage ("vsMain", "psMain", "gsMain"), so one name for all is not enough.
+		struct SVulkanStageEntryPoints
+		{
+			const c8* Vertex = "main";
+			const c8* TessControl = "main";
+			const c8* TessEval = "main";
+			const c8* Geometry = "main";
+			const c8* Fragment = "main";
+		};
+
 		//! Pipeline cache. One per driver, not per frame - pipelines are immutable and expensive to
 		//! create. Every pipeline it builds targets dynamic rendering (VK_KHR_dynamic_rendering, core
 		//! in 1.3), so there is no VkRenderPass anywhere in the key.
@@ -244,6 +319,7 @@ namespace irr
 			//! Returns the existing pipeline for this key, or creates one (blocking - can take several
 			//! milliseconds). VK_NULL_HANDLE on failure (already logged). Geometry and tessellation
 			//! modules are optional; `patchControlPoints` is read only when the tessellation pair is set.
+			//! A null `entryPoints` means "main" everywhere.
 			VkPipeline getOrCreate(const SVulkanContext& context, const SVulkanPipelineKey& key,
 				VkShaderModule vertexShader, VkShaderModule fragmentShader,
 				const VkPipelineVertexInputStateCreateInfo& vertexInput,
@@ -252,7 +328,7 @@ namespace irr
 				VkShaderModule tessControlShader = VK_NULL_HANDLE,
 				VkShaderModule tessEvalShader = VK_NULL_HANDLE,
 				u32 patchControlPoints = 3,
-				const c8* entryPoint = "main");
+				const SVulkanStageEntryPoints* entryPoints = nullptr);
 
 			//! Destroys every cached pipeline and the driver-side VkPipelineCache; device must be idle.
 			void clear();

@@ -89,9 +89,47 @@ namespace irr
 			INT DepthBias = 0;
 			FLOAT SlopeScaledDepthBias = 0.0f;
 
+			//! SMaterial::AntiAliasing & EAAM_ALPHA_TO_COVERAGE, as CD3D11Driver::setBasicRenderStates().
+			bool AlphaToCoverage = false;
+
+			//! SMaterial::LogicOp: replaces blending on every target when enabled.
+			bool LogicOpEnable = false;
+			D3D12_LOGIC_OP LogicOp = D3D12_LOGIC_OP_NOOP;
+			//! SMaterial::ConservativeRaster.
+			bool ConservativeRaster = false;
+			//! SMaterial::SampleMask, D3D12_GRAPHICS_PIPELINE_STATE_DESC::SampleMask.
+			UINT SampleMask = UINT_MAX;
+
+			//! Per-target blend overrides of an MRT draw, from the IRenderTarget entries of
+			//! setRenderTarget(array). Bit i of TargetOverrideMask set means RenderTarget[i] takes the
+			//! fields below instead of the material blend (IndependentBlendEnable goes TRUE); bit 0
+			//! is never set, the first target follows the material as on D3D11.
+			UINT8 TargetOverrideMask = 0;
+			BOOL TargetBlendEnable[8] = {};
+			D3D12_BLEND TargetSrcBlend[8] = { D3D12_BLEND_ONE, D3D12_BLEND_ONE, D3D12_BLEND_ONE, D3D12_BLEND_ONE,
+				D3D12_BLEND_ONE, D3D12_BLEND_ONE, D3D12_BLEND_ONE, D3D12_BLEND_ONE };
+			D3D12_BLEND TargetDestBlend[8] = { D3D12_BLEND_ZERO, D3D12_BLEND_ZERO, D3D12_BLEND_ZERO, D3D12_BLEND_ZERO,
+				D3D12_BLEND_ZERO, D3D12_BLEND_ZERO, D3D12_BLEND_ZERO, D3D12_BLEND_ZERO };
+			UINT8 TargetWriteMask[8] = {};
+
 			bool operator==(const SPSOKey& other) const
 			{
+				if (TargetOverrideMask != other.TargetOverrideMask)
+					return false;
+				for (UINT i = 0; i < 8; ++i)
+				{
+					if (!(TargetOverrideMask & (1u << i)))
+						continue;
+					if (TargetBlendEnable[i] != other.TargetBlendEnable[i] ||
+						TargetSrcBlend[i] != other.TargetSrcBlend[i] ||
+						TargetDestBlend[i] != other.TargetDestBlend[i] ||
+						TargetWriteMask[i] != other.TargetWriteMask[i])
+						return false;
+				}
 				return VSHash == other.VSHash && PSHash == other.PSHash &&
+					AlphaToCoverage == other.AlphaToCoverage &&
+					LogicOpEnable == other.LogicOpEnable && LogicOp == other.LogicOp &&
+					ConservativeRaster == other.ConservativeRaster && SampleMask == other.SampleMask &&
 					GSHash == other.GSHash && StreamOutputHash == other.StreamOutputHash &&
 					HSHash == other.HSHash && DSHash == other.DSHash &&
 					RootSignatureHash == other.RootSignatureHash &&
@@ -164,6 +202,21 @@ namespace irr
 				combine(static_cast<size_t>(DepthBias));
 				// static_cast<size_t> on a negative FLOAT is UB - go through a same-width signed int.
 				combine(static_cast<size_t>(*reinterpret_cast<const INT32*>(&SlopeScaledDepthBias)));
+				combine(static_cast<size_t>(AlphaToCoverage));
+				combine(static_cast<size_t>(LogicOpEnable));
+				combine(static_cast<size_t>(LogicOp));
+				combine(static_cast<size_t>(ConservativeRaster));
+				combine(static_cast<size_t>(SampleMask));
+				combine(static_cast<size_t>(TargetOverrideMask));
+				for (UINT i = 0; i < 8; ++i)
+				{
+					if (!(TargetOverrideMask & (1u << i)))
+						continue;
+					combine(static_cast<size_t>(TargetBlendEnable[i]));
+					combine(static_cast<size_t>(TargetSrcBlend[i]));
+					combine(static_cast<size_t>(TargetDestBlend[i]));
+					combine(static_cast<size_t>(TargetWriteMask[i]));
+				}
 				return h;
 			}
 		};

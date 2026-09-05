@@ -33,8 +33,11 @@
 #include "CVulkanRenderTarget.h"
 #include "CVulkanCompute.h"
 #include "CVulkanOcclusionQuery.h"
+#include "CVulkanSamplerCache.h"
+#include "IDeferredContext.h"
 #include "SIrrCreationParameters.h"
 #include <vector>
+#include <mutex>
 
 //! Debug builds ask the loader for VK_LAYER_KHRONOS_validation and VK_EXT_debug_utils, and route
 //! whatever they report through os::Printer::log. Both are looked up before use, so a machine with
@@ -89,9 +92,18 @@ namespace irr
 		class CVulkanDriver : public CNullDriver, public IVulkanUploadContext,
 			public IMaterialRendererServices
 		{
+			//! The deferred context is a second driver on the same device (see CVulkanDeferredContext.h);
+			//! it reaches the immediate driver's members the way CD3D12DeferredContext reaches its owner's.
+			friend class CVulkanDeferredContext;
 		public:
 			CVulkanDriver(const irr::SIrrlichtCreationParameters& params, io::IFileSystem* io, HWND window);
 			virtual ~CVulkanDriver();
+
+			//! A CVulkanDeferredContext recording on this device, or 0 (logged) when it could not be
+			//! built. Record into it from any thread, then executeDeferredContext() it from the thread
+			//! that owns this driver; it draws into its own render target texture, as the D3D12 one does.
+			virtual IVideoDriver* createDeferredContext() _IRR_OVERRIDE_;
+			virtual void executeDeferredContext(IDeferredContext* context) _IRR_OVERRIDE_;
 
 			//! Full device bring-up: loader, instance, surface, physical/logical device, swapchain,
 			//! frame contexts, shader modules and built-in materials. Returns false (logged) on any
@@ -117,6 +129,10 @@ namespace irr
 			}
 			virtual void setMaterial(const SMaterial& material) _IRR_OVERRIDE_;
 			virtual void setViewPort(const core::rect<s32>& area) _IRR_OVERRIDE_;
+
+			//! Up to 16 viewports (D3D11.x feature set, multiViewport feature); the shader picks one
+			//! with SV_ViewportArrayIndex / gl_ViewportIndex.
+			virtual void setViewPorts(const core::array<core::rect<s32> >& areas) _IRR_OVERRIDE_;
 			//! The area setViewPort() last accepted, not an empty rect: GUI code divides by it.
 			virtual const core::rect<s32>& getViewPort() const _IRR_OVERRIDE_ { return ViewPort; }
 			virtual void clearZBuffer() _IRR_OVERRIDE_;
@@ -306,6 +322,13 @@ namespace irr
 			virtual void drawMeshBufferInstancedIndirect(const scene::IMeshBuffer* mb,
 				scene::IComputeBuffer* instanceBuffer, u32 instanceStride,
 				scene::IComputeBuffer* argBuffer, u32 byteOffset) _IRR_OVERRIDE_;
+
+			//! Stream output through VK_EXT_transform_feedback. `buffer` must have been declared with
+			//! setBufferType(scene::EBT_STREAM); every draw until the next call (0 unbinds) appends the
+			//! primitives of its geometry stage into it, and the byte count lands in the buffer's
+			//! counter so a later drawMeshBuffer() of that buffer draws exactly what was captured
+			//! (the D3D11 DrawAuto). False (logged once) when the device lacks the extension.
+			virtual bool setStreamOutputBuffer(scene::IVertexBuffer* buffer) _IRR_OVERRIDE_;
 
 			// --- IGPUProgrammingServices: compute shaders. The source language is the build's
 			// default (see CVulkanShaderCompiler.h); a file whose first word is the SPIR-V magic is
@@ -520,7 +543,20 @@ namespace irr
 			virtual ITexture* createDeviceDependentTexture(IImage* surface, const io::path& name,
 				void* mipmapData = 0) _IRR_OVERRIDE_;
 
-		private:
+			//! False on a deferred context: the device, the loader and the process-wide shader
+			//! compiler state belong to the immediate driver and are left alone by the destructor.
+			bool OwnsDevice = true;
+			//! The driver whose caches own every texture, buffer and material this one draws with:
+			//! `this` on the immediate driver, the immediate driver on a deferred context. Resources
+			//! are created against its Context and upload context so they outlive a deferred context,
+			//! and the material registry is always read through it.
+			CVulkanDriver* ResourceOwner = nullptr;
+			//! Serialize the shared graphics queue (submit, present, upload) and the one-shot upload
+			//! scope between the immediate driver and deferred contexts recording on other threads.
+			//! Only the ResourceOwner's instances are ever locked.
+			std::mutex QueueMutex;
+			std::recursive_mutex UploadMutex;
+
 			bool createInstance();
 			//! Hooks the debug-utils messenger up to the log. No-op unless the instance was built
 			//! with VK_EXT_debug_utils; never fatal, so it returns nothing.
@@ -630,9 +666,19 @@ namespace irr
 			//! addHighLevelShaderMaterial*/addShaderMaterial* overload funnels into, once its sources
 			//! are in memory. `stages` holds EVUS_COUNT entries. -1 (logged) on any failure, with
 			//! nothing registered.
+			//! `streamOutputLayout` is the vertexTypeOut of the public API: with a geometry stage, its
+			//! attributes become the transform feedback layout of that stage (see CVulkanSpirvXfb.h).
 			s32 registerUserShaderMaterial(const SVulkanUserShaderStageSource* stages,
 				E_GPU_SHADING_LANGUAGE lang, IShaderConstantSetCallBack* callback,
-				E_MATERIAL_TYPE baseMaterial, s32 userData);
+				E_MATERIAL_TYPE baseMaterial, s32 userData, IVertexDescriptor* streamOutputLayout = nullptr);
+
+			//! Transform feedback around one draw: bindDrawState() begins it after the pipeline is
+			//! bound (a pipeline cannot be bound while it is active), the draw sites end it.
+			void beginTransformFeedbackForDraw();
+			void endTransformFeedbackForDraw();
+			//! Makes what the bound stream-output target received readable as vertex data and its
+			//! byte count readable as an indirect argument, then forgets the target.
+			void releaseStreamOutputTarget();
 
 			//! Everything a draw's pipeline needs from whichever renderer owns this material type.
 			//! Resolved once and used both for the key and for pipeline creation, so the two cannot
@@ -645,9 +691,9 @@ namespace irr
 				VkShaderModule TessControl = VK_NULL_HANDLE;
 				VkShaderModule TessEval = VK_NULL_HANDLE;
 				VkPipelineLayout Layout = VK_NULL_HANDLE;
-				//! One name for every stage -- what the pipeline cache accepts. Taken from the vertex
-				//! stage; a material whose stages disagree is warned about once.
-				const c8* EntryPoint = "main";
+				//! Per stage: a user material compiled from D3D-style HLSL names each stage's entry
+				//! point differently ("vsMain", "psMain", ...); the built-ins are all "main".
+				SVulkanStageEntryPoints EntryPoints;
 			};
 
 			//! A user material's own five modules and layout, or the built-in pair (its second-UV
@@ -744,6 +790,11 @@ namespace irr
 
 			CVulkanPipelineCache PipelineCache;
 			CVulkanPipelineLayoutCache LayoutCache;
+			//! The sampler every material texture binding uses, keyed on the SMaterialLayer (filter,
+			//! anisotropy, wrap, LOD bias, min/max reduction, min LOD) and SMaterial::UseMipMaps --
+			//! what the D3D drivers derive from the layer per draw. A texture's own sampler is only
+			//! the fallback when the cache cannot create one.
+			CVulkanSamplerCache Samplers;
 			//! Owns the VkShaderModules the material renderers below borrow; outlives them.
 			CVulkanShaderModuleCache ShaderModules;
 			//! Parallel to CNullDriver::MaterialRenderers, so material.MaterialType indexes all
@@ -790,6 +841,38 @@ namespace irr
 			//! rather than merely non-zero when anything was visible.
 			bool HasPreciseOcclusionQuery = false;
 			bool WarnedNoStencil = false;
+
+			//! Per-target blend overrides of the bound MRT set, from the IRenderTarget entries of the
+			//! last setRenderTarget(array); copied into SVulkanPipelineKey::TargetOverrideMask and
+			//! friends by buildPipelineKeyFromMaterial(). Bit 0 is never set: the first target follows
+			//! the material, as on D3D11.
+			struct SVulkanMrtBlend
+			{
+				u8 Mask = 0;
+				bool Enable[8] = {};
+				VkBlendFactor Src[8] = {};
+				VkBlendFactor Dst[8] = {};
+				VkColorComponentFlags Write[8] = {};
+				void reset() { Mask = 0; }
+			};
+			SVulkanMrtBlend MrtBlend;
+			bool WarnedNoIndependentBlend = false;
+			//! One-time warnings for the D3D11.x material state a device lacks (const key builder).
+			mutable bool WarnedNoLogicOp = false;
+			mutable bool WarnedNoConservativeRaster = false;
+			bool WarnedSrc1OnMrtSlot = false;
+			//! setViewPorts(): the count baked into the pipeline key (1 without multiViewport).
+			u32 ViewportCount = 1;
+
+			//! Whether createLogicalDevice() enabled VK_EXT_transform_feedback; Context.HasTransformFeedback
+			//! is that plus the resolved entry points.
+			bool TransformFeedbackEnabled = false;
+			bool WarnedNoTransformFeedback = false;
+			//! The stream-output target bound by setStreamOutputBuffer(): every draw until it is unbound
+			//! appends into it. StreamOutputHold keeps the hardware buffer alive meanwhile.
+			CVulkanHardwareBuffer* StreamOutputTarget = nullptr;
+			std::shared_ptr<video::IHardwareBuffer> StreamOutputHold;
+			bool TransformFeedbackActive = false;
 
 			// Set layouts, cached and owned by LayoutCache; copies only.
 			VkDescriptorSetLayout MaterialTextureSetLayout = VK_NULL_HANDLE;	//!< set 0

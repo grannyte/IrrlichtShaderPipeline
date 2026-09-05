@@ -4,6 +4,7 @@
 
 #include "CVulkanTexture.h"
 #ifdef _IRR_COMPILE_WITH_VULKAN_
+#include "CImage.h" // CompressedSize, the raw .dds byte count the DDS loader leaves on the image
 #include "os.h"
 #include <string.h>
 
@@ -70,13 +71,19 @@ namespace irr
 			case ECF_B32G32R32F:    return VK_FORMAT_R32G32B32_SFLOAT;
 			case ECF_A32B32G32R32F: return VK_FORMAT_R32G32B32A32_SFLOAT;
 			// Block-compressed. ECF_DXT2/4 (premultiplied alpha) share the BC2/BC3 block
-			// layout, there is no dedicated VkFormat for them. BC4/BC5 have no
-			// ECOLOR_FORMAT value to map from.
+			// layout, there is no dedicated VkFormat for them.
 			case ECF_DXT1:          return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
+			case ECF_DXT1_SRGB:     return VK_FORMAT_BC1_RGBA_SRGB_BLOCK;
 			case ECF_DXT2:
 			case ECF_DXT3:          return VK_FORMAT_BC2_UNORM_BLOCK;
+			case ECF_DXT3_SRGB:     return VK_FORMAT_BC2_SRGB_BLOCK;
 			case ECF_DXT4:
 			case ECF_DXT5:          return VK_FORMAT_BC3_UNORM_BLOCK;
+			case ECF_DXT5_SRGB:     return VK_FORMAT_BC3_SRGB_BLOCK;
+			case ECF_BC4_U:         return VK_FORMAT_BC4_UNORM_BLOCK;
+			case ECF_BC4_S:         return VK_FORMAT_BC4_SNORM_BLOCK;
+			case ECF_BC5_U:         return VK_FORMAT_BC5_UNORM_BLOCK;
+			case ECF_BC5_S:         return VK_FORMAT_BC5_SNORM_BLOCK;
 			case ECF_BC6_U:         return VK_FORMAT_BC6H_UFLOAT_BLOCK;
 			case ECF_BC6_S:         return VK_FORMAT_BC6H_SFLOAT_BLOCK;
 			case ECF_BC7_U:         return VK_FORMAT_BC7_UNORM_BLOCK;
@@ -125,13 +132,32 @@ namespace irr
 			if (Format == VK_FORMAT_UNDEFINED)
 				return; // already logged
 
-			HasAlpha = (sourceFormat == ECF_A8R8G8B8 || sourceFormat == ECF_A1R5G5B5 ||
-				sourceFormat == ECF_A16B16G16R16F || sourceFormat == ECF_A32B32G32R32F ||
-				sourceFormat == ECF_DXT3 || sourceFormat == ECF_DXT5);
+			HasAlpha = IImage::hasAlphaFormat(sourceFormat);
 
 			const bool expandR8G8B8 = (sourceFormat == ECF_R8G8B8);
 			ColorFormat = expandR8G8B8 ? ECF_A8R8G8B8 : sourceFormat;
 			Aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+
+			// A block-compressed, wide-format, cube, array or volume .dds arrives as the whole file,
+			// not as pixels: the loader leaves the header in place so a driver can read the mip
+			// chain, cube faces, slices and depth out of it -- see CImageLoaderDDS and
+			// CD3D12Texture, which does the same.
+			if (image->isCompressed())
+			{
+				const u8* bytes = static_cast<const u8*>(image->lock());
+				const u32 byteCount = static_cast<CImage*>(image)->CompressedSize;
+				const bool uploaded = bytes && uploadDdsFile(bytes, byteCount);
+				image->unlock();
+				if (!uploaded)
+				{
+					os::Printer::log("CVulkanTexture: could not upload the .dds file", name, ELL_ERROR);
+					return;
+				}
+				createSampler(true, MipLevelCount > 1, 0,
+					(TextureType == ETT_CUBE || TextureType == ETT_CUBE_ARRAY || TextureType == ETT_3D) ?
+					ETC_CLAMP_TO_EDGE : ETC_REPEAT);
+				return;
+			}
 
 			// The blit chain writes each level with a filtered downscale, which neither
 			// works on block-compressed data nor on a format the device cannot filter.
@@ -165,7 +191,7 @@ namespace irr
 
 		CVulkanTexture::CVulkanTexture(const SVulkanContext& context, IVulkanUploadContext& upload,
 			const core::dimension2d<u32>& size, ECOLOR_FORMAT format, bool renderTarget,
-			const io::path& name, u32 arrayLayers, bool storage)
+			const io::path& name, u32 arrayLayers, bool storage, u32 sampleCount)
 			: ITexture(name), Context(context), Upload(upload)
 		{
 			DriverType = EDT_VULKAN;
@@ -219,7 +245,20 @@ namespace irr
 				IsUnorderedAccess = true;
 			}
 
+			// The caller (addRenderTargetTexture) validated the count against the device limits.
+			if (renderTarget && sampleCount > 1 && sampleCount <= 64 && (sampleCount & (sampleCount - 1)) == 0)
+			{
+				SampleCount = static_cast<VkSampleCountFlagBits>(sampleCount);
+				// A depth target is sampled as a multisampled image (no averaging makes sense for
+				// depth), a colour target keeps a single-sample image to resolve into.
+				if (IsDepthStencil)
+					ImageSamples = SampleCount;
+			}
+
 			if (!createImage(usage) || !createImageView())
+				return;
+			if (SampleCount > VK_SAMPLE_COUNT_1_BIT && !IsDepthStencil &&
+				!createMultisampleImage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT))
 				return;
 
 			// A freshly created image is in VK_IMAGE_LAYOUT_UNDEFINED, which no read and
@@ -388,6 +427,12 @@ namespace irr
 				vk::DestroyImage(Context.Device, Image, nullptr);
 			if (Memory != VK_NULL_HANDLE)
 				vk::FreeMemory(Context.Device, Memory, nullptr);
+			if (MsaaView != VK_NULL_HANDLE)
+				vk::DestroyImageView(Context.Device, MsaaView, nullptr);
+			if (MsaaImage != VK_NULL_HANDLE)
+				vk::DestroyImage(Context.Device, MsaaImage, nullptr);
+			if (MsaaMemory != VK_NULL_HANDLE)
+				vk::FreeMemory(Context.Device, MsaaMemory, nullptr);
 
 			View = VK_NULL_HANDLE;
 			Sampler = VK_NULL_HANDLE;
@@ -399,14 +444,14 @@ namespace irr
 		{
 			VkImageCreateInfo imageInfo = {};
 			imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-			imageInfo.imageType = VK_IMAGE_TYPE_2D;
+			imageInfo.imageType = (TextureType == ETT_3D) ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
 			imageInfo.format = Format;
 			imageInfo.extent.width = Size.Width;
 			imageInfo.extent.height = Size.Height;
-			imageInfo.extent.depth = 1;
+			imageInfo.extent.depth = Depth;
 			imageInfo.mipLevels = MipLevelCount;
 			imageInfo.arrayLayers = LayerCount;
-			imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+			imageInfo.samples = ImageSamples;
 			imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
 			imageInfo.usage = usage;
 			imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -461,6 +506,7 @@ namespace irr
 			case ETT_CUBE:       viewInfo.viewType = VK_IMAGE_VIEW_TYPE_CUBE; break;
 			case ETT_CUBE_ARRAY: viewInfo.viewType = VK_IMAGE_VIEW_TYPE_CUBE_ARRAY; break;
 			case ETT_2D_ARRAY:   viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY; break;
+			case ETT_3D:         viewInfo.viewType = VK_IMAGE_VIEW_TYPE_3D; break;
 			default:             viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D; break;
 			}
 			viewInfo.format = Format;
@@ -477,6 +523,74 @@ namespace irr
 				return false;
 			}
 			return true;
+		}
+
+		bool CVulkanTexture::createMultisampleImage(VkImageUsageFlags usage)
+		{
+			VkImageCreateInfo imageInfo = {};
+			imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+			imageInfo.imageType = VK_IMAGE_TYPE_2D;
+			imageInfo.format = Format;
+			imageInfo.extent.width = Size.Width;
+			imageInfo.extent.height = Size.Height;
+			imageInfo.extent.depth = 1;
+			imageInfo.mipLevels = 1; // a multisampled image has no mip chain
+			imageInfo.arrayLayers = LayerCount;
+			imageInfo.samples = SampleCount;
+			imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+			imageInfo.usage = usage;
+			imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+			imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+			if (vulkanFailed("vkCreateImage (multisample)", vk::CreateImage(Context.Device, &imageInfo, nullptr, &MsaaImage)))
+			{
+				MsaaImage = VK_NULL_HANDLE;
+				return false;
+			}
+			MsaaLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+			VkMemoryRequirements requirements = {};
+			vk::GetImageMemoryRequirements(Context.Device, MsaaImage, &requirements);
+
+			VkMemoryAllocateInfo allocInfo = {};
+			allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+			allocInfo.allocationSize = requirements.size;
+			allocInfo.memoryTypeIndex = findMemoryTypeIndex(Context.MemoryProperties,
+				requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+			if (allocInfo.memoryTypeIndex == 0xffffffffu ||
+				vulkanFailed("vkAllocateMemory (multisample)", vk::AllocateMemory(Context.Device, &allocInfo, nullptr, &MsaaMemory)) ||
+				vulkanFailed("vkBindImageMemory (multisample)", vk::BindImageMemory(Context.Device, MsaaImage, MsaaMemory, 0)))
+			{
+				if (MsaaMemory != VK_NULL_HANDLE)
+					vk::FreeMemory(Context.Device, MsaaMemory, nullptr);
+				vk::DestroyImage(Context.Device, MsaaImage, nullptr);
+				MsaaMemory = VK_NULL_HANDLE;
+				MsaaImage = VK_NULL_HANDLE;
+				return false;
+			}
+
+			VkImageViewCreateInfo viewInfo = {};
+			viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+			viewInfo.image = MsaaImage;
+			viewInfo.viewType = (LayerCount > 1) ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
+			viewInfo.format = Format;
+			viewInfo.subresourceRange.aspectMask = Aspect;
+			viewInfo.subresourceRange.levelCount = 1;
+			viewInfo.subresourceRange.layerCount = LayerCount;
+			if (vulkanFailed("vkCreateImageView (multisample)", vk::CreateImageView(Context.Device, &viewInfo, nullptr, &MsaaView)))
+			{
+				MsaaView = VK_NULL_HANDLE;
+				return false;
+			}
+			return true;
+		}
+
+		void CVulkanTexture::transitionMultisampleTo(VkCommandBuffer commandBuffer, VkImageLayout newLayout)
+		{
+			if (MsaaImage == VK_NULL_HANDLE || newLayout == MsaaLayout)
+				return;
+			transitionImageLayout(commandBuffer, MsaaImage, MsaaLayout, newLayout, Aspect, 1, LayerCount);
+			MsaaLayout = newLayout;
 		}
 
 		VkImageView CVulkanTexture::getLayerView(u32 layer)
@@ -637,6 +751,211 @@ namespace irr
 
 			// endUploadAndWait() blocked until the copy completed, so the staging buffer
 			// is free immediately.
+			vk::DestroyBuffer(Context.Device, staging, nullptr);
+			vk::FreeMemory(Context.Device, stagingMemory, nullptr);
+			return true;
+		}
+
+		namespace
+		{
+			// The on-disk DDS layout: magic, 124-byte header, optional 20-byte DX10 header, then the
+			// surfaces -- for each array slice / cube face, every mip level from the largest down
+			// (a volume level is its depth slices back to back), tightly packed.
+			enum
+			{
+				DdsMagic = 0x20534444u, // "DDS "
+				DdsHeaderSize = 124,
+				DdsFlagMipMapCount = 0x20000,
+				DdsFlagDepth = 0x800000,
+				DdsPixelFormatFourCC = 0x4,
+				DdsCaps2Cubemap = 0x200,
+				DdsCaps2CubemapAllFaces = 0xFC00,
+				DdsCaps2Volume = 0x200000,
+				DdsDx10MiscTextureCube = 0x4,
+				DdsDx10DimensionTexture3D = 4,
+				FourCCDx10 = 0x30315844u // "DX10"
+			};
+
+#pragma pack(push, 1)
+			struct SDdsPixelFormat
+			{
+				u32 Size, Flags, FourCC, RGBBitCount, RBitMask, GBitMask, BBitMask, ABitMask;
+			};
+
+			struct SDdsHeader
+			{
+				u32 Magic;
+				u32 Size, Flags, Height, Width, PitchOrLinearSize, Depth, MipMapCount;
+				u32 Reserved1[11];
+				SDdsPixelFormat PixelFormat;
+				u32 Caps, Caps2, Caps3, Caps4, Reserved2;
+			};
+
+			struct SDdsHeaderDx10
+			{
+				u32 DxgiFormat, ResourceDimension, MiscFlag, ArraySize, MiscFlags2;
+			};
+#pragma pack(pop)
+
+			inline u32 ddsMipExtent(u32 base, u32 level)
+			{
+				const u32 e = base >> level;
+				return e ? e : 1;
+			}
+		}
+
+		bool CVulkanTexture::uploadDdsFile(const u8* bytes, u32 byteCount)
+		{
+			if (!bytes || byteCount < sizeof(SDdsHeader))
+			{
+				os::Printer::log("CVulkanTexture: .dds data too short for a header", ELL_ERROR);
+				return false;
+			}
+
+			SDdsHeader header;
+			memcpy(&header, bytes, sizeof(header));
+			if (header.Magic != DdsMagic || header.Size != DdsHeaderSize)
+			{
+				os::Printer::log("CVulkanTexture: not a .dds header", ELL_ERROR);
+				return false;
+			}
+
+			u32 dataOffset = sizeof(SDdsHeader);
+			u32 arraySize = 1;
+			bool cube = (header.Caps2 & DdsCaps2Cubemap) != 0;
+			bool volume = ((header.Flags & DdsFlagDepth) && header.Depth > 1) || (header.Caps2 & DdsCaps2Volume) != 0;
+			if ((header.PixelFormat.Flags & DdsPixelFormatFourCC) && header.PixelFormat.FourCC == FourCCDx10)
+			{
+				if (byteCount < dataOffset + sizeof(SDdsHeaderDx10))
+				{
+					os::Printer::log("CVulkanTexture: .dds data too short for its DX10 header", ELL_ERROR);
+					return false;
+				}
+				SDdsHeaderDx10 dx10;
+				memcpy(&dx10, bytes + dataOffset, sizeof(dx10));
+				dataOffset += sizeof(SDdsHeaderDx10);
+				if (dx10.ArraySize > 1)
+					arraySize = dx10.ArraySize;
+				if (dx10.MiscFlag & DdsDx10MiscTextureCube)
+					cube = true;
+				if (dx10.ResourceDimension == DdsDx10DimensionTexture3D)
+					volume = true;
+			}
+			if (cube && (header.Caps2 & DdsCaps2CubemapAllFaces) != DdsCaps2CubemapAllFaces &&
+				!(header.PixelFormat.FourCC == FourCCDx10))
+			{
+				os::Printer::log("CVulkanTexture: partial cube maps (fewer than 6 faces) are not supported", ELL_ERROR);
+				return false;
+			}
+			if (volume && (cube || arraySize > 1))
+			{
+				os::Printer::log("CVulkanTexture: a volume .dds cannot also be a cube map or an array", ELL_ERROR);
+				return false;
+			}
+
+			// The loader already decided ColorFormat from the pixel format / DXGI format; what the
+			// header adds is the geometry: dimensions, depth, mip chain, faces and slices.
+			Size.Width = header.Width;
+			Size.Height = header.Height;
+			OriginalSize = Size;
+			Depth = (volume && header.Depth) ? header.Depth : 1;
+			const u32 faces = cube ? 6 : 1;
+			LayerCount = faces * arraySize;
+			MipLevelCount = (header.Flags & DdsFlagMipMapCount) && header.MipMapCount > 1 ? header.MipMapCount : 1;
+			MipMaps = MipLevelCount > 1;
+			if (volume)
+				TextureType = ETT_3D;
+			else if (cube)
+				TextureType = (arraySize > 1) ? ETT_CUBE_ARRAY : ETT_CUBE;
+			else if (LayerCount > 1)
+				TextureType = ETT_2D_ARRAY;
+			HasAlpha = IImage::hasAlphaFormat(ColorFormat);
+
+			// The device has to sample this format at all; BC support is optional in Vulkan.
+			VkFormatProperties properties = {};
+			vk::GetPhysicalDeviceFormatProperties(Context.PhysicalDevice, Format, &properties);
+			if (!(properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))
+			{
+				os::Printer::log("CVulkanTexture: the device cannot sample this .dds format", ELL_ERROR);
+				return false;
+			}
+
+			// Every surface, in file order, so the copy regions can be laid out in one pass. A
+			// volume level is one region whose depth covers its slices, stored back to back.
+			std::vector<VkBufferImageCopy> regions;
+			regions.reserve(LayerCount * MipLevelCount);
+			u32 offset = dataOffset;
+			for (u32 layer = 0; layer < LayerCount; ++layer)
+			{
+				for (u32 level = 0; level < MipLevelCount; ++level)
+				{
+					const u32 width = ddsMipExtent(Size.Width, level);
+					const u32 height = ddsMipExtent(Size.Height, level);
+					const u32 depth = ddsMipExtent(Depth, level);
+					const u32 levelBytes = IImage::getSurfaceSizeInBytes(ColorFormat, width, height) * depth;
+					if (levelBytes == 0 || offset + levelBytes > byteCount)
+					{
+						os::Printer::log("CVulkanTexture: .dds file is shorter than its header claims", ELL_ERROR);
+						return false;
+					}
+
+					VkBufferImageCopy region = {};
+					region.bufferOffset = offset - dataOffset;
+					region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+					region.imageSubresource.mipLevel = level;
+					region.imageSubresource.baseArrayLayer = layer;
+					region.imageSubresource.layerCount = 1;
+					region.imageExtent.width = width;
+					region.imageExtent.height = height;
+					region.imageExtent.depth = depth;
+					regions.push_back(region);
+
+					offset += levelBytes;
+				}
+			}
+			const VkDeviceSize dataBytes = offset - dataOffset;
+			Pitch = IImage::isCompressedFormat(ColorFormat) ?
+				((Size.Width + 3) / 4) * IImage::getBlockBytes(ColorFormat) :
+				Size.Width * (IImage::getBitsPerPixelFromFormat(ColorFormat) / 8);
+
+			if (!createImage(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+				VK_IMAGE_USAGE_TRANSFER_SRC_BIT) || !createImageView())
+				return false;
+
+			VkBuffer staging = VK_NULL_HANDLE;
+			VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+			if (!createVulkanBuffer(Context, dataBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				staging, stagingMemory))
+				return false;
+
+			void* mapped = nullptr;
+			if (vulkanFailed("vkMapMemory", vk::MapMemory(Context.Device, stagingMemory, 0, dataBytes, 0, &mapped)))
+			{
+				vk::DestroyBuffer(Context.Device, staging, nullptr);
+				vk::FreeMemory(Context.Device, stagingMemory, nullptr);
+				return false;
+			}
+			memcpy(mapped, bytes + dataOffset, static_cast<size_t>(dataBytes));
+			vk::UnmapMemory(Context.Device, stagingMemory);
+
+			VkCommandBuffer commandBuffer = Upload.beginUpload();
+			if (commandBuffer == VK_NULL_HANDLE)
+			{
+				vk::DestroyBuffer(Context.Device, staging, nullptr);
+				vk::FreeMemory(Context.Device, stagingMemory, nullptr);
+				return false;
+			}
+
+			transitionImageLayout(commandBuffer, Image, VK_IMAGE_LAYOUT_UNDEFINED,
+				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, Aspect, MipLevelCount, LayerCount);
+			vk::CmdCopyBufferToImage(commandBuffer, staging, Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+				static_cast<u32>(regions.size()), regions.data());
+			transitionImageLayout(commandBuffer, Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, Aspect, MipLevelCount, LayerCount);
+			CurrentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			Upload.endUploadAndWait(commandBuffer);
+
 			vk::DestroyBuffer(Context.Device, staging, nullptr);
 			vk::FreeMemory(Context.Device, stagingMemory, nullptr);
 			return true;

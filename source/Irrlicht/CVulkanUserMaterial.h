@@ -140,6 +140,14 @@ namespace irr
 			//! based on EMT_ONETEXTURE_BLEND still decodes its per-instance factors.
 			E_MATERIAL_TYPE BaseMaterialType = EMT_SOLID;
 
+			//! The vertexTypeOut of addHighLevelShaderMaterial(): set before compileFromSource() by
+			//! the driver when the device has transform feedback, it is patched into the geometry
+			//! stage as its capture layout (see CVulkanSpirvXfb.h). grab()'d; dropped here.
+			IVertexDescriptor* StreamOutputLayout = nullptr;
+			//! True once the geometry stage carries transform feedback decorations: the material's
+			//! draws capture into the bound stream-output buffer and rasterize nothing.
+			bool StreamOutput = false;
+
 			CVulkanUserMaterial() = default;
 			virtual ~CVulkanUserMaterial();
 
@@ -172,7 +180,9 @@ namespace irr
 			const std::vector<SVulkanUserUniformBlock>* getStageBlocks(E_VULKAN_USER_STAGE stage) const;
 
 			//! E_SHADER_TYPE (the public shader-constant API) -> E_VULKAN_USER_STAGE. False for a type
-			//! this material cannot carry, EST_COMPUTE_SHADER and EST_STREAM_OUTPUT_SHADER included.
+			//! this material cannot carry, EST_COMPUTE_SHADER included. EST_STREAM_OUTPUT_SHADER is the
+			//! geometry stage: the D3D11 driver compiles a stream-output geometry shader under that
+			//! name, so constants set through it must land on the same stage.
 			static bool stageFromShaderType(E_SHADER_TYPE type, E_VULKAN_USER_STAGE& outStage);
 
 			//! Mirrors CD3D12MaterialRenderer::getConstantBufferID(): index into the stage's blocks,

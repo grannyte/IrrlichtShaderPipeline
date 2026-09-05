@@ -9,6 +9,7 @@
 #ifdef _IRR_COMPILE_WITH_DIRECT3D_12_
 
 #include <cmath>
+#include <cstdlib>
 #include <set>
 #include <mutex>
 #include "CAttributes.h"
@@ -373,6 +374,13 @@ namespace irr
 				os::Printer::log("CD3D12Driver: D3D12CreateDevice a echoue", ELL_ERROR);
 				return false;
 			}
+			if (FAILED(Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &FeatureOptions, sizeof(FeatureOptions))))
+				::ZeroMemory(&FeatureOptions, sizeof(FeatureOptions));
+			// The D3D11.x additions, see doc/d3d11-feature-api.md.
+			DriverAttributes->setAttribute("LogicOpOnUnorm", FeatureOptions.OutputMergerLogicOp != 0 &&
+				formatSupportsLogicOp(DXGI_FORMAT_R8G8B8A8_UNORM));
+			DriverAttributes->setAttribute("TiledResourcesTier", (s32)FeatureOptions.TiledResourcesTier);
+			DriverAttributes->setAttribute("ConservativeRasterizationTier", (s32)FeatureOptions.ConservativeRasterizationTier);
 
 #ifdef _DEBUG
 			// EnableDebugLayer() alone only sends its messages to OutputDebugString: they
@@ -384,8 +392,12 @@ namespace irr
 				ComPtr<ID3D12InfoQueue> infoQueue;
 				if (SUCCEEDED(Device.As(&infoQueue)))
 				{
-					infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, TRUE);
-					infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, TRUE);
+					// IRR_D3D12_NO_BREAK in the environment keeps the process alive on an error so
+					// the message reaches the log (through logD3D12Failure()) when no debugger is
+					// attached; the default breaks, which is what a debugging session wants.
+					const bool breakOnError = std::getenv("IRR_D3D12_NO_BREAK") == 0;
+					infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, breakOnError ? TRUE : FALSE);
+					infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, breakOnError ? TRUE : FALSE);
 
 					// The suboptimal clear-value warnings (#820/#821) are emitted by EVERY
 					// post-process pass every frame (about thirty of them): purely a perf concern, they
@@ -1329,8 +1341,27 @@ namespace irr
 			case EBF_DST_ALPHA: return D3D12_BLEND_DEST_ALPHA;
 			case EBF_ONE_MINUS_DST_ALPHA: return D3D12_BLEND_INV_DEST_ALPHA;
 			case EBF_SRC_ALPHA_SATURATE: return D3D12_BLEND_SRC_ALPHA_SAT;
+			// Dual-source: the pixel shader's SV_Target1. Render target 0 only, the caller checks.
+			case EBF_SRC1_COLOR: return forAlphaChannel ? D3D12_BLEND_SRC1_ALPHA : D3D12_BLEND_SRC1_COLOR;
+			case EBF_ONE_MINUS_SRC1_COLOR: return forAlphaChannel ? D3D12_BLEND_INV_SRC1_ALPHA : D3D12_BLEND_INV_SRC1_COLOR;
+			case EBF_SRC1_ALPHA: return D3D12_BLEND_SRC1_ALPHA;
+			case EBF_ONE_MINUS_SRC1_ALPHA: return D3D12_BLEND_INV_SRC1_ALPHA;
 			default: return D3D12_BLEND_ONE;
 			}
+		}
+
+		bool CD3D12Driver::formatSupportsLogicOp(DXGI_FORMAT format) const
+		{
+			std::map<DXGI_FORMAT, bool>::const_iterator cached = LogicOpFormatSupport.find(format);
+			if (cached != LogicOpFormatSupport.end())
+				return cached->second;
+			D3D12_FEATURE_DATA_FORMAT_SUPPORT support = {};
+			support.Format = format;
+			bool ok = false;
+			if (Device && SUCCEEDED(Device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof(support))))
+				ok = (support.Support2 & D3D12_FORMAT_SUPPORT2_OUTPUT_MERGER_LOGIC_OP) != 0;
+			LogicOpFormatSupport[format] = ok;
+			return ok;
 		}
 
 		D3D12_COMPARISON_FUNC CD3D12Driver::getD3D12DepthFunc(E_COMPARISON_FUNC func)
@@ -1617,6 +1648,61 @@ namespace irr
 			// NumRenderTargets/RTVFormats just above, D3D12 requires the PSO's SampleDesc.Count
 			// to exactly match that of the actually bound target(s).
 			key.SampleCount = CurrentRTVSampleCount;
+
+			// SMaterial::AntiAliasing & EAAM_ALPHA_TO_COVERAGE, as CD3D11Driver::setBasicRenderStates().
+			key.AlphaToCoverage = (material.AntiAliasing & EAAM_ALPHA_TO_COVERAGE) != 0;
+
+			// The D3D11.x material state, each behind its capability (see doc/d3d11-feature-api.md).
+			key.SampleMask = material.SampleMask;
+			if (material.LogicOp != ELO_NONE)
+			{
+				if (!FeatureOptions.OutputMergerLogicOp)
+				{
+					if (!WarnedNoLogicOp)
+						os::Printer::log("CD3D12Driver: SMaterial::LogicOp needs EVDF_LOGIC_OP, ignored", ELL_WARNING);
+					WarnedNoLogicOp = true;
+				}
+				else if (!formatSupportsLogicOp(CurrentRTVFormats[0]))
+				{
+					// The runtime refuses the PSO otherwise (UNORM targets on most hardware; see
+					// getDriverAttributes() "LogicOpOnUnorm").
+					if (!WarnedLogicOpFormat)
+						os::Printer::log("CD3D12Driver: the bound render target format does not support "
+							"logic ops (use an integer format), SMaterial::LogicOp ignored", ELL_WARNING);
+					WarnedLogicOpFormat = true;
+				}
+				else
+				{
+					// E_LOGIC_OP minus ELO_NONE lists the D3D12_LOGIC_OP values in order.
+					key.LogicOpEnable = true;
+					key.LogicOp = static_cast<D3D12_LOGIC_OP>(material.LogicOp - 1);
+				}
+			}
+			if (material.ConservativeRaster)
+			{
+				if (FeatureOptions.ConservativeRasterizationTier != D3D12_CONSERVATIVE_RASTERIZATION_TIER_NOT_SUPPORTED)
+					key.ConservativeRaster = true;
+				else if (!WarnedNoConservativeRaster)
+				{
+					os::Printer::log("CD3D12Driver: SMaterial::ConservativeRaster needs EVDF_CONSERVATIVE_RASTERIZATION, ignored", ELL_WARNING);
+					WarnedNoConservativeRaster = true;
+				}
+			}
+
+			// The IRenderTarget overrides of the bound MRT set, slots 1 and up.
+			if (MrtBlend.Mask && CurrentRTVCount > 1)
+			{
+				key.TargetOverrideMask = MrtBlend.Mask & 0xFEu;
+				for (UINT i = 1; i < 8; ++i)
+				{
+					if (!(key.TargetOverrideMask & (1u << i)))
+						continue;
+					key.TargetBlendEnable[i] = MrtBlend.Enable[i];
+					key.TargetSrcBlend[i] = MrtBlend.Src[i];
+					key.TargetDestBlend[i] = MrtBlend.Dest[i];
+					key.TargetWriteMask[i] = MrtBlend.Write[i];
+				}
+			}
 
 			return key;
 		}
@@ -2681,15 +2767,29 @@ namespace irr
 				desc.MaxAnisotropy = 1;
 			}
 
+			// Min/max reduction (SMaterialLayer::MinMaxFilter): the reduction type sits in bits 7..8
+			// of D3D12_FILTER on top of the base filter. Every D3D12 device supports it.
+			if (layer.MinMaxFilter == ETMINF_MINIMUM)
+				desc.Filter = static_cast<D3D12_FILTER>(desc.Filter | (D3D12_FILTER_REDUCTION_TYPE_MINIMUM << D3D12_FILTER_REDUCTION_TYPE_SHIFT));
+			else if (layer.MinMaxFilter == ETMINF_MAXIMUM)
+				desc.Filter = static_cast<D3D12_FILTER>(desc.Filter | (D3D12_FILTER_REDUCTION_TYPE_MAXIMUM << D3D12_FILTER_REDUCTION_TYPE_SHIFT));
+			// SMaterialLayer::MinLod: the finest mip the sampler may reach.
+			desc.MinLOD = layer.MinLod > 0.f ? layer.MinLod : 0.f;
+			if (!useMipMaps)
+				desc.MinLOD = 0.f;
+
 			// Dedup key: the only fields that vary here (Filter/AddressU/AddressV/
 			// MaxAnisotropy/truncated MipLODBias/useMipMaps) fit in 64 bits -- no need to hash
 			// the whole struct like CD3D11's SamplerMap (core::map<SD3D11_SAMPLER_DESC, ...>). Bit
-			// 48 (beyond Filter's range, which occupies bit 32 and above) for useMipMaps.
+			// 48 (beyond Filter's range, which occupies bit 32 and above) for useMipMaps, bits 49..55
+			// for MinLOD in eighths of a level (the reduction type is part of Filter already).
+			const UINT64 minLodEighths = static_cast<UINT64>(core::min_(desc.MinLOD * 8.f, 127.f));
 			outKey = (static_cast<UINT64>(desc.Filter) << 32) |
 				(static_cast<UINT64>(desc.AddressU) << 24) |
 				(static_cast<UINT64>(desc.AddressV) << 16) |
 				(static_cast<UINT64>(desc.MaxAnisotropy) << 8) |
 				(useMipMaps ? (UINT64(1) << 48) : 0) |
+				(minLodEighths << 49) |
 				static_cast<UINT64>(static_cast<u8>(layer.LODBias));
 			return desc;
 		}
@@ -3293,6 +3393,40 @@ namespace irr
 			return ViewPort;
 		}
 
+		void CD3D12Driver::setViewPorts(const core::array<core::rect<s32> >& areas)
+		{
+			if (areas.empty())
+				return;
+			// The first entry goes through the ordinary path (getViewPort()); the full array then
+			// replaces it, each viewport with a scissor of its own extent. setRenderTarget() puts a
+			// single viewport back.
+			setViewPort(areas[0]);
+			if (areas.size() < 2 || !SceneOpen)
+				return;
+
+			const core::dimension2du size = getCurrentRenderTargetSize();
+			const core::rect<s32> bounds(0, 0, static_cast<s32>(size.Width), static_cast<s32>(size.Height));
+			D3D12_VIEWPORT viewports[D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+			D3D12_RECT scissors[D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+			UINT count = 0;
+			for (u32 i = 0; i < areas.size() && count < D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE; ++i)
+			{
+				core::rect<s32> vp = areas[i];
+				vp.clipAgainst(bounds);
+				if (vp.getWidth() <= 0 || vp.getHeight() <= 0)
+					continue;
+				viewports[count] = { static_cast<float>(vp.UpperLeftCorner.X), static_cast<float>(vp.UpperLeftCorner.Y),
+					static_cast<float>(vp.getWidth()), static_cast<float>(vp.getHeight()), 0.0f, 1.0f };
+				scissors[count] = { vp.UpperLeftCorner.X, vp.UpperLeftCorner.Y, vp.LowerRightCorner.X, vp.LowerRightCorner.Y };
+				++count;
+			}
+			if (count)
+			{
+				CommandList->RSSetViewports(count, viewports);
+				CommandList->RSSetScissorRects(count, scissors);
+			}
+		}
+
 		void CD3D12Driver::setScissorFromClip(const core::rect<s32>* clip)
 		{
 			D3D12_RECT rect;
@@ -3696,6 +3830,7 @@ namespace irr
 			}
 
 			CurrentRenderTargetSize = CurrentRenderTarget ? CurrentRenderTarget->getSize() : WindowSize;
+			MrtBlend.reset(); // per-target overrides belong to an MRT set only
 
 			D3D12_CPU_DESCRIPTOR_HANDLE rtv;
 			D3D12_CPU_DESCRIPTOR_HANDLE* dsvPtr = nullptr;
@@ -3834,6 +3969,63 @@ namespace irr
 			return true;
 		}
 
+		bool CD3D12Driver::setRenderTargetSlice(video::ITexture* texture, u32 arraySlice,
+			bool clearTarget, SColor color)
+		{
+			if (!texture || texture->getDriverType() != EDT_DIRECT3D12 || !texture->isRenderTarget())
+			{
+				os::Printer::log("CD3D12Driver::setRenderTargetSlice: not a D3D12 render target", ELL_ERROR);
+				return false;
+			}
+			CD3D12Texture* d3dTex = static_cast<CD3D12Texture*>(texture);
+			if (!d3dTex->hasRenderTargetView())
+			{
+				os::Printer::log("CD3D12Driver::setRenderTargetSlice: texture without RTV", ELL_ERROR);
+				return false;
+			}
+			if (arraySlice >= d3dTex->getArraySliceCount())
+			{
+				os::Printer::log("CD3D12Driver::setRenderTargetSlice: slice out of range", ELL_ERROR);
+				return false;
+			}
+			const D3D12_CPU_DESCRIPTOR_HANDLE rtv = d3dTex->getRenderTargetView(arraySlice);
+			if (rtv.ptr == 0)
+				return false; // already logged
+
+			CurrentRenderTarget = texture;
+			CurrentRenderTargetSize = texture->getSize();
+			transitionTexture(d3dTex, D3D12_RESOURCE_STATE_RENDER_TARGET);
+			CurrentRTVCount = 1;
+			CurrentRTVFormats[0] = d3dTex->getDxgiFormat();
+			CurrentRTVSampleCount = d3dTex->getSampleCount();
+			MrtBlend.reset();
+
+			// No depth, like the array branch of setRenderTarget(): the pooled depth buffers are
+			// single-slice, and a slice is written by a full-screen blit, never depth-tested. The PSO
+			// key follows CurrentSceneHasDepthStencil, so DSVFormat stays UNKNOWN for these draws.
+			CurrentDSVHandle = {};
+			CurrentSceneHasDepthStencil = false;
+
+			if (clearTarget)
+			{
+				const FLOAT clearColor[4] = {
+					color.getRed() / 255.0f, color.getGreen() / 255.0f,
+					color.getBlue() / 255.0f, color.getAlpha() / 255.0f
+				};
+				CommandList->ClearRenderTargetView(rtv, clearColor, 0, nullptr);
+			}
+			CommandList->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+			CurrentRTVHandles[0] = rtv; // to re-bind after a flushCommandList()
+
+			D3D12_VIEWPORT viewport = { 0.0f, 0.0f, static_cast<float>(CurrentRenderTargetSize.Width),
+				static_cast<float>(CurrentRenderTargetSize.Height), 0.0f, 1.0f };
+			CommandList->RSSetViewports(1, &viewport);
+			ViewPort = core::rect<s32>(0, 0, static_cast<s32>(CurrentRenderTargetSize.Width),
+				static_cast<s32>(CurrentRenderTargetSize.Height));
+			setScissorFromClip(nullptr);
+			return true;
+		}
+
 		bool CD3D12Driver::setRenderTarget(const core::array<video::IRenderTarget>& targets,
 			const core::array<bool>& clearBackBuffer, bool clearZBufferFlag, SColor color,
 			video::ITexture* depthStencil)
@@ -3899,6 +4091,38 @@ namespace irr
 			CurrentRenderTargetSize = CurrentRenderTarget->getSize();
 			CurrentRTVCount = count;
 			CurrentRTVSampleCount = static_cast<CD3D12Texture*>(targets[0].RenderTexture)->getSampleCount();
+
+			// The per-target blend and colour mask of the IRenderTarget entries, slots 1 and up,
+			// baked into the PSOs drawn while this set is bound (see buildPSOKeyFromMaterial). Slot 0
+			// follows the material, as CD3D11Driver::setBasicRenderStates() rewrites RenderTarget[0].
+			// Opt-in (setPerTargetBlend()): by default every target follows the material, as on D3D11.
+			MrtBlend.reset();
+			for (UINT i = 1; PerTargetBlend && i < count && i < 8; ++i)
+			{
+				const video::IRenderTarget& target = targets[i];
+				MrtBlend.Mask |= static_cast<UINT8>(1u << i);
+				MrtBlend.Enable[i] = (target.BlendOp != EBO_NONE) ? TRUE : FALSE;
+				// The dual-source factors exist on slot 0 only.
+				auto slotFactor = [&](E_BLEND_FACTOR factor) -> D3D12_BLEND
+				{
+					if (factor >= EBF_SRC1_COLOR)
+					{
+						if (!WarnedSrc1OnMrtSlot)
+							os::Printer::log("CD3D12Driver::setRenderTarget: EBF_SRC1_* is only valid on "
+								"render target 0, using EBF_ONE on the other slots", ELL_WARNING);
+						WarnedSrc1OnMrtSlot = true;
+						return D3D12_BLEND_ONE;
+					}
+					return getD3D12BlendFactor(factor, false);
+				};
+				MrtBlend.Src[i] = slotFactor(target.BlendFuncSrc);
+				MrtBlend.Dest[i] = slotFactor(target.BlendFuncDst);
+				MrtBlend.Write[i] =
+					((target.ColorMask & ECP_RED) ? D3D12_COLOR_WRITE_ENABLE_RED : 0) |
+					((target.ColorMask & ECP_GREEN) ? D3D12_COLOR_WRITE_ENABLE_GREEN : 0) |
+					((target.ColorMask & ECP_BLUE) ? D3D12_COLOR_WRITE_ENABLE_BLUE : 0) |
+					((target.ColorMask & ECP_ALPHA) ? D3D12_COLOR_WRITE_ENABLE_ALPHA : 0);
+			}
 
 			D3D12_CPU_DESCRIPTOR_HANDLE rtvs[D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT];
 			for (u32 i = 0; i < count; ++i)
@@ -5058,6 +5282,10 @@ namespace irr
 
 		bool CD3D12Driver::queryFeature(E_VIDEO_DRIVER_FEATURE feature) const
 		{
+			// disableFeature() has to win, as on the other drivers.
+			if (feature < 0 || feature >= EVDF_COUNT || !FeatureEnabled[feature])
+				return false;
+
 			switch (feature)
 			{
 			case EVDF_RENDER_TO_TARGET:
@@ -5070,9 +5298,56 @@ namespace irr
 				return true; // generated via a pixel-shader blit, see createMipGenPipeline()
 			case EVDF_POLYGON_OFFSET:
 				return true; // D3D12_RASTERIZER_DESC::DepthBias/SlopeScaledDepthBias, always available
+			// Always there on a feature level 11 device: setRenderTarget(array) with per-target
+			// IRenderTarget blend/mask (IndependentBlendEnable), AlphaToCoverageEnable, multisampled
+			// render target textures with an explicit resolve, geometry shaders.
+			case EVDF_MULTIPLE_RENDER_TARGETS:
+			case EVDF_MRT_BLEND:
+			case EVDF_MRT_COLOR_MASK:
+			case EVDF_MRT_BLEND_FUNC:
+			case EVDF_ALPHA_TO_COVERAGE:
+			case EVDF_TEXTURE_MULTISAMPLING:
+			case EVDF_COLOR_MASK:
+			case EVDF_BLEND_OPERATIONS:
+			case EVDF_TEXTURE_NPOT:
+			case EVDF_TEXTURE_NSQUARE:
+			case EVDF_MULTITEXTURE:
+			case EVDF_BILINEAR_FILTER:
+			case EVDF_HARDWARE_TL:
+			case EVDF_VERTEX_BUFFER_OBJECT:
+			case EVDF_FRAMEBUFFER_OBJECT:
+			case EVDF_HLSL:
+			case EVDF_GEOMETRY_SHADER:
+			case EVDF_GEOMETRY_SHADER_4_0:
+			case EVDF_GEOMETRY_SHADER_4_1:
+			case EVDF_GEOMETRY_SHADER_5_0:
+			case EVDF_VERTEX_SHADER_4_0:
+			case EVDF_VERTEX_SHADER_4_1:
+			case EVDF_VERTEX_SHADER_5_0:
+			case EVDF_PIXEL_SHADER_4_0:
+			case EVDF_PIXEL_SHADER_4_1:
+			case EVDF_PIXEL_SHADER_5_0:
+			case EVDF_TEXTURE_COMPRESSED_DXT:
+				return true;
 			case EVDF_COMPUTING_SHADER_5_0:
 			case EVDF_BOUND_COMPUTE_PIPELINE:
 				return ComputeRootSignature != nullptr; // see createComputeRootSignature()
+
+			// --- The D3D11.x additions, see doc/d3d11-feature-api.md ---
+			case EVDF_DUAL_SOURCE_BLEND:
+				return true;
+			case EVDF_LOGIC_OP:
+				return FeatureOptions.OutputMergerLogicOp != 0;
+			case EVDF_CONSERVATIVE_RASTERIZATION:
+				return FeatureOptions.ConservativeRasterizationTier != D3D12_CONSERVATIVE_RASTERIZATION_TIER_NOT_SUPPORTED;
+			case EVDF_PIXEL_SHADER_STENCIL_REF:
+				return FeatureOptions.PSSpecifiedStencilRefSupported != 0;
+			case EVDF_RASTERIZER_ORDERED_VIEWS:
+				return FeatureOptions.ROVsSupported != 0;
+			case EVDF_NATIVE_DEFERRED_CONTEXT:
+			case EVDF_MULTIPLE_VIEWPORTS:	// SV_ViewportArrayIndex from a geometry shader, always on FL 11
+			case EVDF_MINMAX_FILTER:		// D3D12_FILTER_REDUCTION_TYPE_MINIMUM/MAXIMUM, required of every D3D12 device
+				return true;
 			default:
 				return false;
 			}

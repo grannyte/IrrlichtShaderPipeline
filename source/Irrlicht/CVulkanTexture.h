@@ -30,10 +30,16 @@ namespace irr
 			//! depth/stencil attachment, anything else a color one; both stay sampled.
 			//! `arrayLayers` > 1 makes an ETT_2D_ARRAY whose layers are reachable one at a time
 			//! through getLayerView(); `storage` adds STORAGE usage for compute writes
-			//! (isUnorderedAccess()).
+			//! (isUnorderedAccess()). `sampleCount` > 1 (a power of two the caller has checked
+			//! against the device) makes a multisampled colour target: the samples live in a second
+			//! image that is the attachment (getAttachmentView()) and is resolved into this one at the
+			//! end of every pass, so sampling, lock() and copyTexture() see single-sample texels -- the
+			//! explicit-resolve scheme CD3D12Texture uses. A multisampled depth texture has no resolve
+			//! companion: the image itself carries the samples.
 			CVulkanTexture(const SVulkanContext& context, IVulkanUploadContext& upload,
 				const core::dimension2d<u32>& size, ECOLOR_FORMAT format,
-				bool renderTarget, const io::path& name, u32 arrayLayers = 1, bool storage = false);
+				bool renderTarget, const io::path& name, u32 arrayLayers = 1, bool storage = false,
+				u32 sampleCount = 1);
 
 			//! Cube map / 2D array / cube array built from already-uploaded Vulkan textures of one
 			//! size and format: every slice's mip chain is copied on the GPU into one layer. `type`
@@ -60,6 +66,14 @@ namespace irr
 			VkImage getImage() const { return Image; }
 			//! The view over every layer: 2D, 2D_ARRAY, CUBE or CUBE_ARRAY per getTextureType().
 			VkImageView getImageView() const { return View; }
+			//! What a render pass attaches: the multisampled image's view for a multisampled colour
+			//! target (getImageView() is then the resolve destination), getImageView() otherwise.
+			VkImageView getAttachmentView() const { return MsaaView != VK_NULL_HANDLE ? MsaaView : View; }
+			//! Samples a pass rendering into this texture rasterizes at; 1 for everything but a
+			//! multisampled render target.
+			VkSampleCountFlagBits getSampleCount() const { return SampleCount; }
+			//! Layout barrier on the multisampled companion image, a no-op when there is none.
+			void transitionMultisampleTo(VkCommandBuffer commandBuffer, VkImageLayout newLayout);
 			//! A 2D view over one layer, created on first use, for binding a slice as an attachment
 			//! or copying into it. Layer 0 of a single-layer texture is getImageView() itself.
 			VkImageView getLayerView(u32 layer);
@@ -86,11 +100,22 @@ namespace irr
 		private:
 			bool createImage(VkImageUsageFlags usage);
 			bool createImageView();
+			//! The multisampled companion of a colour render target (SampleCount samples, one mip,
+			//! LayerCount layers) and its view.
+			bool createMultisampleImage(VkImageUsageFlags usage);
 
 			//! Staging buffer + copy into mip 0 of layer 0, ending in SHADER_READ_ONLY_OPTIMAL.
 			//! `expandR8G8B8` widens 24 bit source rows to 32 bit with alpha 0xFF.
 			bool uploadImageData(const void* data, u32 sourcePitchBytes, u32 dataSizeBytes,
 				bool expandR8G8B8);
+
+			//! The raw-file path of CImageLoaderDDS (block-compressed, wide format, cube map, array
+			//! or volume), which hands over the RAW .dds file (header included,
+			//! CImage::CompressedSize bytes) rather than pixels, the way DDSTextureLoader12 consumes
+			//! it on D3D12. Parses the header, creates the image with every mip level, cube face,
+			//! array slice and depth slice the file carries, and uploads them all in one copy. False
+			//! (logged) on a malformed or truncated file.
+			bool uploadDdsFile(const u8* bytes, u32 byteCount);
 
 			void destroyStagingBuffer();
 
@@ -119,6 +144,19 @@ namespace irr
 			VkImageAspectFlags Aspect = VK_IMAGE_ASPECT_COLOR_BIT;
 			u32 MipLevelCount = 1;
 			u32 LayerCount = 1;
+			//! Slices of an ETT_3D texture (a volume .dds); 1 for everything else.
+			u32 Depth = 1;
+
+			//! Sample count of the attachment a pass renders into (see getSampleCount()).
+			VkSampleCountFlagBits SampleCount = VK_SAMPLE_COUNT_1_BIT;
+			//! Samples of Image itself: SampleCount for a multisampled depth texture, 1 otherwise --
+			//! a multisampled colour target keeps Image single-sample as the resolve destination.
+			VkSampleCountFlagBits ImageSamples = VK_SAMPLE_COUNT_1_BIT;
+			//! The multisampled companion of a colour render target, see the constructor comment.
+			VkImage MsaaImage = VK_NULL_HANDLE;
+			VkDeviceMemory MsaaMemory = VK_NULL_HANDLE;
+			VkImageView MsaaView = VK_NULL_HANDLE;
+			VkImageLayout MsaaLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
 			// Settings the current sampler was built with, tested by createSampler().
 			bool SamplerBilinear = true;

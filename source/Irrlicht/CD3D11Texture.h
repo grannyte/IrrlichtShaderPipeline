@@ -102,6 +102,12 @@ namespace irr
 			//! Pixels went to CreateTexture2D as initial data, so copyTexture() has nothing to do.
 			bool UploadedAtCreation = false;
 
+			//! Single-sample twin of a multisampled render target, resolved into by
+			//! getShaderResourceView() so the target can be sampled; null for everything else.
+			ID3D11Texture2D* ResolvedTexture = 0;
+			ID3D11ShaderResourceView* ResolvedSRView = 0;
+			DXGI_FORMAT ResolveFormat = DXGI_FORMAT_UNKNOWN;
+
 			//! creates hardware render target
 			void createRenderTarget(const ECOLOR_FORMAT format);
 

@@ -69,12 +69,23 @@ namespace irr
 			//! dereferencing a null SwapChain (inherited from CD3D12Driver::OnResize()).
 			virtual void OnResize(const core::dimension2d<u32>& size) _IRR_OVERRIDE_;
 
+			//! A null texture (ERT_FRAME_BUFFER) means this context's own target (see
+			//! getRenderTarget()), never the immediate driver's back buffer; any other render
+			//! target texture binds as on the immediate driver.
+			virtual bool setRenderTarget(video::ITexture* texture, bool clearBackBuffer = true,
+				bool clearZBuffer = true, SColor color = video::SColor(0, 0, 0, 0),
+				video::ITexture* depthStencil = 0) _IRR_OVERRIDE_;
+
 			// IDeferredContext
 			virtual void execute(IVideoDriver* driver = nullptr) _IRR_OVERRIDE_;
 			virtual void beginRecording() _IRR_OVERRIDE_;
 			virtual size_t pendingCommandCount() const _IRR_OVERRIDE_ { return 0; }
 			virtual void waitForCompletion() _IRR_OVERRIDE_;
 			virtual IDeferredContext* getDeferredContextControl() _IRR_OVERRIDE_ { return this; }
+			virtual core::dimension2d<u32> getRecordingSize() const _IRR_OVERRIDE_
+			{
+				return Target ? Target->getSize() : core::dimension2d<u32>(0, 0);
+			}
 
 			//! Nesting a deferred context inside a deferred context is not supported -- fails
 			//! loudly rather than silently building something half-functional.
@@ -136,16 +147,21 @@ namespace irr
 			//! comment). Lives in the TextureCache shared with ImmediateDriver, so it outlives
 			//! this context and is only released by ~CD3D12Driver() on the immediate driver.
 			//! Exposed so it can later be composed into another frame as a normal SRV texture.
-			ITexture* getRenderTarget() const { return Target; }
+			virtual ITexture* getRenderTarget() const _IRR_OVERRIDE_ { return Target; }
 
 		private:
 			CD3D12Driver* ImmediateDriver;
 			ITexture* Target = nullptr;
 
-			//! Resets the ring cursors (constants/vertex/shader-visible SRV) of Frames[0],
-			//! (re)binds its shader-visible SRV heap on CommandList, and targets this context's
-			//! own Target render target/depth-stencil. Shared by the constructor and beginRecording().
+			//! Resets the ring cursors (constants/vertex/shader-visible SRV) of the current frame
+			//! slot, (re)binds its shader-visible SRV heap on CommandList, and targets this
+			//! context's own Target render target/depth-stencil, cleared. Shared by the constructor
+			//! and beginRecording().
 			void prepareRecordingState();
+			//! Binds Target with this context's depth-stencil and refreshes the render-target
+			//! bookkeeping the PSO key and the 2D projection read (as CD3D12Driver::setRenderTarget()
+			//! does for a texture). Used at recording start and by setRenderTarget(0).
+			void bindOwnTarget(bool clearColor, bool clearDepth, SColor color);
 		};
 	}
 }

@@ -38,6 +38,10 @@ namespace irr
 			s8 LODBias = 0;
 			//! SMaterial::UseMipMaps, not a layer field: it caps maxLod to 0, so it is part of the key.
 			bool UseMipMaps = true;
+			//! SMaterialLayer::MinMaxFilter (E_TEXTURE_MINMAX_FILTER), the sampler reduction mode.
+			u8 MinMaxFilter = ETMINF_AVERAGE;
+			//! SMaterialLayer::MinLod, in eighths of a level like LODBias, so the key stays integral.
+			u16 MinLodEighths = 0;
 
 			bool operator==(const SVulkanSamplerKey& other) const
 			{
@@ -48,7 +52,9 @@ namespace irr
 					TextureWrapV == other.TextureWrapV &&
 					TextureWrapW == other.TextureWrapW &&
 					LODBias == other.LODBias &&
-					UseMipMaps == other.UseMipMaps;
+					UseMipMaps == other.UseMipMaps &&
+					MinMaxFilter == other.MinMaxFilter &&
+					MinLodEighths == other.MinLodEighths;
 			}
 
 			//! Same idiom as SVulkanPipelineKey. Colliding keys share a sampler, uncorrected.
@@ -64,6 +70,8 @@ namespace irr
 				// s8 -> size_t sign-extends; through u8 keeps both bias directions distinct.
 				combine(static_cast<size_t>(static_cast<u8>(LODBias)));
 				combine(static_cast<size_t>(UseMipMaps));
+				combine(static_cast<size_t>(MinMaxFilter));
+				combine(static_cast<size_t>(MinLodEighths));
 				return h;
 			}
 		};

@@ -169,7 +169,7 @@ namespace irr
 			VkFormat DepthFormat = VK_FORMAT_UNDEFINED;
 			VkImageAspectFlags DepthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
 
-			//! Part of both the pipeline key and the pool key; 1 while CVulkanTexture stays single-sample.
+			//! Part of both the pipeline key and the pool key: the colour textures' sample count.
 			VkSampleCountFlagBits SampleCount = VK_SAMPLE_COUNT_1_BIT;
 			core::dimension2d<u32> Size = core::dimension2d<u32>(0, 0);
 

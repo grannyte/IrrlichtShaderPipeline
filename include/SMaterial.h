@@ -32,7 +32,39 @@ namespace video
 		EBF_ONE_MINUS_SRC_ALPHA,	//!< src & dest	(1-srcA, 1-srcA, 1-srcA, 1-srcA)
 		EBF_DST_ALPHA,			//!< src & dest	(destA, destA, destA, destA)
 		EBF_ONE_MINUS_DST_ALPHA,	//!< src & dest	(1-destA, 1-destA, 1-destA, 1-destA)
-		EBF_SRC_ALPHA_SATURATE		//!< src	(min(srcA, 1-destA), idem, ...)
+		EBF_SRC_ALPHA_SATURATE,		//!< src	(min(srcA, 1-destA), idem, ...)
+
+		// Dual-source blending (EVDF_DUAL_SOURCE_BLEND): the second source is the pixel shader's
+		// SV_Target1 output. Render target 0 only; a driver seeing one of these on another slot
+		// falls back to EBF_ONE and warns. Appended so the values above keep their numbers.
+		EBF_SRC1_COLOR,			//!< src & dest	(src1R, src1G, src1B, src1A)
+		EBF_ONE_MINUS_SRC1_COLOR,	//!< src & dest	(1-src1R, 1-src1G, 1-src1B, 1-src1A)
+		EBF_SRC1_ALPHA,			//!< src & dest	(src1A, src1A, src1A, src1A)
+		EBF_ONE_MINUS_SRC1_ALPHA	//!< src & dest	(1-src1A, 1-src1A, 1-src1A, 1-src1A)
+	};
+
+	//! Logic operation applied in place of blending (SMaterial::LogicOp, EVDF_LOGIC_OP).
+	/** Integer and UNORM render targets only; a driver refuses it on a float target. The names
+	follow D3D12_LOGIC_OP / VkLogicOp: s = source, d = destination. */
+	enum E_LOGIC_OP
+	{
+		ELO_NONE = 0,		//!< blend as the material says
+		ELO_CLEAR,		//!< 0
+		ELO_SET,		//!< 1
+		ELO_COPY,		//!< s
+		ELO_COPY_INVERTED,	//!< ~s
+		ELO_NOOP,		//!< d
+		ELO_INVERT,		//!< ~d
+		ELO_AND,		//!< s & d
+		ELO_NAND,		//!< ~(s & d)
+		ELO_OR,			//!< s | d
+		ELO_NOR,		//!< ~(s | d)
+		ELO_XOR,		//!< s ^ d
+		ELO_EQUIV,		//!< ~(s ^ d)
+		ELO_AND_REVERSE,	//!< s & ~d
+		ELO_AND_INVERTED,	//!< ~s & d
+		ELO_OR_REVERSE,		//!< s | ~d
+		ELO_OR_INVERTED		//!< ~s | d
 	};
 
 	//! Values defining the blend operation
@@ -264,7 +296,8 @@ namespace video
 			PolygonOffsetFactor(0), PolygonOffsetDirection(EPO_FRONT),
 			Wireframe(false), PointCloud(false), GouraudShading(true),
 			Lighting(true), ZWriteEnable(true), BackfaceCulling(true), FrontfaceCulling(false),
-			FogEnable(false), NormalizeNormals(false), UseMipMaps(true)
+			FogEnable(false), NormalizeNormals(false), UseMipMaps(true),
+			LogicOp(ELO_NONE), ConservativeRaster(false), SampleMask(0xffffffffu)
 		{ }
 
 		//! Copy constructor
@@ -318,6 +351,9 @@ namespace video
 			PolygonOffsetFactor = other.PolygonOffsetFactor;
 			PolygonOffsetDirection = other.PolygonOffsetDirection;
 			UseMipMaps = other.UseMipMaps;
+			LogicOp = other.LogicOp;
+			ConservativeRaster = other.ConservativeRaster;
+			SampleMask = other.SampleMask;
 
 			return *this;
 		}
@@ -475,6 +511,19 @@ namespace video
 		/** Sometimes, disabling mipmap usage can be useful. Default: true */
 		bool UseMipMaps:1;
 
+		//! Rasterize every pixel a primitive touches, not only those whose centre it covers.
+		/** Needs EVDF_CONSERVATIVE_RASTERIZATION, ignored (warned once) elsewhere. Default: false */
+		bool ConservativeRaster:1;
+
+		//! Logic operation in place of blending, values from E_LOGIC_OP. Default: ELO_NONE
+		/** Applies to every bound render target (the APIs allow one per pipeline) and needs an
+		integer or UNORM target and EVDF_LOGIC_OP; ignored (warned once) elsewhere. */
+		u8 LogicOp:5;
+
+		//! Coverage mask applied after alpha to coverage; bit n enables sample n. Default: all ones
+		/** No effect on a single-sample target unless bit 0 is clear, which discards everything. */
+		u32 SampleMask;
+
 		//! Gets the texture transformation matrix for level i
 		/** \param i The desired level. Must not be larger than MATERIAL_MAX_TEXTURES.
 		\return Texture matrix for texture level i. */
@@ -597,6 +646,8 @@ namespace video
 					PolygonOffsetFactor = value?1:0;
 					PolygonOffsetDirection = EPO_BACK;
 					break;
+				case EMF_CONSERVATIVE_RASTER:
+					ConservativeRaster = value; break;
 				default:
 					break;
 			}
@@ -658,6 +709,8 @@ namespace video
 					return BlendFactor != 0.f;
 				case EMF_POLYGON_OFFSET:
 					return PolygonOffsetFactor != 0;
+				case EMF_CONSERVATIVE_RASTER:
+					return ConservativeRaster;
 			}
 
 			return false;
@@ -695,7 +748,10 @@ namespace video
 				BlendFactor != b.BlendFactor ||
 				PolygonOffsetFactor != b.PolygonOffsetFactor ||
 				PolygonOffsetDirection != b.PolygonOffsetDirection ||
-				UseMipMaps != b.UseMipMaps;
+				UseMipMaps != b.UseMipMaps ||
+				LogicOp != b.LogicOp ||
+				ConservativeRaster != b.ConservativeRaster ||
+				SampleMask != b.SampleMask;
 			for (u32 i=0; (i<MATERIAL_MAX_TEXTURES) && !different; ++i)
 			{
 				different |= (TextureLayer[i] != b.TextureLayer[i]);

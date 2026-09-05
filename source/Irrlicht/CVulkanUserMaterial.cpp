@@ -5,6 +5,7 @@
 #include "CVulkanUserMaterial.h"
 #ifdef _IRR_COMPILE_WITH_VULKAN_
 #include "CVulkanShaderCompiler.h"
+#include "CVulkanSpirvXfb.h"
 #include "matrix4.h"
 #include "os.h"
 #include <algorithm>
@@ -259,6 +260,11 @@ namespace irr
 				CallBack->drop();
 				CallBack = nullptr;
 			}
+			if (StreamOutputLayout)
+			{
+				StreamOutputLayout->drop();
+				StreamOutputLayout = nullptr;
+			}
 		}
 
 		const c8* CVulkanUserMaterial::getEntryPoint(E_VULKAN_USER_STAGE stage) const
@@ -275,6 +281,7 @@ namespace irr
 			case EST_VERTEX_SHADER:   outStage = EVUS_VERTEX; return true;
 			case EST_PIXEL_SHADER:    outStage = EVUS_FRAGMENT; return true;
 			case EST_GEOMETRY_SHADER: outStage = EVUS_GEOMETRY; return true;
+			case EST_STREAM_OUTPUT_SHADER: outStage = EVUS_GEOMETRY; return true;
 			case EST_HULL_SHADER:     outStage = EVUS_HULL; return true;
 			case EST_DOMAIN_SHADER:   outStage = EVUS_DOMAIN; return true;
 			default:                  return false;
@@ -660,8 +667,12 @@ namespace irr
 			std::vector<u32> spirv;
 			core::stringc compileError;
 
+			// The geometry stage of a stream-output material: compiled with its semantics kept, then
+			// given the transform feedback layout the vertexTypeOut descriptor describes.
+			const bool streamOutput = (stage == EVUS_GEOMETRY && StreamOutputLayout && context.HasTransformFeedback);
+
 			if (!CVulkanShaderCompiler::compileToSpirv(source.Source, source.SourceLength, entryPoint,
-				info.ShaderType, lang, spirv, compileError))
+				info.ShaderType, lang, spirv, compileError, 0, 0, streamOutput))
 			{
 				core::stringc message = "compilation failed (";
 				message += CVulkanShaderCompiler::getLanguageName(lang);
@@ -669,6 +680,19 @@ namespace irr
 				message += compileError;
 				logStage(info.Name, message.c_str(), nullptr, ELL_ERROR);
 				return false;
+			}
+
+			if (streamOutput)
+			{
+				core::stringc patchError, patchWarnings;
+				if (!decorateSpirvForStreamOutput(spirv, StreamOutputLayout, patchError, &patchWarnings))
+				{
+					logStage(info.Name, patchError.c_str(), nullptr, ELL_ERROR);
+					return false;
+				}
+				if (patchWarnings.size())
+					logStage(info.Name, "stream output: ", patchWarnings.c_str(), ELL_WARNING);
+				StreamOutput = true;
 			}
 
 			// Reflect before creating the module: a set outside the user range is a hard error, and

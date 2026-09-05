@@ -42,8 +42,10 @@ namespace irr
 
 		//! VkFormat for one engine attribute; `semantic` is read for EVAS_COLOR only, where byte order
 		//! matters (see the .cpp). VK_FORMAT_UNDEFINED, as on D3D11, for combinations never produced.
+		//! `d3dColorOrder` hands a four-byte colour over as R8G8B8A8_UNORM, the shifted order the
+		//! D3D11/D3D12 drivers use and that D3D-authored user shaders undo with a ".bgra".
 		VkFormat getVulkanVertexAttributeFormat(E_VERTEX_ATTRIBUTE_TYPE type, u32 elementCount,
-			E_VERTEX_ATTRIBUTE_SEMANTIC semantic = EVAS_CUSTOM);
+			E_VERTEX_ATTRIBUTE_SEMANTIC semantic = EVAS_CUSTOM, bool d3dColorOrder = false);
 
 		//! The two arrays plus the create info pointing at them; must outlive the pipeline creation
 		//! that reads it, which dereferences those pointers.
@@ -90,7 +92,8 @@ namespace irr
 		//! Fills `out` from `descriptor`, honouring each attribute's buffer index (which becomes the
 		//! binding), byte offset and type/element count. One binding per buffer index used, strided with
 		//! getVertexSize(), per-instance where the descriptor says so. False on a null or empty result.
-		bool buildVulkanVertexInputState(IVertexDescriptor* descriptor, SVulkanVertexInputState& out);
+		bool buildVulkanVertexInputState(IVertexDescriptor* descriptor, SVulkanVertexInputState& out,
+			bool d3dColorOrder = false);
 
 		//! EVT_STANDARD fallback, counterpart of kS3DVertexInputLayout on the D3D12 side: position/
 		//! normal/colour/uv from one S3DVertex-strided binding, for callers with no mesh buffer on hand.
@@ -99,7 +102,11 @@ namespace irr
 		//! "Which layout for this draw", in one place: the descriptor's state when it yields one, the
 		//! fallback otherwise. Mirrors CD3D12Driver::resolveInputLayout(), for its reason - whoever
 		//! hashes the layout and whoever builds the pipeline must resolve identically.
-		void resolveVulkanVertexInputState(IVertexDescriptor* descriptor, SVulkanVertexInputState& out);
+		//! `d3dColorOrder` is set for a user material: its HLSL was written against the D3D drivers'
+		//! shifted vertex colour and compensates with ".bgra", so it must see the same bytes here.
+		//! The built-in GLSL reads the true colour and keeps B8G8R8A8.
+		void resolveVulkanVertexInputState(IVertexDescriptor* descriptor, SVulkanVertexInputState& out,
+			bool d3dColorOrder = false);
 
 	} // end namespace video
 } // end namespace irr

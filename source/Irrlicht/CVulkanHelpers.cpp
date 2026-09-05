@@ -34,6 +34,9 @@ namespace irr
 			PFN_vkGetPhysicalDeviceFormatProperties GetPhysicalDeviceFormatProperties = nullptr;
 			PFN_vkGetPhysicalDeviceImageFormatProperties GetPhysicalDeviceImageFormatProperties = nullptr;
 			PFN_vkEnumerateDeviceExtensionProperties EnumerateDeviceExtensionProperties = nullptr;
+			PFN_vkGetPhysicalDeviceFeatures2 GetPhysicalDeviceFeatures2 = nullptr;
+			PFN_vkGetPhysicalDeviceProperties2 GetPhysicalDeviceProperties2 = nullptr;
+			PFN_vkGetPhysicalDeviceSparseImageFormatProperties GetPhysicalDeviceSparseImageFormatProperties = nullptr;
 			PFN_vkCreateDevice CreateDevice = nullptr;
 			PFN_vkGetDeviceProcAddr GetDeviceProcAddr = nullptr;
 			PFN_vkDestroySurfaceKHR DestroySurfaceKHR = nullptr;
@@ -156,10 +159,24 @@ namespace irr
 			PFN_vkCmdBeginQuery CmdBeginQuery = nullptr;
 			PFN_vkCmdEndQuery CmdEndQuery = nullptr;
 			PFN_vkGetQueryPoolResults GetQueryPoolResults = nullptr;
+			PFN_vkCmdWriteTimestamp CmdWriteTimestamp = nullptr;
+			PFN_vkCmdCopyQueryPoolResults CmdCopyQueryPoolResults = nullptr;
+			PFN_vkQueueBindSparse QueueBindSparse = nullptr;
+			PFN_vkGetImageSparseMemoryRequirements GetImageSparseMemoryRequirements = nullptr;
+			PFN_vkCmdBeginConditionalRenderingEXT CmdBeginConditionalRenderingEXT = nullptr;
+			PFN_vkCmdEndConditionalRenderingEXT CmdEndConditionalRenderingEXT = nullptr;
 
 			// --- Device: dynamic rendering ---
 			PFN_vkCmdBeginRendering CmdBeginRendering = nullptr;
 			PFN_vkCmdEndRendering CmdEndRendering = nullptr;
+
+			PFN_vkCmdFillBuffer CmdFillBuffer = nullptr;
+
+			// --- Device: VK_EXT_transform_feedback (optional) ---
+			PFN_vkCmdBindTransformFeedbackBuffersEXT CmdBindTransformFeedbackBuffersEXT = nullptr;
+			PFN_vkCmdBeginTransformFeedbackEXT CmdBeginTransformFeedbackEXT = nullptr;
+			PFN_vkCmdEndTransformFeedbackEXT CmdEndTransformFeedbackEXT = nullptr;
+			PFN_vkCmdDrawIndirectByteCountEXT CmdDrawIndirectByteCountEXT = nullptr;
 		}
 
 		namespace
@@ -251,6 +268,9 @@ namespace irr
 			vk::GetPhysicalDeviceFormatProperties = nullptr;
 			vk::GetPhysicalDeviceImageFormatProperties = nullptr;
 			vk::EnumerateDeviceExtensionProperties = nullptr;
+			vk::GetPhysicalDeviceFeatures2 = nullptr;
+			vk::GetPhysicalDeviceProperties2 = nullptr;
+			vk::GetPhysicalDeviceSparseImageFormatProperties = nullptr;
 			vk::CreateDevice = nullptr;
 			vk::GetDeviceProcAddr = nullptr;
 			vk::CreateDebugUtilsMessengerEXT = nullptr;
@@ -363,9 +383,20 @@ namespace irr
 			vk::CmdBeginQuery = nullptr;
 			vk::CmdEndQuery = nullptr;
 			vk::GetQueryPoolResults = nullptr;
+			vk::CmdWriteTimestamp = nullptr;
+			vk::CmdCopyQueryPoolResults = nullptr;
+			vk::QueueBindSparse = nullptr;
+			vk::GetImageSparseMemoryRequirements = nullptr;
+			vk::CmdBeginConditionalRenderingEXT = nullptr;
+			vk::CmdEndConditionalRenderingEXT = nullptr;
 
 			vk::CmdBeginRendering = nullptr;
 			vk::CmdEndRendering = nullptr;
+			vk::CmdFillBuffer = nullptr;
+			vk::CmdBindTransformFeedbackBuffersEXT = nullptr;
+			vk::CmdBeginTransformFeedbackEXT = nullptr;
+			vk::CmdEndTransformFeedbackEXT = nullptr;
+			vk::CmdDrawIndirectByteCountEXT = nullptr;
 		}
 
 		bool loadInstanceFunctions(VkInstance instance)
@@ -403,6 +434,22 @@ namespace irr
 				vk::GetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
 			vk::DestroyDebugUtilsMessengerEXT = (PFN_vkDestroyDebugUtilsMessengerEXT)
 				vk::GetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+
+			// Core since 1.1, so the KHR alias only matters on a 1.0 instance; null is tolerated and
+			// simply means the extension feature structs cannot be queried.
+			vk::GetPhysicalDeviceFeatures2 = (PFN_vkGetPhysicalDeviceFeatures2)
+				vk::GetInstanceProcAddr(instance, "vkGetPhysicalDeviceFeatures2");
+			if (!vk::GetPhysicalDeviceFeatures2)
+				vk::GetPhysicalDeviceFeatures2 = (PFN_vkGetPhysicalDeviceFeatures2)
+					vk::GetInstanceProcAddr(instance, "vkGetPhysicalDeviceFeatures2KHR");
+			vk::GetPhysicalDeviceProperties2 = (PFN_vkGetPhysicalDeviceProperties2)
+				vk::GetInstanceProcAddr(instance, "vkGetPhysicalDeviceProperties2");
+			if (!vk::GetPhysicalDeviceProperties2)
+				vk::GetPhysicalDeviceProperties2 = (PFN_vkGetPhysicalDeviceProperties2)
+					vk::GetInstanceProcAddr(instance, "vkGetPhysicalDeviceProperties2KHR");
+			// Core 1.0, but only the tiled-texture path needs it; tolerated null like the two above.
+			vk::GetPhysicalDeviceSparseImageFormatProperties = (PFN_vkGetPhysicalDeviceSparseImageFormatProperties)
+				vk::GetInstanceProcAddr(instance, "vkGetPhysicalDeviceSparseImageFormatProperties");
 
 			return ok;
 		}
@@ -518,6 +565,16 @@ namespace irr
 			IRR_VK_DEVICE_PROC(CmdBeginQuery)
 			IRR_VK_DEVICE_PROC(CmdEndQuery)
 			IRR_VK_DEVICE_PROC(GetQueryPoolResults)
+			IRR_VK_DEVICE_PROC(CmdWriteTimestamp)
+			IRR_VK_DEVICE_PROC(CmdCopyQueryPoolResults)
+			IRR_VK_DEVICE_PROC(QueueBindSparse)
+			IRR_VK_DEVICE_PROC(GetImageSparseMemoryRequirements)
+
+			// VK_EXT_conditional_rendering: null without the extension, reported through SVulkanContext.
+			vk::CmdBeginConditionalRenderingEXT = (PFN_vkCmdBeginConditionalRenderingEXT)
+				vk::GetDeviceProcAddr(device, "vkCmdBeginConditionalRenderingEXT");
+			vk::CmdEndConditionalRenderingEXT = (PFN_vkCmdEndConditionalRenderingEXT)
+				vk::GetDeviceProcAddr(device, "vkCmdEndConditionalRenderingEXT");
 
 			// Optional, so resolved by hand: core name first, then the extension alias a 1.1/1.2
 			// driver with VK_KHR_dynamic_rendering exposes. Absence is not a load failure.
@@ -530,6 +587,19 @@ namespace irr
 				vk::CmdEndRendering = (PFN_vkCmdEndRendering)vk::GetDeviceProcAddr(device, "vkCmdEndRenderingKHR");
 
 			hasDynamicRendering = (vk::CmdBeginRendering != nullptr && vk::CmdEndRendering != nullptr);
+
+			IRR_VK_DEVICE_PROC(CmdFillBuffer)
+
+			// VK_EXT_transform_feedback: only resolves when the extension was enabled on the device.
+			// Null is the normal outcome elsewhere and is reported through SVulkanContext, not here.
+			vk::CmdBindTransformFeedbackBuffersEXT = (PFN_vkCmdBindTransformFeedbackBuffersEXT)
+				vk::GetDeviceProcAddr(device, "vkCmdBindTransformFeedbackBuffersEXT");
+			vk::CmdBeginTransformFeedbackEXT = (PFN_vkCmdBeginTransformFeedbackEXT)
+				vk::GetDeviceProcAddr(device, "vkCmdBeginTransformFeedbackEXT");
+			vk::CmdEndTransformFeedbackEXT = (PFN_vkCmdEndTransformFeedbackEXT)
+				vk::GetDeviceProcAddr(device, "vkCmdEndTransformFeedbackEXT");
+			vk::CmdDrawIndirectByteCountEXT = (PFN_vkCmdDrawIndirectByteCountEXT)
+				vk::GetDeviceProcAddr(device, "vkCmdDrawIndirectByteCountEXT");
 
 			return ok;
 		}

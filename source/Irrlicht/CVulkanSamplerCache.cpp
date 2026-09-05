@@ -42,6 +42,10 @@ namespace irr
 			key.TextureWrapW = layer.TextureWrapU;
 			key.LODBias = layer.LODBias;
 			key.UseMipMaps = useMipMaps;
+			// The reduction mode only when the device offers it; a layer asking without it samples
+			// the ordinary average (warned by the driver's queryFeature() contract, not here).
+			key.MinMaxFilter = context.HasSamplerFilterMinmax ? layer.MinMaxFilter : (u8)ETMINF_AVERAGE;
+			key.MinLodEighths = static_cast<u16>(core::clamp(layer.MinLod * 8.f, 0.f, 8.f * 15.f));
 
 			const size_t hash = key.computeHash();
 			auto cached = Cache.find(hash);
@@ -87,9 +91,20 @@ namespace irr
 			info.compareOp = VK_COMPARE_OP_ALWAYS;
 			info.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
 			info.maxAnisotropy = 1.0f;
-			info.minLod = 0.0f;
+			// SMaterialLayer::MinLod: the finest mip the sampler may reach (tiled textures whose
+			// finer mips are not resident yet). Meaningless with mip maps off.
+			info.minLod = key.UseMipMaps ? static_cast<f32>(key.MinLodEighths) * 0.125f : 0.0f;
 			// Mip maps off means mip 0 only, whatever LOD the hardware computes.
 			info.maxLod = key.UseMipMaps ? VK_LOD_CLAMP_NONE : 0.0f;
+
+			// SMaterialLayer::MinMaxFilter: min/max reduction over the footprint (1.2 core structure,
+			// the EXT alias has the same layout). Only keyed when the device offers it.
+			VkSamplerReductionModeCreateInfo reduction = {};
+			reduction.sType = VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO;
+			reduction.reductionMode = key.MinMaxFilter == ETMINF_MINIMUM ?
+				VK_SAMPLER_REDUCTION_MODE_MIN : VK_SAMPLER_REDUCTION_MODE_MAX;
+			if (key.MinMaxFilter != ETMINF_AVERAGE)
+				info.pNext = &reduction;
 			// Same eighths-of-a-level scaling as the other drivers; maxSamplerLodBias is a limit,
 			// not a suggestion, and an s8 bias can reach ~15.9.
 			const f32 maxBias = context.DeviceProperties.limits.maxSamplerLodBias;

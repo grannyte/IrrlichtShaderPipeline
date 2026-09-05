@@ -55,6 +55,10 @@ namespace irr
 			extern PFN_vkGetPhysicalDeviceFormatProperties GetPhysicalDeviceFormatProperties;
 			extern PFN_vkGetPhysicalDeviceImageFormatProperties GetPhysicalDeviceImageFormatProperties;
 			extern PFN_vkEnumerateDeviceExtensionProperties EnumerateDeviceExtensionProperties;
+			//! Core in 1.1 (KHR alias otherwise); may stay null on a 1.0 loader, callers check.
+			extern PFN_vkGetPhysicalDeviceFeatures2 GetPhysicalDeviceFeatures2;
+			extern PFN_vkGetPhysicalDeviceProperties2 GetPhysicalDeviceProperties2;
+			extern PFN_vkGetPhysicalDeviceSparseImageFormatProperties GetPhysicalDeviceSparseImageFormatProperties;
 			extern PFN_vkCreateDevice CreateDevice;
 			extern PFN_vkGetDeviceProcAddr GetDeviceProcAddr;
 			extern PFN_vkDestroySurfaceKHR DestroySurfaceKHR;
@@ -183,10 +187,30 @@ namespace irr
 			extern PFN_vkCmdBeginQuery CmdBeginQuery;
 			extern PFN_vkCmdEndQuery CmdEndQuery;
 			extern PFN_vkGetQueryPoolResults GetQueryPoolResults;
+			extern PFN_vkCmdWriteTimestamp CmdWriteTimestamp;
+			extern PFN_vkCmdCopyQueryPoolResults CmdCopyQueryPoolResults;
+
+			// --- Device: sparse (tiled) resources. Core 1.0 entry points, used only when the
+			// sparse features are enabled (SVulkanContext::HasSparseResidency).
+			extern PFN_vkQueueBindSparse QueueBindSparse;
+			extern PFN_vkGetImageSparseMemoryRequirements GetImageSparseMemoryRequirements;
+
+			// --- Device: VK_EXT_conditional_rendering (predication). Optional, null without it.
+			extern PFN_vkCmdBeginConditionalRenderingEXT CmdBeginConditionalRenderingEXT;
+			extern PFN_vkCmdEndConditionalRenderingEXT CmdEndConditionalRenderingEXT;
 
 			// --- Device: dynamic rendering (core in 1.3, else VK_KHR_dynamic_rendering) ---
 			extern PFN_vkCmdBeginRendering CmdBeginRendering;
 			extern PFN_vkCmdEndRendering CmdEndRendering;
+
+			extern PFN_vkCmdFillBuffer CmdFillBuffer;
+
+			// --- Device: VK_EXT_transform_feedback. Optional: null when the device lacks the
+			// extension, in which case SVulkanContext::HasTransformFeedback stays false.
+			extern PFN_vkCmdBindTransformFeedbackBuffersEXT CmdBindTransformFeedbackBuffersEXT;
+			extern PFN_vkCmdBeginTransformFeedbackEXT CmdBeginTransformFeedbackEXT;
+			extern PFN_vkCmdEndTransformFeedbackEXT CmdEndTransformFeedbackEXT;
+			extern PFN_vkCmdDrawIndirectByteCountEXT CmdDrawIndirectByteCountEXT;
 		}
 
 		//! Opens the Vulkan loader and resolves the global entry points. Returns false (logged) if
@@ -233,6 +257,28 @@ namespace irr
 			//! VK_KHR_dynamic_rendering (core in 1.3). When false the driver falls back to explicit
 			//! VkRenderPass/VkFramebuffer objects.
 			bool HasDynamicRendering = false;
+			//! The independentBlend device feature: per-attachment blend state on an MRT draw. Without
+			//! it every attachment has to carry the same state and the IRenderTarget overrides are
+			//! ignored.
+			bool HasIndependentBlend = false;
+			//! VK_EXT_transform_feedback with its transformFeedback feature enabled: what
+			//! setStreamOutputBuffer() and the stream-output geometry materials run on.
+			bool HasTransformFeedback = false;
+
+			// The D3D11.x additions (doc/d3d11-feature-api.md), each a device feature or extension
+			// enabled by createLogicalDevice(); the pipeline cache and queryFeature() read them.
+			bool HasLogicOp = false;			//!< logicOp feature: SMaterial::LogicOp
+			bool HasDualSrcBlend = false;		//!< dualSrcBlend feature: EBF_SRC1_*
+			bool HasConservativeRaster = false;	//!< VK_EXT_conservative_rasterization
+			bool HasFragmentShaderInterlock = false;	//!< VK_EXT_fragment_shader_interlock (ROV capability)
+			bool HasStencilExport = false;		//!< VK_EXT_shader_stencil_export (SV_StencilRef capability)
+			bool HasMultiViewport = false;		//!< multiViewport feature: setViewPorts()
+			bool HasSamplerFilterMinmax = false;	//!< samplerFilterMinmax (1.2 core feature / EXT)
+			bool HasConditionalRendering = false;	//!< VK_EXT_conditional_rendering: predication
+			bool HasPipelineStatistics = false;	//!< pipelineStatisticsQuery feature
+			bool HasSparseResidency = false;	//!< sparseBinding + sparseResidencyImage2D: tiled textures
+			bool HasSparseResidencyStrict = false;	//!< residencyNonResidentStrict: unmapped tiles read zero
+			bool HasShaderResourceResidency = false;	//!< shaderResourceResidency: sparse feedback in the shader
 		};
 
 		//! One-shot command buffer for resource upload, used by texture and buffer creation the way

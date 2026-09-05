@@ -373,6 +373,11 @@ namespace irr
 				SColor color = video::SColor(0, 0, 0, 0), video::ITexture* depthStencil = 0) _IRR_OVERRIDE_;
 			virtual bool setRenderTarget(E_RENDER_TARGET target, bool clearTarget = true,
 				bool clearZBuffer = true, SColor color = video::SColor(0, 0, 0, 0)) _IRR_OVERRIDE_;
+			//! One slice of a render-target array (addRenderTargetTexture(..., arraySlices > 1)) as
+			//! the only colour target, no depth: slices are filled by full-screen blits, the same
+			//! choice CD3D11Driver and CVulkanDriver make. Restore with setRenderTarget(0).
+			virtual bool setRenderTargetSlice(video::ITexture* texture, u32 arraySlice,
+				bool clearTarget = true, SColor color = video::SColor(0, 0, 0, 0)) _IRR_OVERRIDE_;
 
 			// --- IVideoDriver: 2D drawing ---
 			// All of these funnel through drawImmediate2D() (see the private section): same pipeline
@@ -1442,6 +1447,9 @@ namespace irr
 			//! by zero, producing an infinite scale and geometry projected off-screen. Irrlicht's native
 			//! UI never touches the viewport, which is why it kept rendering fine.
 			virtual void setViewPort(const core::rect<s32>& area) _IRR_OVERRIDE_;
+
+			//! Up to 16 viewports (D3D11.x feature set); the shader picks one with SV_ViewportArrayIndex.
+			virtual void setViewPorts(const core::array<core::rect<s32> >& areas) _IRR_OVERRIDE_;
 			virtual const core::rect<s32>& getViewPort() const _IRR_OVERRIDE_;
 
 		private:
@@ -1460,6 +1468,18 @@ namespace irr
 			ComPtr<IDXGIFactory6> DXGIFactory;
 			ComPtr<IDXGIAdapter4> Adapter;
 			ComPtr<ID3D12Device2> Device;
+			//! D3D12_FEATURE_D3D12_OPTIONS of Device, queried once in initDriver(): logic ops,
+			//! conservative rasterization tier, ROVs, pixel-shader stencil ref, tiled resources tier.
+			D3D12_FEATURE_DATA_D3D12_OPTIONS FeatureOptions = {};
+			//! One-time warnings for a material asking for what the device lacks (const key builder).
+			mutable bool WarnedNoLogicOp = false;
+			mutable bool WarnedLogicOpFormat = false;
+			mutable bool WarnedNoConservativeRaster = false;
+			bool WarnedSrc1OnMrtSlot = false;
+			//! D3D12_FORMAT_SUPPORT2_OUTPUT_MERGER_LOGIC_OP per format, asked once each: a PSO with a
+			//! logic op on a format without it is refused by the runtime, so the key builder drops it.
+			mutable std::map<DXGI_FORMAT, bool> LogicOpFormatSupport;
+			bool formatSupportsLogicOp(DXGI_FORMAT format) const;
 
 			ComPtr<ID3D12CommandQueue> DirectQueue;
 			ComPtr<IDXGISwapChain4> SwapChain;
@@ -1874,6 +1894,21 @@ namespace irr
 			//! bindings). Without these, anything following a mid-frame flush would draw with no render
 			//! target.
 			D3D12_CPU_DESCRIPTOR_HANDLE CurrentRTVHandles[8] = {};
+
+			//! Per-target blend and colour mask of the bound MRT set, from the IRenderTarget entries of
+			//! the last setRenderTarget(array); copied into SPSOKey::TargetOverrideMask and friends by
+			//! buildPSOKeyFromMaterial(). Bit 0 is never set (slot 0 follows the material, as on
+			//! D3D11); cleared by every other setRenderTarget() form.
+			struct SD3D12MrtBlend
+			{
+				UINT8 Mask = 0;
+				BOOL Enable[8] = {};
+				D3D12_BLEND Src[8] = {};
+				D3D12_BLEND Dest[8] = {};
+				UINT8 Write[8] = {};
+				void reset() { Mask = 0; }
+			};
+			SD3D12MrtBlend MrtBlend;
 
 			// --- Occlusion queries ---
 			// A single ID3D12QueryHeap (D3D12_QUERY_TYPE_BINARY_OCCLUSION) + one shared READBACK

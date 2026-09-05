@@ -78,7 +78,7 @@ namespace irr
 			// (that's a property of the RTV/DSV resource itself, see
 			// CD3D12Texture::createResource()/CD3D12Driver::checkRTTDepthBuffer()).
 			desc.SampleDesc = { key.SampleCount, 0 };
-			desc.SampleMask = UINT_MAX;
+			desc.SampleMask = key.SampleMask;
 
 			// Rasterizer state
 			desc.RasterizerState.FillMode = key.FillMode;
@@ -90,7 +90,8 @@ namespace irr
 			desc.RasterizerState.SlopeScaledDepthBias = key.SlopeScaledDepthBias;
 			desc.RasterizerState.MultisampleEnable = key.SampleCount > 1;
 			desc.RasterizerState.AntialiasedLineEnable = FALSE;
-			desc.RasterizerState.ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
+			desc.RasterizerState.ConservativeRaster = key.ConservativeRaster ?
+				D3D12_CONSERVATIVE_RASTERIZATION_MODE_ON : D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
 
 			// Depth/stencil state. StencilEnable/ops support shadow volumes (see
 			// CD3D12PSOCache.h); FrontFace==BackFace, see the RenderTargetWriteMask comment
@@ -165,9 +166,52 @@ namespace irr
 				rtBlend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
 				break;
 			}
-			rtBlend.LogicOpEnable = FALSE;
-			rtBlend.LogicOp = D3D12_LOGIC_OP_NOOP;
+			// A logic op and blending are exclusive on a slot; the op wins when the material asks.
+			rtBlend.LogicOpEnable = key.LogicOpEnable ? TRUE : FALSE;
+			rtBlend.LogicOp = key.LogicOpEnable ? key.LogicOp : D3D12_LOGIC_OP_NOOP;
+			if (key.LogicOpEnable)
+				rtBlend.BlendEnable = FALSE;
 			rtBlend.RenderTargetWriteMask = key.RenderTargetWriteMask;
+
+			desc.BlendState.AlphaToCoverageEnable = key.AlphaToCoverage ? TRUE : FALSE;
+
+			// The per-target IRenderTarget overrides of setRenderTarget(array): with
+			// IndependentBlendEnable all eight entries are validated, so every slot starts as a copy of
+			// RenderTarget[0] and only the overridden ones differ.
+			if (key.TargetOverrideMask)
+			{
+				desc.BlendState.IndependentBlendEnable = TRUE;
+				for (UINT i = 1; i < 8; ++i)
+				{
+					D3D12_RENDER_TARGET_BLEND_DESC& slot = desc.BlendState.RenderTarget[i];
+					slot = rtBlend;
+					if (!(key.TargetOverrideMask & (1u << i)))
+						continue;
+					// The "_COLOR" factors are rejected on the alpha slot; their alpha twins say
+					// the same thing there.
+					auto alphaSafe = [](D3D12_BLEND factor) -> D3D12_BLEND
+					{
+						switch (factor)
+						{
+						case D3D12_BLEND_SRC_COLOR: return D3D12_BLEND_SRC_ALPHA;
+						case D3D12_BLEND_INV_SRC_COLOR: return D3D12_BLEND_INV_SRC_ALPHA;
+						case D3D12_BLEND_DEST_COLOR: return D3D12_BLEND_DEST_ALPHA;
+						case D3D12_BLEND_INV_DEST_COLOR: return D3D12_BLEND_INV_DEST_ALPHA;
+						case D3D12_BLEND_SRC1_COLOR: return D3D12_BLEND_SRC1_ALPHA;
+						case D3D12_BLEND_INV_SRC1_COLOR: return D3D12_BLEND_INV_SRC1_ALPHA;
+						default: return factor;
+						}
+					};
+					slot.BlendEnable = key.LogicOpEnable ? FALSE : key.TargetBlendEnable[i];
+					slot.SrcBlend = key.TargetSrcBlend[i];
+					slot.DestBlend = key.TargetDestBlend[i];
+					slot.BlendOp = D3D12_BLEND_OP_ADD;
+					slot.SrcBlendAlpha = alphaSafe(key.TargetSrcBlend[i]);
+					slot.DestBlendAlpha = alphaSafe(key.TargetDestBlend[i]);
+					slot.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+					slot.RenderTargetWriteMask = key.TargetWriteMask[i];
+				}
+			}
 
 			ComPtr<ID3D12PipelineState> pso;
 			HRESULT hr = device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pso));

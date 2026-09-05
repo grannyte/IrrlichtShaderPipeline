@@ -186,32 +186,83 @@ namespace irr
 			if (!Target)
 				return;
 
-			// Draws into its OWN offscreen render target texture -- see the .h file header
-			// comment for why this context doesn't target the immediate driver's back buffer.
-			// Already created in the RENDER_TARGET state at construction time
-			// (CD3D12Texture::createResource()) -- no transition barrier needed here, unlike
-			// CD3D12Driver::beginScene() on the back buffer.
-			const core::dimension2d<u32>& size = Target->getSize();
-			D3D12_VIEWPORT viewport = { 0.0f, 0.0f, static_cast<float>(size.Width),
-				static_cast<float>(size.Height), 0.0f, 1.0f };
-			CommandList->RSSetViewports(1, &viewport);
-			D3D12_RECT scissor = { 0, 0, static_cast<LONG>(size.Width), static_cast<LONG>(size.Height) };
-			CommandList->RSSetScissorRects(1, &scissor);
-
-			D3D12_CPU_DESCRIPTOR_HANDLE* dsvPtr = nullptr;
-			if (HasDepthStencilBuffer)
-				dsvPtr = &static_cast<D3D12_CPU_DESCRIPTOR_HANDLE&>(DSVHandle);
-			D3D12_CPU_DESCRIPTOR_HANDLE rtv = static_cast<CD3D12Texture*>(Target)->getRenderTargetView();
-			CommandList->OMSetRenderTargets(1, &rtv, FALSE, dsvPtr);
+			// The command list is open: bindDrawState() refuses every draw while SceneOpen is false
+			// (its "draw outside beginScene()" guard), and this context's beginScene() is a no-op,
+			// so the recording itself is the open scene here.
+			SceneOpen = true;
 
 			// Clears on every (re)start of recording -- makes an execute() reproducible even
 			// with no draw calls (useful for tests), and resets the target to a clean state
 			// after reuse via beginRecording().
-			FLOAT clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-			CommandList->ClearRenderTargetView(rtv, clearColor, 0, nullptr);
-			if (dsvPtr)
+			bindOwnTarget(true, true, SColor(255, 0, 0, 0));
+		}
+
+		void CD3D12DeferredContext::bindOwnTarget(bool clearColor, bool clearDepth, SColor color)
+		{
+			// Draws into its OWN offscreen render target texture -- see the .h file header
+			// comment for why this context doesn't target the immediate driver's back buffer.
+			CD3D12Texture* target = static_cast<CD3D12Texture*>(Target);
+			// Created in RENDER_TARGET, but the immediate driver drawing the previous recording's
+			// result as a texture left it in PIXEL_SHADER_RESOURCE; a no-op the first time round.
+			target->transitionTo(CommandList.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+			// The same bookkeeping CD3D12Driver::setRenderTarget() keeps: buildPSOKeyFromMaterial()
+			// reads the formats and sample count, the 2D projection reads the size. Without it a
+			// recording that bound a user texture leaves those describing that texture, and the next
+			// recording into this target draws with the wrong size (nothing visible) or a rejected PSO.
+			const core::dimension2d<u32>& size = Target->getSize();
+			CurrentRenderTarget = Target;
+			CurrentRenderTargetSize = size;
+			CurrentRTVCount = 1;
+			CurrentRTVFormats[0] = target->getDxgiFormat();
+			CurrentRTVSampleCount = 1;
+			MrtBlend.reset();
+
+			D3D12_CPU_DESCRIPTOR_HANDLE* dsvPtr = nullptr;
+			if (HasDepthStencilBuffer)
+			{
+				CurrentDSVHandle = DSVHandle;
+				CurrentDSVFormat = DepthStencilFormat;
+				dsvPtr = &CurrentDSVHandle;
+			}
+			else
+				CurrentDSVHandle = {};
+			CurrentSceneHasDepthStencil = (dsvPtr != nullptr);
+
+			D3D12_CPU_DESCRIPTOR_HANDLE rtv = target->getRenderTargetView();
+			if (clearColor)
+			{
+				FLOAT clear[4] = { color.getRed() / 255.0f, color.getGreen() / 255.0f,
+					color.getBlue() / 255.0f, color.getAlpha() / 255.0f };
+				CommandList->ClearRenderTargetView(rtv, clear, 0, nullptr);
+			}
+			if (dsvPtr && clearDepth)
 				CommandList->ClearDepthStencilView(*dsvPtr,
 					D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+			CommandList->OMSetRenderTargets(1, &rtv, FALSE, dsvPtr);
+			CurrentRTVHandles[0] = rtv;
+
+			D3D12_VIEWPORT viewport = { 0.0f, 0.0f, static_cast<float>(size.Width),
+				static_cast<float>(size.Height), 0.0f, 1.0f };
+			CommandList->RSSetViewports(1, &viewport);
+			ViewPort = core::rect<s32>(0, 0, static_cast<s32>(size.Width), static_cast<s32>(size.Height));
+			setScissorFromClip(nullptr);
+		}
+
+		bool CD3D12DeferredContext::setRenderTarget(video::ITexture* texture, bool clearBackBuffer,
+			bool clearZBuffer, SColor color, video::ITexture* depthStencil)
+		{
+			// "The frame buffer" of this context is its own target; the immediate driver's back
+			// buffer RTV lives in its frame ring, which this context does not have.
+			if (texture && texture != Target)
+				return CD3D12Driver::setRenderTarget(texture, clearBackBuffer, clearZBuffer, color, depthStencil);
+			if (!SceneOpen || !Target)
+			{
+				os::Printer::log("CD3D12DeferredContext::setRenderTarget: no recording is open", ELL_WARNING);
+				return false;
+			}
+			bindOwnTarget(clearBackBuffer, clearZBuffer, color);
+			return true;
 		}
 
 		void CD3D12DeferredContext::beginRecording()
@@ -271,6 +322,8 @@ namespace irr
 				return;
 			}
 
+			// Closed either way: nothing may be recorded until beginRecording() reopens it.
+			SceneOpen = false;
 			HRESULT hr = CommandList->Close();
 			if (FAILED(hr))
 			{

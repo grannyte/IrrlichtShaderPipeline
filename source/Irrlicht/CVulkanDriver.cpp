@@ -3,6 +3,7 @@
 // For conditions of distribution and use, see copyright notice in irrlicht.h
 
 #include "CVulkanDriver.h"
+#include "CVulkanDeferredContext.h"
 #ifdef _IRR_COMPILE_WITH_VULKAN_
 
 #include "CVulkanTexture.h"
@@ -217,7 +218,39 @@ namespace irr
 				case EBF_DST_ALPHA: return VK_BLEND_FACTOR_DST_ALPHA;
 				case EBF_ONE_MINUS_DST_ALPHA: return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
 				case EBF_SRC_ALPHA_SATURATE: return VK_BLEND_FACTOR_SRC_ALPHA_SATURATE;
+				// Dual-source (dualSrcBlend feature): the fragment shader's Index 1 output, i.e. the
+				// HLSL SV_Target1 with [[vk::location(0), vk::index(1)]]. Attachment 0 only.
+				case EBF_SRC1_COLOR: return forAlphaChannel ? VK_BLEND_FACTOR_SRC1_ALPHA : VK_BLEND_FACTOR_SRC1_COLOR;
+				case EBF_ONE_MINUS_SRC1_COLOR: return forAlphaChannel ?
+					VK_BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA : VK_BLEND_FACTOR_ONE_MINUS_SRC1_COLOR;
+				case EBF_SRC1_ALPHA: return VK_BLEND_FACTOR_SRC1_ALPHA;
+				case EBF_ONE_MINUS_SRC1_ALPHA: return VK_BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA;
 				default: return VK_BLEND_FACTOR_ONE;
+				}
+			}
+
+			//! E_LOGIC_OP -> VkLogicOp; the two enumerations are ordered differently.
+			VkLogicOp getVulkanLogicOp(u32 op)
+			{
+				switch (op)
+				{
+				case ELO_CLEAR: return VK_LOGIC_OP_CLEAR;
+				case ELO_SET: return VK_LOGIC_OP_SET;
+				case ELO_COPY: return VK_LOGIC_OP_COPY;
+				case ELO_COPY_INVERTED: return VK_LOGIC_OP_COPY_INVERTED;
+				case ELO_NOOP: return VK_LOGIC_OP_NO_OP;
+				case ELO_INVERT: return VK_LOGIC_OP_INVERT;
+				case ELO_AND: return VK_LOGIC_OP_AND;
+				case ELO_NAND: return VK_LOGIC_OP_NAND;
+				case ELO_OR: return VK_LOGIC_OP_OR;
+				case ELO_NOR: return VK_LOGIC_OP_NOR;
+				case ELO_XOR: return VK_LOGIC_OP_XOR;
+				case ELO_EQUIV: return VK_LOGIC_OP_EQUIVALENT;
+				case ELO_AND_REVERSE: return VK_LOGIC_OP_AND_REVERSE;
+				case ELO_AND_INVERTED: return VK_LOGIC_OP_AND_INVERTED;
+				case ELO_OR_REVERSE: return VK_LOGIC_OP_OR_REVERSE;
+				case ELO_OR_INVERTED: return VK_LOGIC_OP_OR_INVERTED;
+				default: return VK_LOGIC_OP_NO_OP;
 				}
 			}
 
@@ -285,6 +318,7 @@ namespace irr
 #endif
 			ViewPort = core::rect<s32>(0, 0, params.WindowSize.Width, params.WindowSize.Height);
 			CurrentRenderTargetSize = params.WindowSize;
+			ResourceOwner = this;
 			for (u32 i = 0; i < ETS_COUNT; ++i)
 				Matrices[i].makeIdentity();
 			// EVT_STANDARD, the layout every 2D/immediate draw uses; never changes afterwards.
@@ -295,6 +329,33 @@ namespace irr
 		{
 			if (Context.Device)
 				vk::DeviceWaitIdle(Context.Device);
+
+			// A deferred context shares the device, the loader and the compiler state with the
+			// immediate driver: it tears down what it created (frames, caches, its own pools) and
+			// nothing of the owner's.
+			if (!OwnsDevice)
+			{
+				NullTexture = nullptr; // borrowed from the owner, see CVulkanDeferredContext
+				deleteAllTextures();   // empty by construction, kept for the CNullDriver invariant
+				deleteMaterialRenders();
+				NativeRenderers.clear();
+				UserRenderers.clear();
+				UserLayouts.clear();
+				ComputeRenderers.clear();
+				delete RenderTarget;
+				RenderTarget = nullptr;
+				delete DepthPool;
+				DepthPool = nullptr;
+				PipelineCache.clear();
+				LayoutCache.clear();
+				Samplers.clear(Context);
+				destroyFrameContexts();
+				if (UploadPool)
+					vk::DestroyCommandPool(Context.Device, UploadPool, nullptr);
+				UploadPool = VK_NULL_HANDLE;
+				Context.Device = VK_NULL_HANDLE; // nothing below may touch the owner's device
+				return;
+			}
 
 			// The texture cache belongs to CNullDriver, whose destructor runs after this body -- by
 			// which point vkDestroyDevice below has already been called and every CVulkanTexture
@@ -328,6 +389,8 @@ namespace irr
 			PipelineCache.clear();
 			LayoutCache.clear();
 			ShaderModules.clear();
+			Samplers.clear(Context);
+			destroyQueryResources();
 			destroyFrameContexts();
 			destroySwapchain();
 
@@ -367,6 +430,10 @@ namespace irr
 			if (!loadDeviceFunctions(Context.Device, dynamicRendering))
 				return false;
 			Context.HasDynamicRendering = dynamicRendering;
+			// The extension was enabled AND its entry points resolved; either alone is useless.
+			Context.HasTransformFeedback = TransformFeedbackEnabled &&
+				vk::CmdBindTransformFeedbackBuffersEXT && vk::CmdBeginTransformFeedbackEXT &&
+				vk::CmdEndTransformFeedbackEXT && vk::CmdDrawIndirectByteCountEXT && vk::CmdFillBuffer;
 			if (!dynamicRendering)
 			{
 				os::Printer::log("CVulkanDriver: VK_KHR_dynamic_rendering unavailable, "
@@ -425,6 +492,13 @@ namespace irr
 
 			CurrentRenderTargetSize = core::dimension2d<u32>(SwapchainExtent.width, SwapchainExtent.height);
 			ViewPort = core::rect<s32>(0, 0, (s32)SwapchainExtent.width, (s32)SwapchainExtent.height);
+
+			// The D3D11.x additions, see doc/d3d11-feature-api.md. Vulkan applies a logic op to any
+			// integer or normalized attachment, so UNORM qualifies wherever the feature exists.
+			DriverAttributes->setAttribute("LogicOpOnUnorm", Context.HasLogicOp);
+			DriverAttributes->setAttribute("TiledResourcesTier", Context.HasSparseResidency ?
+				(Context.HasSparseResidencyStrict && Context.HasShaderResourceResidency ? 2 : 1) : 0);
+			DriverAttributes->setAttribute("ConservativeRasterizationTier", Context.HasConservativeRaster ? 1 : 0);
 
 			// Depth images for render targets created without one of their own; the swapchain keeps
 			// the dedicated DepthImage above instead.
@@ -554,25 +628,31 @@ namespace irr
 			return index;
 		}
 
+		// The three lookups read the ResourceOwner's tables: on a deferred context they are the
+		// immediate driver's, always up to date, including a material registered after the context
+		// was created.
 		CVulkanComputeMaterial* CVulkanDriver::getComputeMaterial(s32 index) const
 		{
-			if (index < 0 || static_cast<size_t>(index) >= ComputeRenderers.size())
+			const std::vector<CVulkanComputeMaterial*>& table = ResourceOwner->ComputeRenderers;
+			if (index < 0 || static_cast<size_t>(index) >= table.size())
 				return nullptr;
-			return ComputeRenderers[index];
+			return table[index];
 		}
 
 		CVulkanMaterialRenderer* CVulkanDriver::getNativeRenderer(s32 index) const
 		{
-			if (index < 0 || static_cast<size_t>(index) >= NativeRenderers.size())
+			const std::vector<CVulkanMaterialRenderer*>& table = ResourceOwner->NativeRenderers;
+			if (index < 0 || static_cast<size_t>(index) >= table.size())
 				return nullptr;
-			return NativeRenderers[index];
+			return table[index];
 		}
 
 		CVulkanUserMaterial* CVulkanDriver::getUserMaterial(s32 index) const
 		{
-			if (index < 0 || static_cast<size_t>(index) >= UserRenderers.size())
+			const std::vector<CVulkanUserMaterial*>& table = ResourceOwner->UserRenderers;
+			if (index < 0 || static_cast<size_t>(index) >= table.size())
 				return nullptr;
-			return UserRenderers[index];
+			return table[index];
 		}
 
 		bool CVulkanDriver::createInstance()
@@ -768,6 +848,12 @@ namespace irr
 			vk::GetPhysicalDeviceFeatures(Context.PhysicalDevice, &supported);
 			features.samplerAnisotropy = supported.samplerAnisotropy;
 			features.fillModeNonSolid = supported.fillModeNonSolid;   // SMaterial::Wireframe
+			// Block-compressed textures (.dds DXT1-5 / BC6 / BC7): optional in Vulkan, and without it
+			// sampling a BC image is undefined. Every desktop driver offers it.
+			features.textureCompressionBC = supported.textureCompressionBC;
+			if (!supported.textureCompressionBC)
+				os::Printer::log("CVulkanDriver: the device has no BC texture compression, compressed "
+					".dds textures will not load", ELL_WARNING);
 			features.depthBiasClamp = supported.depthBiasClamp;
 			// Both are user-shader territory: no built-in material declares either stage.
 			features.geometryShader = supported.geometryShader;
@@ -782,6 +868,29 @@ namespace irr
 			// counter still advances, which callers use to detect overflow. robustBufferAccess is
 			// the Vulkan feature that gives the same guarantee (core, always supported).
 			features.robustBufferAccess = supported.robustBufferAccess;
+			// Per-attachment blend state on an MRT draw, what the IRenderTarget blend fields of
+			// setRenderTarget(array) describe. Every desktop device has it; without it the pipeline
+			// cache keeps one state for every attachment and the overrides are ignored.
+			features.independentBlend = supported.independentBlend;
+			Context.HasIndependentBlend = supported.independentBlend == VK_TRUE;
+			// The D3D11.x material state (doc/d3d11-feature-api.md): every one optional per the spec,
+			// present on every desktop device, reported through queryFeature() when absent.
+			features.logicOp = supported.logicOp;
+			Context.HasLogicOp = supported.logicOp == VK_TRUE;
+			features.dualSrcBlend = supported.dualSrcBlend;
+			Context.HasDualSrcBlend = supported.dualSrcBlend == VK_TRUE;
+			features.multiViewport = supported.multiViewport;
+			Context.HasMultiViewport = supported.multiViewport == VK_TRUE;
+			features.pipelineStatisticsQuery = supported.pipelineStatisticsQuery;
+			Context.HasPipelineStatistics = supported.pipelineStatisticsQuery == VK_TRUE;
+			// Tiled textures: sparse binding plus 2D residency, and the two flags that make a
+			// non-resident read defined (D3D tier 2) and visible to the shader.
+			features.sparseBinding = supported.sparseBinding;
+			features.sparseResidencyImage2D = supported.sparseResidencyImage2D;
+			features.shaderResourceResidency = supported.shaderResourceResidency;
+			Context.HasSparseResidency = supported.sparseBinding == VK_TRUE && supported.sparseResidencyImage2D == VK_TRUE;
+			Context.HasShaderResourceResidency = supported.shaderResourceResidency == VK_TRUE;
+			Context.HasSparseResidencyStrict = Context.DeviceProperties.sparseProperties.residencyNonResidentStrict == VK_TRUE;
 
 			// Must be enabled explicitly even when the extension is present, or CmdBeginRendering
 			// is undefined behaviour.
@@ -789,14 +898,126 @@ namespace irr
 			dynamicRendering.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
 			dynamicRendering.dynamicRendering = VK_TRUE;
 
+			// The optional extensions on top of the required list.
+			const u32 requiredCount = sizeof(kRequiredDeviceExtensions) / sizeof(kRequiredDeviceExtensions[0]);
+			std::vector<const c8*> extensions(kRequiredDeviceExtensions, kRequiredDeviceExtensions + requiredCount);
+			u32 availableCount = 0;
+			vk::EnumerateDeviceExtensionProperties(Context.PhysicalDevice, nullptr, &availableCount, nullptr);
+			std::vector<VkExtensionProperties> available(availableCount);
+			if (availableCount)
+				vk::EnumerateDeviceExtensionProperties(Context.PhysicalDevice, nullptr, &availableCount, available.data());
+
+			// VK_EXT_transform_feedback carries the stream-output path (setStreamOutputBuffer() and the
+			// vertexTypeOut of a geometry material). Asked for when the device offers both the
+			// extension and its feature; desktop drivers do, a mobile one may not.
+			VkPhysicalDeviceTransformFeedbackFeaturesEXT transformFeedback = {};
+			transformFeedback.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT;
+			TransformFeedbackEnabled = false;
+			if (hasExtension(available, VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME) && vk::GetPhysicalDeviceFeatures2)
+			{
+				VkPhysicalDeviceTransformFeedbackFeaturesEXT query = {};
+				query.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT;
+				VkPhysicalDeviceFeatures2 features2 = {};
+				features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+				features2.pNext = &query;
+				vk::GetPhysicalDeviceFeatures2(Context.PhysicalDevice, &features2);
+				if (query.transformFeedback)
+				{
+					transformFeedback.transformFeedback = VK_TRUE;
+					extensions.push_back(VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME);
+					TransformFeedbackEnabled = true;
+				}
+			}
+			if (TransformFeedbackEnabled)
+				dynamicRendering.pNext = &transformFeedback;
+			else
+				os::Printer::log("CVulkanDriver: VK_EXT_transform_feedback unavailable, stream output "
+					"(setStreamOutputBuffer) is disabled on this device", ELL_INFORMATION);
+
+			// The pNext chain grows from here; `tail` is the last structure appended.
+			void** tail = TransformFeedbackEnabled ? &transformFeedback.pNext : &dynamicRendering.pNext;
+			auto chain = [&tail](void* next, void** nextsPNext)
+			{
+				*tail = next;
+				tail = nextsPNext;
+			};
+
+			// Extension-only features: present means usable.
+			if (hasExtension(available, VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME))
+			{
+				extensions.push_back(VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME);
+				Context.HasConservativeRaster = true;
+			}
+			if (hasExtension(available, VK_EXT_SHADER_STENCIL_EXPORT_EXTENSION_NAME))
+			{
+				extensions.push_back(VK_EXT_SHADER_STENCIL_EXPORT_EXTENSION_NAME);
+				Context.HasStencilExport = true;
+			}
+
+			// Extensions with a feature structure that has to be queried and then enabled.
+			VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT interlock = {};
+			interlock.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT;
+			VkPhysicalDeviceConditionalRenderingFeaturesEXT conditional = {};
+			conditional.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONDITIONAL_RENDERING_FEATURES_EXT;
+			VkPhysicalDeviceSamplerFilterMinmaxProperties minmaxProperties = {};
+			minmaxProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_FILTER_MINMAX_PROPERTIES;
+			if (vk::GetPhysicalDeviceFeatures2)
+			{
+				VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT interlockQuery = {};
+				interlockQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT;
+				VkPhysicalDeviceConditionalRenderingFeaturesEXT conditionalQuery = {};
+				conditionalQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONDITIONAL_RENDERING_FEATURES_EXT;
+				interlockQuery.pNext = &conditionalQuery;
+				VkPhysicalDeviceFeatures2 features2 = {};
+				features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+				features2.pNext = &interlockQuery;
+				vk::GetPhysicalDeviceFeatures2(Context.PhysicalDevice, &features2);
+
+				// ROVs: pixel interlock is what RasterizerOrdered* compile to.
+				if (hasExtension(available, VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME) &&
+					interlockQuery.fragmentShaderPixelInterlock)
+				{
+					interlock.fragmentShaderPixelInterlock = VK_TRUE;
+					extensions.push_back(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME);
+					chain(&interlock, &interlock.pNext);
+					Context.HasFragmentShaderInterlock = true;
+				}
+				// Predication.
+				if (hasExtension(available, VK_EXT_CONDITIONAL_RENDERING_EXTENSION_NAME) &&
+					conditionalQuery.conditionalRendering)
+				{
+					conditional.conditionalRendering = VK_TRUE;
+					extensions.push_back(VK_EXT_CONDITIONAL_RENDERING_EXTENSION_NAME);
+					chain(&conditional, &conditional.pNext);
+					Context.HasConditionalRendering = true;
+				}
+			}
+			// Min/max sampler reduction: a 1.2 property (the extension promoted into core); on a
+			// 1.1 device the EXT extension carries the same structure.
+			if (vk::GetPhysicalDeviceProperties2)
+			{
+				VkPhysicalDeviceProperties2 properties2 = {};
+				properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+				properties2.pNext = &minmaxProperties;
+				vk::GetPhysicalDeviceProperties2(Context.PhysicalDevice, &properties2);
+				const bool core12 = Context.DeviceProperties.apiVersion >= VK_API_VERSION_1_2;
+				const bool ext = hasExtension(available, VK_EXT_SAMPLER_FILTER_MINMAX_EXTENSION_NAME);
+				if (minmaxProperties.filterMinmaxSingleComponentFormats && (core12 || ext))
+				{
+					if (!core12)
+						extensions.push_back(VK_EXT_SAMPLER_FILTER_MINMAX_EXTENSION_NAME);
+					Context.HasSamplerFilterMinmax = true;
+				}
+			}
+
 			VkDeviceCreateInfo info = {};
 			info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 			info.pNext = &dynamicRendering;
 			info.queueCreateInfoCount = 1;
 			info.pQueueCreateInfos = &queueInfo;
 			info.pEnabledFeatures = &features;
-			info.enabledExtensionCount = sizeof(kRequiredDeviceExtensions) / sizeof(kRequiredDeviceExtensions[0]);
-			info.ppEnabledExtensionNames = kRequiredDeviceExtensions;
+			info.enabledExtensionCount = static_cast<u32>(extensions.size());
+			info.ppEnabledExtensionNames = extensions.data();
 
 			return !vulkanFailed("CVulkanDriver: vkCreateDevice",
 				vk::CreateDevice(Context.PhysicalDevice, &info, nullptr, &Context.Device));
@@ -1277,6 +1498,8 @@ namespace irr
 		void CVulkanDriver::beginRendering(bool clearColor, bool clearDepth, SColor color)
 		{
 			SVulkanFrameContext& frame = Frames[CurrentFrameIndex];
+			// A new rendering instance starts with one viewport, whatever setViewPorts() had set.
+			ViewportCount = 1;
 
 			// A bound render target describes its own attachments; the swapchain path below is only
 			// for the default target. Both end with the same viewport/scissor setup.
@@ -1402,10 +1625,6 @@ namespace irr
 			submit.pCommandBuffers = &frame.CommandBuffer;
 			submit.signalSemaphoreCount = 1;
 			submit.pSignalSemaphores = &frame.RenderFinished;
-			if (vulkanFailed("CVulkanDriver: vkQueueSubmit",
-				vk::QueueSubmit(Context.GraphicsQueue, 1, &submit, frame.Fence)))
-				return false;
-
 			VkPresentInfoKHR present = {};
 			present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 			present.waitSemaphoreCount = 1;
@@ -1414,7 +1633,16 @@ namespace irr
 			present.pSwapchains = &Swapchain;
 			present.pImageIndices = &CurrentImageIndex;
 
-			VkResult presented = vk::QueuePresentKHR(Context.GraphicsQueue, &present);
+			// The queue is shared with deferred contexts and uploads on other threads; a VkQueue
+			// is externally synchronized.
+			VkResult presented = VK_SUCCESS;
+			{
+				std::lock_guard<std::mutex> queueLock(ResourceOwner->QueueMutex);
+				if (vulkanFailed("CVulkanDriver: vkQueueSubmit",
+					vk::QueueSubmit(Context.GraphicsQueue, 1, &submit, frame.Fence)))
+					return false;
+				presented = vk::QueuePresentKHR(Context.GraphicsQueue, &present);
+			}
 			if (presented == VK_ERROR_OUT_OF_DATE_KHR || presented == VK_SUBOPTIMAL_KHR)
 				recreateSwapchain(ScreenSize);
 			else if (presented != VK_SUCCESS)
@@ -1428,8 +1656,14 @@ namespace irr
 			return true;
 		}
 
+		// An upload scope is begin -> record -> endUploadAndWait on one thread. The scope holds the
+		// owner's UploadMutex for its whole length: the pool is not thread-safe and a deferred context
+		// recording on a worker creates its buffers through the owner (see ResourceOwner). Recursive,
+		// so a scope opened inside another on the same thread does not deadlock.
 		VkCommandBuffer CVulkanDriver::beginUpload()
 		{
+			ResourceOwner->UploadMutex.lock();
+
 			VkCommandBufferAllocateInfo info = {};
 			info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
 			info.commandPool = UploadPool;
@@ -1439,7 +1673,10 @@ namespace irr
 			VkCommandBuffer cb = VK_NULL_HANDLE;
 			if (vulkanFailed("CVulkanDriver: upload command buffer",
 				vk::AllocateCommandBuffers(Context.Device, &info, &cb)))
+			{
+				ResourceOwner->UploadMutex.unlock();
 				return VK_NULL_HANDLE;
+			}
 
 			VkCommandBufferBeginInfo begin = {};
 			begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -1447,6 +1684,7 @@ namespace irr
 			if (vulkanFailed("CVulkanDriver: begin upload buffer", vk::BeginCommandBuffer(cb, &begin)))
 			{
 				vk::FreeCommandBuffers(Context.Device, UploadPool, 1, &cb);
+				ResourceOwner->UploadMutex.unlock();
 				return VK_NULL_HANDLE;
 			}
 			return cb;
@@ -1456,21 +1694,24 @@ namespace irr
 		{
 			if (!commandBuffer)
 				return;
-			if (vulkanFailed("CVulkanDriver: end upload buffer", vk::EndCommandBuffer(commandBuffer)))
-				return;
 
-			VkSubmitInfo submit = {};
-			submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-			submit.commandBufferCount = 1;
-			submit.pCommandBuffers = &commandBuffer;
+			if (!vulkanFailed("CVulkanDriver: end upload buffer", vk::EndCommandBuffer(commandBuffer)))
+			{
+				VkSubmitInfo submit = {};
+				submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+				submit.commandBufferCount = 1;
+				submit.pCommandBuffers = &commandBuffer;
 
-			// Blocking, like the D3D12 upload scope: the caller frees its staging buffer straight
-			// after, so the copy must have completed.
-			if (!vulkanFailed("CVulkanDriver: submit upload",
-				vk::QueueSubmit(Context.GraphicsQueue, 1, &submit, VK_NULL_HANDLE)))
-				vk::QueueWaitIdle(Context.GraphicsQueue);
+				// Blocking, like the D3D12 upload scope: the caller frees its staging buffer straight
+				// after, so the copy must have completed. The queue lock covers submit and wait.
+				std::lock_guard<std::mutex> queueLock(ResourceOwner->QueueMutex);
+				if (!vulkanFailed("CVulkanDriver: submit upload",
+					vk::QueueSubmit(Context.GraphicsQueue, 1, &submit, VK_NULL_HANDLE)))
+					vk::QueueWaitIdle(Context.GraphicsQueue);
+			}
 
 			vk::FreeCommandBuffers(Context.Device, UploadPool, 1, &commandBuffer);
+			ResourceOwner->UploadMutex.unlock();
 		}
 
 		void CVulkanDriver::OnResize(const core::dimension2d<u32>& size)
@@ -1553,7 +1794,16 @@ namespace irr
 			case EVDF_FRAMEBUFFER_OBJECT:
 			case EVDF_MULTIPLE_RENDER_TARGETS:
 			case EVDF_POLYGON_OFFSET:
+			// alphaToCoverageEnable is core pipeline state; multisampled render targets resolve
+			// into their sampled image at the end of the pass (see CVulkanTexture).
+			case EVDF_ALPHA_TO_COVERAGE:
+			case EVDF_TEXTURE_MULTISAMPLING:
 				return true;
+			// The per-target IRenderTarget blend/mask of setRenderTarget(array) needs independentBlend.
+			case EVDF_MRT_BLEND:
+			case EVDF_MRT_COLOR_MASK:
+			case EVDF_MRT_BLEND_FUNC:
+				return Context.HasIndependentBlend;
 			// Only a user material reaches this stage, and only if the device offered it. Vulkan has
 			// no shader models, so the three "GS 4.0/4.1/5.0" flags say exactly the same thing.
 			// E_VIDEO_DRIVER_FEATURE has no tessellation entry, hence none here either -- the pair is
@@ -1577,6 +1827,29 @@ namespace irr
 #else
 				return false;
 #endif
+			// --- The D3D11.x additions, see doc/d3d11-feature-api.md ---
+			case EVDF_DUAL_SOURCE_BLEND:
+				return Context.HasDualSrcBlend;
+			case EVDF_LOGIC_OP:
+				return Context.HasLogicOp;
+			case EVDF_CONSERVATIVE_RASTERIZATION:
+				return Context.HasConservativeRaster;
+			case EVDF_PIXEL_SHADER_STENCIL_REF:
+				return Context.HasStencilExport;
+			case EVDF_RASTERIZER_ORDERED_VIEWS:
+				return Context.HasFragmentShaderInterlock;
+			case EVDF_MULTIPLE_VIEWPORTS:
+				return Context.HasMultiViewport;
+			case EVDF_MINMAX_FILTER:
+				return Context.HasSamplerFilterMinmax;
+			case EVDF_PREDICATION:
+				return Context.HasConditionalRendering && Occlusion && Occlusion->isValid();
+			case EVDF_TIMER_QUERY:
+				return Context.DeviceProperties.limits.timestampComputeAndGraphics == VK_TRUE;
+			case EVDF_TILED_RESOURCES:
+				return Context.HasSparseResidency;
+			case EVDF_NATIVE_DEFERRED_CONTEXT:
+				return true;
 			default:
 				return false;
 			}
@@ -1604,6 +1877,8 @@ namespace irr
 				return;
 
 			ViewPort = vp;
+			// The one-viewport case: the pipelines drawn from here declare a single viewport again.
+			ViewportCount = 1;
 			if (!SceneOpen)
 				return;
 
@@ -1619,6 +1894,50 @@ namespace irr
 			// D3D clips to the viewport on its own; Vulkan does not, it clips to the scissor. Both
 			// have to move together or a smaller viewport would only rescale, not confine.
 			setScissorFromClip(nullptr);
+		}
+
+		void CVulkanDriver::setViewPorts(const core::array<core::rect<s32> >& areas)
+		{
+			if (areas.empty())
+				return;
+			// The first entry goes through the ordinary path (getViewPort(), scissor 0); the full
+			// array then replaces it. The count becomes pipeline state (SVulkanPipelineKey::
+			// ViewportCount) until the next setViewPort() or render target change, both of which
+			// go back to one, as the D3D drivers do.
+			setViewPort(areas[0]);
+			if (areas.size() < 2 || !Context.HasMultiViewport || !SceneOpen)
+				return;
+
+			const u32 maxViewports = Context.DeviceProperties.limits.maxViewports;
+			const core::rect<s32> bounds(0, 0, (s32)CurrentRenderTargetSize.Width, (s32)CurrentRenderTargetSize.Height);
+			VkViewport viewports[16];
+			VkRect2D scissors[16];
+			u32 count = 0;
+			for (u32 i = 0; i < areas.size() && count < 16 && count < maxViewports; ++i)
+			{
+				core::rect<s32> vp = areas[i];
+				vp.clipAgainst(bounds);
+				if (vp.getWidth() <= 0 || vp.getHeight() <= 0)
+					continue;
+				VkViewport& v = viewports[count];
+				v.x = static_cast<float>(vp.UpperLeftCorner.X);
+				v.y = static_cast<float>(vp.UpperLeftCorner.Y);
+				v.width = static_cast<float>(vp.getWidth());
+				v.height = static_cast<float>(vp.getHeight());
+				v.minDepth = 0.0f;
+				v.maxDepth = 1.0f;
+				VkRect2D& s = scissors[count];
+				s.offset.x = vp.UpperLeftCorner.X;
+				s.offset.y = vp.UpperLeftCorner.Y;
+				s.extent.width = (u32)vp.getWidth();
+				s.extent.height = (u32)vp.getHeight();
+				++count;
+			}
+			if (count < 2)
+				return;
+			ViewportCount = count;
+			vk::CmdSetViewport(Frames[CurrentFrameIndex].CommandBuffer, 0, count, viewports);
+			vk::CmdSetScissor(Frames[CurrentFrameIndex].CommandBuffer, 0, count, scissors);
 		}
 
 		void CVulkanDriver::setScissorFromClip(const core::rect<s32>* clip)
@@ -1675,8 +1994,12 @@ namespace irr
 				out.Geometry = user->getModule(EVUS_GEOMETRY);
 				out.TessControl = user->getModule(EVUS_HULL);
 				out.TessEval = user->getModule(EVUS_DOMAIN);
-				out.Layout = UserLayouts[material.MaterialType].PipelineLayout;
-				out.EntryPoint = user->getEntryPoint(EVUS_VERTEX);
+				out.Layout = ResourceOwner->UserLayouts[material.MaterialType].PipelineLayout;
+				out.EntryPoints.Vertex = user->getEntryPoint(EVUS_VERTEX);
+				out.EntryPoints.Fragment = user->getEntryPoint(EVUS_FRAGMENT);
+				out.EntryPoints.Geometry = user->getEntryPoint(EVUS_GEOMETRY);
+				out.EntryPoints.TessControl = user->getEntryPoint(EVUS_HULL);
+				out.EntryPoints.TessEval = user->getEntryPoint(EVUS_DOMAIN);
 				return;
 			}
 
@@ -1821,6 +2144,55 @@ namespace irr
 				((material.ColorMask & ECP_GREEN) ? VK_COLOR_COMPONENT_G_BIT : 0) |
 				((material.ColorMask & ECP_BLUE) ? VK_COLOR_COMPONENT_B_BIT : 0) |
 				((material.ColorMask & ECP_ALPHA) ? VK_COLOR_COMPONENT_A_BIT : 0);
+
+			// SMaterial::AntiAliasing & EAAM_ALPHA_TO_COVERAGE, as CD3D11Driver::setBasicRenderStates().
+			key.AlphaToCoverage = (material.AntiAliasing & EAAM_ALPHA_TO_COVERAGE) != 0;
+
+			// A stream-output geometry material never rasterizes (D3D11_SO_NO_RASTERIZED_STREAM).
+			key.RasterizerDiscard = user && user->StreamOutput;
+
+			// The D3D11.x material state, each behind its device feature (doc/d3d11-feature-api.md).
+			key.SampleMask = material.SampleMask;
+			if (material.LogicOp != ELO_NONE)
+			{
+				if (Context.HasLogicOp)
+				{
+					key.LogicOpEnable = true;
+					key.LogicOp = getVulkanLogicOp(material.LogicOp);
+				}
+				else if (!WarnedNoLogicOp)
+				{
+					os::Printer::log("CVulkanDriver: SMaterial::LogicOp needs EVDF_LOGIC_OP, ignored", ELL_WARNING);
+					WarnedNoLogicOp = true;
+				}
+			}
+			if (material.ConservativeRaster)
+			{
+				if (Context.HasConservativeRaster)
+					key.ConservativeRaster = true;
+				else if (!WarnedNoConservativeRaster)
+				{
+					os::Printer::log("CVulkanDriver: SMaterial::ConservativeRaster needs EVDF_CONSERVATIVE_RASTERIZATION, ignored", ELL_WARNING);
+					WarnedNoConservativeRaster = true;
+				}
+			}
+			key.ViewportCount = ViewportCount;
+
+			// The IRenderTarget overrides of the bound MRT set, slots 1 and up (slot 0 follows the
+			// material, as on D3D11 where setBasicRenderStates() rewrites RenderTarget[0]).
+			if (RenderTargetActive && MrtBlend.Mask && Context.HasIndependentBlend)
+			{
+				key.TargetOverrideMask = MrtBlend.Mask & 0xFEu;
+				for (u32 i = 1; i < 8; ++i)
+				{
+					if (!(key.TargetOverrideMask & (1u << i)))
+						continue;
+					key.TargetBlendEnable[i] = MrtBlend.Enable[i];
+					key.TargetSrcFactor[i] = MrtBlend.Src[i];
+					key.TargetDstFactor[i] = MrtBlend.Dst[i];
+					key.TargetWriteMask[i] = MrtBlend.Write[i];
+				}
+			}
 
 			// Same sign convention as the D3D11/D3D12 drivers: EPO_BACK pushes away, EPO_FRONT pulls
 			// nearer. Baked into the pipeline -- depth bias is not among the dynamic states.
@@ -2024,7 +2396,10 @@ namespace irr
 
 				images[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 				images[i].imageView = texture->getImageView();
-				images[i].sampler = texture->getSampler();
+				// The layer's own settings (filter, wrap, bias, min/max, min LOD), as on the D3D drivers.
+				images[i].sampler = Samplers.getOrCreate(Context, material.TextureLayer[i], material.UseMipMaps);
+				if (images[i].sampler == VK_NULL_HANDLE)
+					images[i].sampler = texture->getSampler();
 
 				writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 				writes[i].dstSet = set;
@@ -2162,7 +2537,11 @@ namespace irr
 						VkDescriptorImageInfo info = {};
 						info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 						info.imageView = texture->getImageView();
-						info.sampler = texture->getSampler();
+						info.sampler = binding.Binding < MATERIAL_MAX_TEXTURES ?
+							Samplers.getOrCreate(Context, material.TextureLayer[binding.Binding], material.UseMipMaps) :
+							VK_NULL_HANDLE;
+						if (info.sampler == VK_NULL_HANDLE)
+							info.sampler = texture->getSampler();
 						images.push_back(info);
 						write.pImageInfo = &images.back();
 					}
@@ -2226,7 +2605,7 @@ namespace irr
 
 			VkPipeline pipeline = PipelineCache.getOrCreate(Context, key, program.Vertex,
 				program.Fragment, vertexInput.get(), program.Layout, program.Geometry,
-				program.TessControl, program.TessEval, 3, program.EntryPoint);
+				program.TessControl, program.TessEval, 3, &program.EntryPoints);
 			if (pipeline == VK_NULL_HANDLE)
 				return false;
 
@@ -2255,10 +2634,164 @@ namespace irr
 			// A user shader owns sets 0..3 outright, so its own descriptors go there instead of the
 			// built-in two-texture set 0. The uploads must come after OnSetConstants() above: that
 			// is what just filled the scratch mirrors.
-			if (shader)
-				return bindUserMaterialDescriptors(*shader, material,
-					UserLayouts[ActiveMaterialRendererIndex]);
-			return bindMaterialTextures(material, program.Layout);
+			const bool bound = shader ?
+				bindUserMaterialDescriptors(*shader, material, ResourceOwner->UserLayouts[ActiveMaterialRendererIndex]) :
+				bindMaterialTextures(material, program.Layout);
+
+			// Last, once nothing can fail any more: the draw site that follows ends it, and a begin
+			// without its end would leave transform feedback active into the next pipeline bind.
+			if (bound)
+				beginTransformFeedbackForDraw();
+			return bound;
+		}
+
+		void CVulkanDriver::beginTransformFeedbackForDraw()
+		{
+			if (!StreamOutputTarget || !Context.HasTransformFeedback || TransformFeedbackActive)
+				return;
+
+			VkBuffer buffer = StreamOutputTarget->getBuffer();
+			VkBuffer counter = StreamOutputTarget->getCounterBuffer(true);
+			if (buffer == VK_NULL_HANDLE || counter == VK_NULL_HANDLE)
+				return;
+
+			SVulkanFrameContext& frame = Frames[CurrentFrameIndex];
+			const VkDeviceSize offset = 0;
+			const VkDeviceSize size = VK_WHOLE_SIZE;
+			vk::CmdBindTransformFeedbackBuffersEXT(frame.CommandBuffer, 0, 1, &buffer, &offset, &size);
+			// The counter buffer is the D3D BufferFilledSize: begin resumes at the byte count the
+			// previous draw ended on, so draws between two setStreamOutputBuffer() calls append.
+			vk::CmdBeginTransformFeedbackEXT(frame.CommandBuffer, 0, 1, &counter, &offset);
+			TransformFeedbackActive = true;
+		}
+
+		void CVulkanDriver::endTransformFeedbackForDraw()
+		{
+			if (!TransformFeedbackActive)
+				return;
+			VkBuffer counter = StreamOutputTarget ? StreamOutputTarget->getCounterBuffer(false) : VK_NULL_HANDLE;
+			const VkDeviceSize offset = 0;
+			vk::CmdEndTransformFeedbackEXT(Frames[CurrentFrameIndex].CommandBuffer, 0,
+				counter ? 1 : 0, counter ? &counter : nullptr, counter ? &offset : nullptr);
+			TransformFeedbackActive = false;
+		}
+
+		void CVulkanDriver::releaseStreamOutputTarget()
+		{
+			if (!StreamOutputTarget)
+				return;
+			endTransformFeedbackForDraw(); // never active between two draws; defensive
+
+			if (SceneOpen && Context.HasTransformFeedback)
+			{
+				// What transform feedback wrote becomes vertex data, and the byte count an indirect
+				// argument (or a host read). Buffer barriers are not allowed inside a dynamic
+				// rendering instance, hence the suspend/resume around them.
+				suspendRendering();
+				VkBufferMemoryBarrier barriers[2] = {};
+				barriers[0].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+				barriers[0].srcAccessMask = VK_ACCESS_TRANSFORM_FEEDBACK_WRITE_BIT_EXT;
+				barriers[0].dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT |
+					VK_ACCESS_SHADER_READ_BIT;
+				barriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				barriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				barriers[0].buffer = StreamOutputTarget->getBuffer();
+				barriers[0].size = VK_WHOLE_SIZE;
+				barriers[1] = barriers[0];
+				barriers[1].srcAccessMask = VK_ACCESS_TRANSFORM_FEEDBACK_COUNTER_WRITE_BIT_EXT;
+				barriers[1].dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_HOST_READ_BIT |
+					VK_ACCESS_TRANSFER_READ_BIT;
+				barriers[1].buffer = StreamOutputTarget->getCounterBuffer(false);
+				vk::CmdPipelineBarrier(Frames[CurrentFrameIndex].CommandBuffer,
+					VK_PIPELINE_STAGE_TRANSFORM_FEEDBACK_BIT_EXT,
+					VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT |
+					VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_HOST_BIT,
+					0, 0, nullptr, barriers[1].buffer ? 2 : 1, barriers, 0, nullptr);
+				resumeRendering();
+			}
+
+			// From here on a draw of this buffer takes the byte-count form, see drawMeshBuffer().
+			StreamOutputTarget->setStreamOutputCaptured(true);
+			StreamOutputTarget = nullptr;
+			StreamOutputHold.reset();
+		}
+
+		bool CVulkanDriver::setStreamOutputBuffer(scene::IVertexBuffer* buffer)
+		{
+			if (!Context.HasTransformFeedback)
+			{
+				if (!WarnedNoTransformFeedback)
+				{
+					os::Printer::log("CVulkanDriver::setStreamOutputBuffer: VK_EXT_transform_feedback is "
+						"not available on this device, stream output is disabled", ELL_WARNING);
+					WarnedNoTransformFeedback = true;
+				}
+				return false;
+			}
+
+			// Whether replacing or merely unbinding, the previous target has to become readable.
+			releaseStreamOutputTarget();
+			if (!buffer)
+				return true;
+
+			auto hardware = buffer->getHardwareBuffer();
+			if (!hardware || hardware->getDriverType() != EDT_VULKAN)
+			{
+				createHardwareBuffer(buffer);
+				hardware = buffer->getHardwareBuffer();
+			}
+			if (!hardware || hardware->getDriverType() != EDT_VULKAN)
+			{
+				os::Printer::log("CVulkanDriver::setStreamOutputBuffer: the buffer has no Vulkan device "
+					"buffer", ELL_ERROR);
+				return false;
+			}
+			if (hardware->getType() != EHBT_STREAM_OUTPUT)
+			{
+				os::Printer::log("CVulkanDriver::setStreamOutputBuffer: the target must be declared with "
+					"setBufferType(scene::EBT_STREAM) before its first use, as on the D3D drivers", ELL_ERROR);
+				return false;
+			}
+
+			CVulkanHardwareBuffer* native = static_cast<CVulkanHardwareBuffer*>(hardware.get());
+			VkBuffer counter = native->getCounterBuffer(true);
+			if (native->getBuffer() == VK_NULL_HANDLE || counter == VK_NULL_HANDLE)
+				return false;
+
+			// The byte count starts over at zero -- SOSetTargets with a zero offset. On the GPU
+			// timeline while a scene is open, since a draw recorded earlier this frame may still be
+			// reading the old count; from the host otherwise.
+			if (SceneOpen)
+			{
+				suspendRendering();
+				VkCommandBuffer commandBuffer = Frames[CurrentFrameIndex].CommandBuffer;
+				vk::CmdFillBuffer(commandBuffer, counter, 0, 4, 0);
+
+				VkBufferMemoryBarrier barriers[2] = {};
+				barriers[0].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+				barriers[0].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+				barriers[0].dstAccessMask = VK_ACCESS_TRANSFORM_FEEDBACK_COUNTER_READ_BIT_EXT |
+					VK_ACCESS_TRANSFORM_FEEDBACK_COUNTER_WRITE_BIT_EXT;
+				barriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				barriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				barriers[0].buffer = counter;
+				barriers[0].size = VK_WHOLE_SIZE;
+				barriers[1] = barriers[0];
+				barriers[1].srcAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+				barriers[1].dstAccessMask = VK_ACCESS_TRANSFORM_FEEDBACK_WRITE_BIT_EXT;
+				barriers[1].buffer = native->getBuffer();
+				vk::CmdPipelineBarrier(commandBuffer,
+					VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+					VK_PIPELINE_STAGE_TRANSFORM_FEEDBACK_BIT_EXT, 0, 0, nullptr, 2, barriers, 0, nullptr);
+				resumeRendering();
+			}
+			else
+				native->setCounterValue(0);
+
+			native->setStreamOutputCaptured(false);
+			StreamOutputTarget = native;
+			StreamOutputHold = hardware;
+			return true;
 		}
 
 		void CVulkanDriver::drawMeshBuffer(const scene::IMeshBuffer* mb)
@@ -2282,25 +2815,43 @@ namespace irr
 			VkDeviceSize vertexOffsets[kMaxVertexStreams] = {};
 			u32 drawVertexCount = 0;
 			u32 instanceVertexCount = 0;
+			// Set when stream 0 was filled by transform feedback: the draw then takes its vertex
+			// count from the captured byte count, not from the IVertexBuffer (the D3D11 DrawAuto).
+			VkBuffer byteCountBuffer = VK_NULL_HANDLE;
+			u32 byteCountStride = 0;
 
 			for (u32 i = 0; i < vbCount; ++i)
 			{
 				scene::IVertexBuffer* streamVb = mb->getVertexBuffer(i);
-				if (!streamVb || streamVb->getVertexCount() == 0)
+				if (!streamVb)
 					return;
 
 				auto streamHardware = streamVb->getHardwareBuffer();
-				if (!streamHardware || streamHardware->getDriverType() != EDT_VULKAN)
-					streamHardware = createHardwareBuffer(streamVb);
-				else if (streamHardware->isRequiredUpdate())
+				if (streamHardware && streamHardware->getDriverType() == EDT_VULKAN &&
+					streamHardware->isRequiredUpdate() && streamVb->getVertexCount() > 0)
 					streamHardware->update(streamVb->getHardwareMappingHint(),
 						streamVb->getVertexCount() * streamVb->getVertexSize(), streamVb->getVertices());
+
+				const bool captured = i == 0 && Context.HasTransformFeedback && streamHardware &&
+					streamHardware->getDriverType() == EDT_VULKAN &&
+					static_cast<CVulkanHardwareBuffer*>(streamHardware.get())->hasStreamOutputCount();
+				if (streamVb->getVertexCount() == 0 && !captured)
+					return;
+
+				if (!streamHardware || streamHardware->getDriverType() != EDT_VULKAN)
+					streamHardware = createHardwareBuffer(streamVb);
 				if (!streamHardware)
 					return;
 
-				vertexBuffers[i] = static_cast<CVulkanHardwareBuffer*>(streamHardware.get())->getBuffer();
+				CVulkanHardwareBuffer* nativeVb = static_cast<CVulkanHardwareBuffer*>(streamHardware.get());
+				vertexBuffers[i] = nativeVb->getBuffer();
 				if (vertexBuffers[i] == VK_NULL_HANDLE)
 					return;
+				if (captured)
+				{
+					byteCountBuffer = nativeVb->getCounterBuffer(false);
+					byteCountStride = streamVb->getVertexSize();
+				}
 
 				// A per-instance stream gives the instance count, a per-vertex one the vertex count,
 				// the same split as the D3D11/D3D12 drivers make.
@@ -2318,9 +2869,10 @@ namespace irr
 			}
 
 			// The descriptor's own layout, or the EVT_STANDARD fallback: resolved once and used both
-			// for the pipeline key and for pipeline creation, so the two cannot drift.
+			// for the pipeline key and for pipeline creation, so the two cannot drift. A user material
+			// sees the vertex colour in D3D byte order, see resolveVulkanVertexInputState().
 			SVulkanVertexInputState vertexInput;
-			resolveVulkanVertexInputState(descriptor, vertexInput);
+			resolveVulkanVertexInputState(descriptor, vertexInput, getUserMaterial(Material.MaterialType) != nullptr);
 
 			if (!bindDrawState(Material, Matrices[ETS_WORLD], Matrices[ETS_VIEW], Matrices[ETS_PROJECTION],
 				descriptor, vertexInput, topology))
@@ -2333,9 +2885,19 @@ namespace irr
 			// count is forced to one rather than taking a different entry point.
 			const u32 instanceCount = instanceVertexCount ? instanceVertexCount : 1;
 
+			// A stream-output capture is drawn from its byte count: transform feedback writes
+			// non-indexed vertices, so the index buffer, if any, is left aside.
+			scene::IIndexBuffer* ib = mb->getIndexBuffer();
+			if (byteCountBuffer != VK_NULL_HANDLE && byteCountStride)
+			{
+				vk::CmdDrawIndirectByteCountEXT(frame.CommandBuffer, instanceCount, 0, byteCountBuffer, 0, 0,
+					byteCountStride);
+				endTransformFeedbackForDraw();
+				return;
+			}
+
 			// Indexed when the mesh has an index buffer, otherwise straight from the per-vertex
 			// stream -- the same fork as every other backend takes.
-			scene::IIndexBuffer* ib = mb->getIndexBuffer();
 			if (ib && ib->getIndexCount() > 0)
 			{
 				auto ibHardware = ib->getHardwareBuffer();
@@ -2361,6 +2923,7 @@ namespace irr
 			{
 				vk::CmdDraw(frame.CommandBuffer, drawVertexCount, instanceCount, 0, 0);
 			}
+			endTransformFeedbackForDraw();
 		}
 
 		void CVulkanDriver::drawImmediate(const S3DVertex* vertices, u32 vertexCount,
@@ -2384,6 +2947,7 @@ namespace irr
 			// getBuffer() would return.
 			vk::CmdBindVertexBuffers(frame.CommandBuffer, 0, 1, &range.Buffer, &range.Offset);
 			vk::CmdDraw(frame.CommandBuffer, vertexCount, 1, 0, 0);
+			endTransformFeedbackForDraw();
 		}
 
 		void CVulkanDriver::draw2DImmediate(VkPrimitiveTopology topology, const SMaterial& material,
@@ -2749,7 +3313,9 @@ namespace irr
 			if (existing && existing->getDriverType() == EDT_VULKAN && !existing->isRequiredUpdate())
 				return existing;
 
-			auto buffer = std::make_shared<CVulkanHardwareBuffer>(Context, *this, indexBuffer);
+			// Against the owner's context and upload path: a buffer created while a deferred
+			// context recorded a mesh has to outlive that context.
+			auto buffer = std::make_shared<CVulkanHardwareBuffer>(ResourceOwner->Context, *ResourceOwner, indexBuffer);
 			indexBuffer->setHardwareBuffer(buffer);
 			return buffer;
 		}
@@ -2763,7 +3329,7 @@ namespace irr
 			if (existing && existing->getDriverType() == EDT_VULKAN && !existing->isRequiredUpdate())
 				return existing;
 
-			auto buffer = std::make_shared<CVulkanHardwareBuffer>(Context, *this, vertexBuffer);
+			auto buffer = std::make_shared<CVulkanHardwareBuffer>(ResourceOwner->Context, *ResourceOwner, vertexBuffer);
 			vertexBuffer->setHardwareBuffer(buffer);
 			return buffer;
 		}
@@ -2836,6 +3402,7 @@ namespace irr
 			// Each target owns a dynamic rendering instance: close the running one first.
 			endRendering();
 			unbindRenderTarget();
+			MrtBlend.reset(); // per-target overrides belong to an MRT set only
 
 			if (!texture)
 			{
@@ -2915,6 +3482,45 @@ namespace irr
 			{
 				activateRenderTarget(false, false, color);
 				return false;
+			}
+
+			// The per-target blend and colour mask of the IRenderTarget entries, slots 1 and up:
+			// baked into the pipelines drawn while this set is bound (see buildPipelineKeyFromMaterial).
+			// Slot 0 follows the material, as CD3D11Driver::setBasicRenderStates() rewrites it.
+			// Opt-in (setPerTargetBlend()): by default every target follows the material, as on D3D11.
+			MrtBlend.reset();
+			const u32 bound = RenderTarget->getColorAttachmentCount();
+			for (u32 i = 1; PerTargetBlend && i < bound && i < 8; ++i)
+			{
+				const video::IRenderTarget& target = targets[i];
+				MrtBlend.Mask |= static_cast<u8>(1u << i);
+				MrtBlend.Enable[i] = target.BlendOp != EBO_NONE;
+				// The dual-source factors exist on attachment 0 only.
+				auto slotFactor = [&](E_BLEND_FACTOR factor) -> VkBlendFactor
+				{
+					if (factor >= EBF_SRC1_COLOR)
+					{
+						if (!WarnedSrc1OnMrtSlot)
+							os::Printer::log("CVulkanDriver::setRenderTarget: EBF_SRC1_* is only valid on "
+								"render target 0, using EBF_ONE on the other slots", ELL_WARNING);
+						WarnedSrc1OnMrtSlot = true;
+						return VK_BLEND_FACTOR_ONE;
+					}
+					return getVulkanBlendFactor(factor, false);
+				};
+				MrtBlend.Src[i] = slotFactor(target.BlendFuncSrc);
+				MrtBlend.Dst[i] = slotFactor(target.BlendFuncDst);
+				MrtBlend.Write[i] =
+					((target.ColorMask & ECP_RED) ? VK_COLOR_COMPONENT_R_BIT : 0) |
+					((target.ColorMask & ECP_GREEN) ? VK_COLOR_COMPONENT_G_BIT : 0) |
+					((target.ColorMask & ECP_BLUE) ? VK_COLOR_COMPONENT_B_BIT : 0) |
+					((target.ColorMask & ECP_ALPHA) ? VK_COLOR_COMPONENT_A_BIT : 0);
+			}
+			if (MrtBlend.Mask && !Context.HasIndependentBlend && !WarnedNoIndependentBlend)
+			{
+				os::Printer::log("CVulkanDriver::setRenderTarget: the device has no independentBlend, "
+					"every MRT target blends like the material", ELL_WARNING);
+				WarnedNoIndependentBlend = true;
 			}
 
 			// One VkRenderingInfo, one loadOp per attachment kind: the first flag decides for all.
@@ -3118,9 +3724,28 @@ namespace irr
 		// layouts that reflection implies and puts it in the registry.
 		s32 CVulkanDriver::registerUserShaderMaterial(const SVulkanUserShaderStageSource* stages,
 			E_GPU_SHADING_LANGUAGE lang, IShaderConstantSetCallBack* callback,
-			E_MATERIAL_TYPE baseMaterial, s32 userData)
+			E_MATERIAL_TYPE baseMaterial, s32 userData, IVertexDescriptor* streamOutputLayout)
 		{
 			CVulkanUserMaterial* material = new CVulkanUserMaterial();
+
+			// vertexTypeOut with a geometry stage: the D3D stream-output declaration, which here
+			// becomes the transform feedback layout patched into that stage's SPIR-V. Without the
+			// extension the material still compiles and simply rasterizes.
+			if (streamOutputLayout && stages[EVUS_GEOMETRY].Source)
+			{
+				if (Context.HasTransformFeedback)
+				{
+					streamOutputLayout->grab();
+					material->StreamOutputLayout = streamOutputLayout;
+				}
+				else if (!WarnedNoTransformFeedback)
+				{
+					os::Printer::log("CVulkanDriver: a stream-output material was registered but "
+						"VK_EXT_transform_feedback is not available; it will rasterize instead", ELL_WARNING);
+					WarnedNoTransformFeedback = true;
+				}
+			}
+
 			if (!material->compileFromSource(Context, lang, stages))
 			{
 				os::Printer::log("CVulkanDriver::addHighLevelShaderMaterial: the material was not "
@@ -3139,21 +3764,6 @@ namespace irr
 					"be built for this material", ELL_ERROR);
 				material->drop();
 				return -1;
-			}
-
-			// The pipeline cache takes ONE entry point name for all stages, so stages compiled under
-			// different names would be misnamed in the VkPipelineShaderStageCreateInfo.
-			for (u32 stage = EVUS_FRAGMENT; stage < EVUS_COUNT && !WarnedUserEntryPoints; ++stage)
-			{
-				if (material->getModule((E_VULKAN_USER_STAGE)stage) == VK_NULL_HANDLE)
-					continue;
-				if (strcmp(material->getEntryPoint((E_VULKAN_USER_STAGE)stage),
-					material->getEntryPoint(EVUS_VERTEX)) == 0)
-					continue;
-
-				os::Printer::log("CVulkanDriver: a user material's stages use different entry point "
-					"names; the vertex stage's is used for all of them", ELL_WARNING);
-				WarnedUserEntryPoints = true;
 			}
 
 			if (callback)
@@ -3230,7 +3840,7 @@ namespace irr
 			fillStage(stages[EVUS_HULL], hullShaderProgram, hullShaderEntryPointName);
 			fillStage(stages[EVUS_DOMAIN], domainShaderProgram, domainShaderEntryPointName);
 
-			return registerUserShaderMaterial(stages, shadingLang, callback, baseMaterial, userData);
+			return registerUserShaderMaterial(stages, shadingLang, callback, baseMaterial, userData, vertexTypeOut);
 		}
 
 		s32 CVulkanDriver::addHighLevelShaderMaterialFromFiles(
@@ -3282,7 +3892,7 @@ namespace irr
 			fillStage(stages[EVUS_HULL], hs, hullShaderEntryPointName);
 			fillStage(stages[EVUS_DOMAIN], ds, domainShaderEntryPointName);
 
-			return registerUserShaderMaterial(stages, shadingLang, callback, baseMaterial, userData);
+			return registerUserShaderMaterial(stages, shadingLang, callback, baseMaterial, userData, vertexTypeOut);
 		}
 
 		s32 CVulkanDriver::addHighLevelShaderMaterialFromFiles(
@@ -3334,7 +3944,7 @@ namespace irr
 			fillStage(stages[EVUS_HULL], hs, hullShaderEntryPointName);
 			fillStage(stages[EVUS_DOMAIN], ds, domainShaderEntryPointName);
 
-			return registerUserShaderMaterial(stages, shadingLang, callback, baseMaterial, userData);
+			return registerUserShaderMaterial(stages, shadingLang, callback, baseMaterial, userData, vertexTypeOut);
 		}
 
 		// The assembly-shader entry points. Vulkan consumes SPIR-V only, so there is no assembler to
@@ -3841,6 +4451,7 @@ namespace irr
 			if (runQuery)
 				Occlusion->beginQuery(frame.CommandBuffer, slot);
 			vk::CmdDraw(frame.CommandBuffer, count, 1, 0, 0);
+			endTransformFeedbackForDraw();
 			if (runQuery)
 			{
 				Occlusion->endQuery(frame.CommandBuffer, slot);
@@ -3902,9 +4513,9 @@ namespace irr
 			// Device local whatever the hint (see CVulkanHardwareBuffer::wantsDeviceLocal()): a
 			// compute buffer is a GPU write target. The flags decide the extra bind points -- vertex
 			// for a per-instance stream, indirect for draw/dispatch arguments.
-			auto buffer = std::make_shared<CVulkanHardwareBuffer>(Context, *this, size, EHBT_COMPUTE,
-				EHBA_DEFAULT, computeBuffer->getBufferFlags(), computeBuffer->getStructureStride(),
-				computeBuffer->getBufferPointer());
+			auto buffer = std::make_shared<CVulkanHardwareBuffer>(ResourceOwner->Context, *ResourceOwner,
+				size, EHBT_COMPUTE, EHBA_DEFAULT, computeBuffer->getBufferFlags(),
+				computeBuffer->getStructureStride(), computeBuffer->getBufferPointer());
 			if (buffer->getBuffer() == VK_NULL_HANDLE)
 				return nullptr;
 
@@ -4442,7 +5053,7 @@ namespace irr
 
 			const VkPrimitiveTopology topology = mapPrimitiveType(mb->getPrimitiveType());
 			SVulkanVertexInputState vertexInput;
-			resolveVulkanVertexInputState(descriptor, vertexInput);
+			resolveVulkanVertexInputState(descriptor, vertexInput, getUserMaterial(Material.MaterialType) != nullptr);
 			if (!bindDrawState(Material, Matrices[ETS_WORLD], Matrices[ETS_VIEW], Matrices[ETS_PROJECTION],
 				descriptor, vertexInput, topology))
 				return;
@@ -4454,6 +5065,7 @@ namespace irr
 			// The five D3D arguments (IndexCountPerInstance, InstanceCount, StartIndexLocation,
 			// BaseVertexLocation, StartInstanceLocation) are VkDrawIndexedIndirectCommand in order.
 			vk::CmdDrawIndexedIndirect(frame.CommandBuffer, args->getBuffer(), byteOffset, 1, 0);
+			endTransformFeedbackForDraw();
 		}
 
 		s32 CVulkanDriver::addComputeShader(const c8* computeShaderProgram,
@@ -4625,14 +5237,27 @@ namespace irr
 			const io::path& name, const ECOLOR_FORMAT format, u32 sampleCount, u32 sampleQuality,
 			u32 arraySlices)
 		{
-			if (sampleCount > 1)
-				os::Printer::log("CVulkanDriver::addRenderTargetTexture: multisampled render targets are "
-					"not implemented on this driver (no resolve pass), a single-sample target is "
-					"created", name, ELL_WARNING);
-
 			const ECOLOR_FORMAT actual = (format == ECF_UNKNOWN) ? ECF_A8R8G8B8 : format;
+
+			// The same two rules as CD3D12Driver::addRenderTargetTexture(): an array is never
+			// multisampled (its slices are written one at a time by full-screen blits), and a count
+			// the device cannot rasterize into colour and depth at once falls back to one sample.
+			u32 samples = (sampleCount > 1) ? sampleCount : 1;
+			if (samples > 1 && arraySlices > 1)
+			{
+				os::Printer::log("CVulkanDriver::addRenderTargetTexture: an array target cannot be "
+					"multisampled, a single-sample array is created", name, ELL_WARNING);
+				samples = 1;
+			}
+			if (samples > 1 && queryMultisampleLevels(actual, samples) == 0)
+			{
+				os::Printer::log("CVulkanDriver::addRenderTargetTexture: the device does not support "
+					"this sample count, a single-sample target is created", name, ELL_WARNING);
+				samples = 1;
+			}
+
 			CVulkanTexture* texture = new CVulkanTexture(Context, *this, size, actual, true, name,
-				arraySlices ? arraySlices : 1, false);
+				arraySlices ? arraySlices : 1, false, samples);
 			if (!texture->hasDeviceResource())
 			{
 				os::Printer::log("CVulkanDriver::addRenderTargetTexture: image creation failed", name, ELL_ERROR);
@@ -4671,6 +5296,7 @@ namespace irr
 
 			endRendering();
 			unbindRenderTarget();
+			MrtBlend.reset();
 
 			if (!RenderTarget->setTarget(colorTexture, nullptr, nullptr, arraySlice))
 			{
@@ -4777,6 +5403,30 @@ namespace irr
 			else
 				endUploadAndWait(cmd);
 			return true;
+		}
+
+		IVideoDriver* CVulkanDriver::createDeferredContext()
+		{
+			CVulkanDeferredContext* deferred = new CVulkanDeferredContext(this);
+			// Same rule as the D3D drivers: never hand back a context whose first draw would fail.
+			if (!deferred->isReady())
+			{
+				os::Printer::log("CVulkanDriver::createDeferredContext: the deferred context could not "
+					"be built, see the messages above", ELL_ERROR);
+				deferred->drop();
+				return nullptr;
+			}
+			return deferred;
+		}
+
+		void CVulkanDriver::executeDeferredContext(IDeferredContext* context)
+		{
+			if (!context)
+			{
+				os::Printer::log("CVulkanDriver::executeDeferredContext: null context", ELL_ERROR);
+				return;
+			}
+			context->execute(this);
 		}
 
 		IVideoDriver* createVulkanDriver(const irr::SIrrlichtCreationParameters& params,

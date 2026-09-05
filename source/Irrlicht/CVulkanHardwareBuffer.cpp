@@ -106,10 +106,14 @@ namespace irr
 				return CounterBuffer;
 
 			// Host-visible: resetStructureCount() writes it from the CPU and the atomics a dispatch
-			// runs on it are few. 16 bytes rather than 4 keeps every minimum alignment happy.
-			if (!createVulkanBuffer(Context, 16,
-				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-				HostMemoryFlags, CounterBuffer, CounterMemory))
+			// runs on it are few. 16 bytes rather than 4 keeps every minimum alignment happy. A
+			// stream-output buffer uses the same word as its transform feedback counter (the byte
+			// count vkCmdEndTransformFeedbackEXT writes and vkCmdDrawIndirectByteCountEXT reads).
+			VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+			if (Context.HasTransformFeedback)
+				usage |= VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_COUNTER_BUFFER_BIT_EXT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+			if (!createVulkanBuffer(Context, 16, usage, HostMemoryFlags, CounterBuffer, CounterMemory))
 				return VK_NULL_HANDLE;
 
 			void* mapped = 0;
@@ -400,8 +404,11 @@ namespace irr
 				usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
 				break;
 			case EHBT_STREAM_OUTPUT:
-				// Written as a storage buffer by the shader, then read back as geometry.
+				// The transform feedback target of a stream-output geometry material, then read back
+				// as geometry; STORAGE too, for a shader writing it by hand.
 				usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+				if (Context.HasTransformFeedback)
+					usage |= VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_BUFFER_BIT_EXT;
 				break;
 			case EHBT_COMPUTE:
 			case EHBT_SHADER_RESOURCE:
@@ -449,6 +456,8 @@ namespace irr
 
 			// The hint is recorded even when the allocation is reused, as CD3D11HardwareBuffer does.
 			Mapping = mapping;
+			// CPU data replaces whatever transform feedback captured.
+			StreamOutputCaptured = false;
 
 			// A VkBuffer has a fixed size: growing past the allocation means destroying it and
 			// building a new one, with the new content as its initial data.

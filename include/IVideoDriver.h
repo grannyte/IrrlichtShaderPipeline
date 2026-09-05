@@ -22,6 +22,7 @@
 
 #include "IHardwareBuffer.h"
 #include "IComputebuffer.h"
+#include "ITilePool.h"
 
 namespace irr
 {
@@ -1662,6 +1663,122 @@ namespace irr
 			\return True if dst was filled. */
 			virtual bool tryReadComputeBuffer(scene::IComputeBuffer* buffer, u32 slot, void* dst,
 				u32 bytes, bool wait) { return false; };
+
+			// ---------------------------------------------------------------------------------
+			// The D3D11.x feature set of doc/d3d11-feature-api.md, appended in one block for the
+			// vtable reason given at setRenderTargetSlice(). Every entry has a default body; a
+			// driver that does not implement one reports the matching EVDF_* value absent, and a
+			// call on such a driver logs once and does nothing.
+			// ---------------------------------------------------------------------------------
+
+			//! Honour the per-target blend and colour mask of IRenderTarget on setRenderTarget(array).
+			/** Off by default: every bound target follows the material's blend state and colour
+			mask, which is what the D3D11 driver has always done in practice (the per-target values
+			were lost at the next material change). When on, slot 0 still follows the material and
+			slots 1..7 use their IRenderTarget entry, on every driver that reports EVDF_MRT_BLEND /
+			EVDF_MRT_COLOR_MASK. Takes effect at the next setRenderTarget(array). */
+			virtual void setPerTargetBlend(bool enable) {}
+			virtual bool getPerTargetBlend() const { return false; }
+
+			//! Bind a compute buffer as a UAV of the pixel stage (register u<slot>). EVDF_PIXEL_SHADER_UAV.
+			/** buffer needs EHBF_COMPUTE_RAW/STRUCTURED/APPEND/CONSUME. 0 clears the slot. Bindings
+			persist across draws until unbindPixelShaderResources(). A slot below the number of bound
+			render targets is refused (logged) on every driver: D3D11 shares one slot space between
+			render targets and pixel-stage UAVs, and the other drivers keep that rule for parity.
+			resetStructureCount()/copyStructureCount()/computeBarrier() and the readback API apply to
+			a buffer bound here exactly as to one bound to the compute stage. */
+			virtual bool bindPixelShaderBuffer(u32 slot, scene::IComputeBuffer* buffer) { return false; }
+
+			//! Bind an addUAVTexture() texture as a UAV of the pixel stage (register u<slot>).
+			virtual bool bindPixelShaderTexture(u32 slot, ITexture* texture) { return false; }
+
+			//! Clear every pixel-stage UAV binding. Must precede any use of those resources as
+			//! textures or copy sources: the driver transitions them back here.
+			virtual void unbindPixelShaderResources() {}
+
+			//! Skip, on the GPU, every draw until endPredicatedDraws() when node's last completed
+			//! occlusion query saw nothing. EVDF_PREDICATION.
+			/** A node without a completed query draws normally. Not nestable. The decision is
+			taken from the most recent result the GPU has produced, so it lags the way
+			getOcclusionQueryResult() does. */
+			virtual void beginPredicatedDraws(std::shared_ptr<scene::ISceneNode> node) {}
+			virtual void endPredicatedDraws() {}
+
+			//! Timer query ids are application-chosen, below this.
+			enum
+			{
+				EMCS_MAX_TIMER_QUERIES = 64
+			};
+
+			//! Record a GPU timestamp pair around the draws between the two calls. EVDF_TIMER_QUERY.
+			/** Between beginScene() and endScene() only. Pairs may nest; one id used twice in a
+			frame is refused (logged). */
+			virtual void beginTimer(u32 id) {}
+			virtual void endTimer(u32 id) {}
+
+			//! Last completed result for id, in nanoseconds of GPU time.
+			/** False while none has completed (the first frames after the first beginTimer()) or
+			when the measurement was unreliable (D3D11 reports a disjoint interval). */
+			virtual bool getTimerResult(u32 id, u64& nanoseconds) const { return false; }
+
+			//! One frame's pipeline statistics, see getPipelineStatistics().
+			struct SPipelineStatistics
+			{
+				u64 VerticesIn = 0;
+				u64 PrimitivesIn = 0;
+				u64 VertexShaderInvocations = 0;
+				u64 GeometryShaderInvocations = 0;
+				u64 GeometryShaderPrimitives = 0;
+				u64 RasterizedPrimitives = 0;
+				u64 PixelShaderInvocations = 0;
+				u64 ComputeShaderInvocations = 0;
+			};
+
+			//! Statistics of the last completed frame. EVDF_TIMER_QUERY.
+			/** The first call arms a per-frame statistics query (beginScene() to endScene());
+			results follow one or two frames later, and the call returns false until then. */
+			virtual bool getPipelineStatistics(SPipelineStatistics& out) const { return false; }
+
+			//! Bind up to 16 viewports, each with a scissor equal to its rectangle. EVDF_MULTIPLE_VIEWPORTS.
+			/** The shader selects one with SV_ViewportArrayIndex (gl_ViewportIndex); without that
+			output everything goes to viewport 0. setViewPort(rect) is the one-element case and
+			keeps working; a driver without the feature honours the first entry only. */
+			virtual void setViewPorts(const core::array<core::rect<s32> >& areas)
+			{
+				if (areas.size())
+					setViewPort(areas[0]);
+			}
+
+			//! Physical backing for tiled textures, see ITilePool.h. EVDF_TILED_RESOURCES.
+			/** The tier is getDriverAttributes() "TiledResourcesTier": 2 and up guarantee that an
+			unmapped tile reads zero and that CheckAccessFullyMapped() works in the shader; on tier
+			1 such a read is undefined. */
+			virtual ITilePool* createTilePool(u32 tileCount) { return 0; }
+
+			//! A texture whose tiles are unmapped until updateTileMappings(); sampled like any other.
+			/** mipLevels 0 = the full chain. isRenderTarget needs tier 2. Not dropped by the caller,
+			as addRenderTargetTexture(). */
+			virtual ITexture* addTiledTexture(const core::dimension2d<u32>& size, const io::path& name,
+				ECOLOR_FORMAT format, u32 mipLevels = 0, u32 arraySlices = 1, bool isRenderTarget = false)
+			{
+				return 0;
+			}
+
+			//! The tile layout of an addTiledTexture() texture.
+			virtual bool getTileShape(const ITexture* texture, STileShape& out) const { return false; }
+
+			//! Map regions[i] to the tiles of pool starting at poolTileIndices[i] (consecutive, one
+			//! per tile of the region, row-major X then Y then Z), or unmap them when pool is 0.
+			/** Ordered after the draws issued so far and before the ones that follow. */
+			virtual bool updateTileMappings(ITexture* texture, const STileRegion* regions, u32 regionCount,
+				ITilePool* pool, const u32* poolTileIndices)
+			{
+				return false;
+			}
+
+			//! Upload the texels of one mapped region: regionTileCount * tileSizeInBytes bytes,
+			//! tile after tile in the region's row-major order, each tile tightly packed.
+			virtual bool updateTiles(ITexture* texture, const STileRegion& region, const void* data) { return false; }
 		};
 
 	} // end namespace video

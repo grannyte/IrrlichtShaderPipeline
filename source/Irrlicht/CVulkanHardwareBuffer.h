@@ -67,6 +67,16 @@ namespace irr
 			bool setCounterValue(u32 value);
 			bool getCounterValue(u32& outValue) const;
 
+			//! True once setStreamOutputBuffer() captured into this buffer: its counter then holds the
+			//! byte count transform feedback wrote, and a draw from it takes the byte-count form (the
+			//! D3D11 DrawAuto) rather than the vertex count of the source IVertexBuffer. Cleared by
+			//! update(): CPU data uploaded afterwards is drawn the ordinary way again.
+			bool hasStreamOutputCount() const
+			{
+				return StreamOutputCaptured && Type == EHBT_STREAM_OUTPUT && CounterBuffer != VK_NULL_HANDLE;
+			}
+			void setStreamOutputCaptured(bool captured) { StreamOutputCaptured = captured; }
+
 			VkBuffer getBuffer() const { return Buffer; }
 			VkDeviceMemory getMemory() const { return Memory; }
 			u32 getSize() const { return Size; }
@@ -117,6 +127,9 @@ namespace irr
 			};
 			SReadbackSlot Readback[ReadbackSlotCount];
 			void releaseReadbackSlots();
+
+			//! See hasStreamOutputCount().
+			bool StreamOutputCaptured = false;
 
 			//! See getCounterBuffer(); mapped for its whole lifetime.
 			VkBuffer CounterBuffer = VK_NULL_HANDLE;

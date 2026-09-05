@@ -226,6 +226,13 @@ SamplerState BaseSampler : register(s0);
 Texture2D Layer1Texture : register(t1);
 SamplerState Layer1Sampler : register(s1);
 
+// Color arrives through the R8G8B8A8_UNORM input layout (kS3DVertexInputLayout) while S3DVertex
+// stores 0xAARRGGBB, i.e. B,G,R,A in memory, so input.Color reaches these shaders with red and
+// blue exchanged and a red vertex draws blue. Deliberately NOT corrected here: the D3D11
+// driver's built-in shaders (CD3D11FixedPipelineRenderer.cpp, "diffuseSwizzle = input.color.rgba")
+// behave the same way, and this driver follows the reference. A ".bgra" on every input.Color read
+// below is the one-line fix if the D3D11 side is fixed too; see doc/d3d11-feature-plan.md and the
+// vertex colour check in tests/vulkanParity.
 struct VSInput
 {
     float3 Pos    : POSITION;

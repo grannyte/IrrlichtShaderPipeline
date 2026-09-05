@@ -285,6 +285,13 @@ namespace irr
 					count = i;
 					break;
 				}
+				// One rasterization sample count for the whole set, as D3D12 requires too.
+				if (texture->getSampleCount() != colorTextures[0]->getSampleCount())
+				{
+					os::Printer::log("CVulkanRenderTarget: inconsistent MRT sample count", ELL_WARNING);
+					count = i;
+					break;
+				}
 			}
 
 			if (count == 0)
@@ -300,9 +307,9 @@ namespace irr
 			}
 			ColorCount = count;
 			Size = colorTextures[0]->getSize();
-			// CVulkanTexture creates single-sample images only; kept as a variable because the
-			// pipeline key and the depth pool are both keyed on it.
-			SampleCount = VK_SAMPLE_COUNT_1_BIT;
+			// Every attachment was checked to share it above; the pipeline key and the depth pool
+			// are both keyed on it.
+			SampleCount = colorTextures[0]->getSampleCount();
 
 			attachDepth(depthTexture, depthPool);
 			return true;
@@ -320,6 +327,11 @@ namespace irr
 				{
 					os::Printer::log("CVulkanRenderTarget: depth texture size differs from the colour targets,"
 						" falling back on the shared depth buffer", ELL_WARNING);
+				}
+				else if (depthTexture->getSampleCount() != SampleCount)
+				{
+					os::Printer::log("CVulkanRenderTarget: depth texture sample count differs from the colour"
+						" targets, falling back on the shared depth buffer", ELL_WARNING);
 				}
 				else
 				{
@@ -354,7 +366,13 @@ namespace irr
 				return;
 
 			for (u32 i = 0; i < ColorCount; ++i)
+			{
+				// Both images of a multisampled target: the samples are the attachment, the
+				// single-sample image the resolve destination, and a resolve destination has to be in
+				// an attachment layout as well.
+				ColorTextures[i]->transitionMultisampleTo(commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 				ColorTextures[i]->transitionTo(commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+			}
 
 			if (DepthTexture)
 			{
@@ -426,9 +444,19 @@ namespace irr
 				// A whole array texture would need layerCount > 1 and layered rendering; one slice
 				// at a time, through its own 2D view, is what setRenderTargetSlice() asks for.
 				attachment.imageView = (i == 0 && ColorLayer != WholeImage) ?
-					ColorTextures[0]->getLayerView(ColorLayer) : ColorTextures[i]->getImageView();
+					ColorTextures[0]->getLayerView(ColorLayer) : ColorTextures[i]->getAttachmentView();
 				attachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 				attachment.resolveMode = VK_RESOLVE_MODE_NONE;
+				// A multisampled target resolves into its single-sample image when the pass ends, so
+				// what is sampled afterwards is already averaged -- the ResolveSubresource D3D12 does
+				// in resolveIfNeeded(), done by the pass itself.
+				if (ColorTextures[i]->getSampleCount() > VK_SAMPLE_COUNT_1_BIT &&
+					ColorTextures[i]->getAttachmentView() != ColorTextures[i]->getImageView())
+				{
+					attachment.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+					attachment.resolveImageView = ColorTextures[i]->getImageView();
+					attachment.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+				}
 				attachment.loadOp = clearColor ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
 				// Always stored: a target only exists to be read by a later pass.
 				attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -439,6 +467,8 @@ namespace irr
 			if (hasDepth())
 			{
 				DepthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+				// An explicit multisampled depth texture carries its samples in its own image, so
+				// its view is the attachment as it is.
 				DepthAttachment.imageView = DepthView;
 				DepthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 				DepthAttachment.resolveMode = VK_RESOLVE_MODE_NONE;

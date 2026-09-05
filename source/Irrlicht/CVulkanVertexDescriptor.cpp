@@ -98,7 +98,7 @@ namespace irr
 		}
 
 		VkFormat getVulkanVertexAttributeFormat(E_VERTEX_ATTRIBUTE_TYPE type, u32 elementCount,
-			E_VERTEX_ATTRIBUTE_SEMANTIC semantic)
+			E_VERTEX_ATTRIBUTE_SEMANTIC semantic, bool d3dColorOrder)
 		{
 			switch (type)
 			{
@@ -115,11 +115,12 @@ namespace irr
 				// into a u32, so the bytes read B,G,R,A and only B8G8R8A8 delivers aColor.rgb as the
 				// true colour. CD3D11VertexDescriptor::getFormat() and kS3DVertexInputLayout instead
 				// declare R8G8B8A8_UNORM and leave the shader to undo the shift with a ".bgra"
-				// swizzle. That convention is not carried over, because the GLSL in
-				// source/Irrlicht/vulkan/shaders/ reads "aColor" straight: the correction belongs on
-				// one side of the boundary only, and this backend puts it on the format.
+				// swizzle. The built-in GLSL in source/Irrlicht/vulkan/shaders/ reads "aColor"
+				// straight, so it takes the corrected format; a user material's HLSL was written
+				// against the D3D drivers and carries the ".bgra", so it takes the D3D order
+				// (d3dColorOrder) and ends up with the same colour on every driver.
 				if (semantic == EVAS_COLOR && elementCount == 4)
-					return VK_FORMAT_B8G8R8A8_UNORM;
+					return d3dColorOrder ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_B8G8R8A8_UNORM;
 				switch (elementCount)
 				{
 				case 1: return VK_FORMAT_R8_UNORM;
@@ -193,7 +194,8 @@ namespace irr
 			return hashVertexInputState(CreateInfo);
 		}
 
-		bool buildVulkanVertexInputState(IVertexDescriptor* descriptor, SVulkanVertexInputState& out)
+		bool buildVulkanVertexInputState(IVertexDescriptor* descriptor, SVulkanVertexInputState& out,
+			bool d3dColorOrder)
 		{
 			out.Bindings.clear();
 			out.Attributes.clear();
@@ -213,7 +215,7 @@ namespace irr
 
 				const u32 location = getVulkanAttributeLocation(attr->getSemantic());
 				const VkFormat format = getVulkanVertexAttributeFormat(attr->getType(),
-					attr->getElementCount(), attr->getSemantic());
+					attr->getElementCount(), attr->getSemantic(), d3dColorOrder);
 
 				if (location == EVVL_INVALID || format == VK_FORMAT_UNDEFINED)
 				{
@@ -266,10 +268,19 @@ namespace irr
 			out.finalize();
 		}
 
-		void resolveVulkanVertexInputState(IVertexDescriptor* descriptor, SVulkanVertexInputState& out)
+		void resolveVulkanVertexInputState(IVertexDescriptor* descriptor, SVulkanVertexInputState& out,
+			bool d3dColorOrder)
 		{
-			if (!buildVulkanVertexInputState(descriptor, out))
-				getS3DVertexInputState(out);
+			if (buildVulkanVertexInputState(descriptor, out, d3dColorOrder))
+				return;
+			getS3DVertexInputState(out);
+			if (d3dColorOrder)
+			{
+				for (size_t i = 0; i < out.Attributes.size(); ++i)
+					if (out.Attributes[i].location == EVVL_COLOR)
+						out.Attributes[i].format = VK_FORMAT_R8G8B8A8_UNORM;
+				out.finalize();
+			}
 		}
 
 	} // end namespace video

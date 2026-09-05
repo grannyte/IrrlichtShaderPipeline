@@ -2144,6 +2144,9 @@ namespace irr
 			attr->addInt("ColorMaterial", material.ColorMaterial);
 			attr->addInt("PolygonOffsetFactor", material.PolygonOffsetFactor);
 			attr->addEnum("PolygonOffsetDirection", material.PolygonOffsetDirection, video::PolygonOffsetDirectionNames);
+			attr->addInt("LogicOp", material.LogicOp);
+			attr->addBool("ConservativeRaster", material.ConservativeRaster);
+			attr->addInt("SampleMask", (s32)material.SampleMask);
 
 			prefix = "BilinearFilter";
 			for (i = 0; i < MATERIAL_MAX_TEXTURES; ++i)
@@ -2163,6 +2166,12 @@ namespace irr
 			prefix = "LODBias";
 			for (i = 0; i < MATERIAL_MAX_TEXTURES; ++i)
 				attr->addInt((prefix + core::stringc(i + 1)).c_str(), material.TextureLayer[i].LODBias);
+			prefix = "MinMaxFilter";
+			for (i = 0; i < MATERIAL_MAX_TEXTURES; ++i)
+				attr->addInt((prefix + core::stringc(i + 1)).c_str(), material.TextureLayer[i].MinMaxFilter);
+			prefix = "MinLod";
+			for (i = 0; i < MATERIAL_MAX_TEXTURES; ++i)
+				attr->addFloat((prefix + core::stringc(i + 1)).c_str(), material.TextureLayer[i].MinLod);
 
 			return attr;
 		}
@@ -2222,6 +2231,13 @@ namespace irr
 				outMaterial.PolygonOffsetFactor = attr->getAttributeAsInt("PolygonOffsetFactor");
 			if (attr->existsAttribute("PolygonOffsetDirection"))
 				outMaterial.PolygonOffsetDirection = (video::E_POLYGON_OFFSET)attr->getAttributeAsEnumeration("PolygonOffsetDirection", video::PolygonOffsetDirectionNames);
+			// Absent in files written before these existed: the defaults stand.
+			if (attr->existsAttribute("LogicOp"))
+				outMaterial.LogicOp = attr->getAttributeAsInt("LogicOp");
+			if (attr->existsAttribute("ConservativeRaster"))
+				outMaterial.ConservativeRaster = attr->getAttributeAsBool("ConservativeRaster");
+			if (attr->existsAttribute("SampleMask"))
+				outMaterial.SampleMask = (u32)attr->getAttributeAsInt("SampleMask");
 			prefix = "BilinearFilter";
 			if (attr->existsAttribute(prefix.c_str())) // legacy
 				outMaterial.setFlag(EMF_BILINEAR_FILTER, attr->getAttributeAsBool(prefix.c_str()));
@@ -2265,6 +2281,14 @@ namespace irr
 			prefix = "LODBias";
 			for (i = 0; i < MATERIAL_MAX_TEXTURES; ++i)
 				outMaterial.TextureLayer[i].LODBias = attr->getAttributeAsInt((prefix + core::stringc(i + 1)).c_str());
+			prefix = "MinMaxFilter";
+			for (i = 0; i < MATERIAL_MAX_TEXTURES; ++i)
+				if (attr->existsAttribute((prefix + core::stringc(i + 1)).c_str()))
+					outMaterial.TextureLayer[i].MinMaxFilter = attr->getAttributeAsInt((prefix + core::stringc(i + 1)).c_str());
+			prefix = "MinLod";
+			for (i = 0; i < MATERIAL_MAX_TEXTURES; ++i)
+				if (attr->existsAttribute((prefix + core::stringc(i + 1)).c_str()))
+					outMaterial.TextureLayer[i].MinLod = attr->getAttributeAsFloat((prefix + core::stringc(i + 1)).c_str());
 		}
 
 		//! Returns driver and operating system specific data about the IVideoDriver.

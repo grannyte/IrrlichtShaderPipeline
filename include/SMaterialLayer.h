@@ -44,6 +44,14 @@ namespace video
 			"texture_clamp_mirror_clamp_to_edge",
 			"texture_clamp_mirror_clamp_to_border", 0};
 
+	//! Reduction mode of a layer's texture filter (SMaterialLayer::MinMaxFilter, EVDF_MINMAX_FILTER).
+	enum E_TEXTURE_MINMAX_FILTER
+	{
+		ETMINF_AVERAGE = 0,	//!< the ordinary weighted filter
+		ETMINF_MINIMUM,		//!< the smallest texel of the footprint, per channel
+		ETMINF_MAXIMUM		//!< the largest texel of the footprint, per channel
+	};
+
 	//! Struct for holding material parameters which exist per texture layer
 	class SMaterialLayer
 	{
@@ -55,8 +63,10 @@ namespace video
 				TextureWrapV(ETC_REPEAT),
 				BilinearFilter(false),
 				TrilinearFilter(false),
+				MinMaxFilter(ETMINF_AVERAGE),
 				AnisotropicFilter(16),
 				LODBias(0),
+				MinLod(0.f),
 				TextureMatrix(0)
 			{}
 
@@ -75,8 +85,10 @@ namespace video
 			TextureWrapV(other.TextureWrapV),
 			BilinearFilter(other.BilinearFilter),
 			TrilinearFilter(other.TrilinearFilter),
+			MinMaxFilter(other.MinMaxFilter),
 			AnisotropicFilter(other.AnisotropicFilter),
 			LODBias(other.LODBias),
+			MinLod(other.MinLod),
 			TextureMatrix(other.TextureMatrix)
 		{
 				other.Texture = nullptr;
@@ -124,8 +136,10 @@ namespace video
 			TextureWrapV = other.TextureWrapV;
 			BilinearFilter = other.BilinearFilter;
 			TrilinearFilter = other.TrilinearFilter;
+			MinMaxFilter = other.MinMaxFilter;
 			AnisotropicFilter = other.AnisotropicFilter;
 			LODBias = other.LODBias;
+			MinLod = other.MinLod;
 
 			return *this;
 		}
@@ -146,8 +160,10 @@ namespace video
 			TextureWrapV = other.TextureWrapV;
 			BilinearFilter = other.BilinearFilter;
 			TrilinearFilter = other.TrilinearFilter;
+			MinMaxFilter = other.MinMaxFilter;
 			AnisotropicFilter = other.AnisotropicFilter;
 			LODBias = other.LODBias;
+			MinLod = other.MinLod;
 
 			return *this;
 		}
@@ -204,8 +220,10 @@ namespace video
 				TextureWrapV != b.TextureWrapV ||
 				BilinearFilter != b.BilinearFilter ||
 				TrilinearFilter != b.TrilinearFilter ||
+				MinMaxFilter != b.MinMaxFilter ||
 				AnisotropicFilter != b.AnisotropicFilter ||
-				LODBias != b.LODBias;
+				LODBias != b.LODBias ||
+				MinLod != b.MinLod;
 			if (different)
 				return true;
 			else
@@ -237,6 +255,10 @@ namespace video
 		the bilinear filtering flag is ignored. */
 		bool TrilinearFilter:1;
 
+		//! Reduction mode of the filter, values from E_TEXTURE_MINMAX_FILTER. Default: ETMINF_AVERAGE
+		/** Minimum/maximum need EVDF_MINMAX_FILTER and are ignored (warned once) elsewhere. */
+		u8 MinMaxFilter:2;
+
 		//! Is anisotropic filtering enabled? Default: 0, disabled
 		/** In Irrlicht you can use anisotropic texture filtering
 		in conjunction with bilinear or trilinear texture
@@ -252,6 +274,12 @@ namespace video
 		chosen initially, and thus takes a smaller mipmap for a region
 		if the value is positive. */
 		s8 LODBias;
+
+		//! Lowest mip level the sampler may touch. Default: 0 (no clamp)
+		/** For a tiled texture whose finer mips are not resident yet: sampling stays on the
+		mips that are. Fractional values are honoured. Needs EVDF_MINMAX_FILTER (the same
+		sampler generation), ignored elsewhere. */
+		f32 MinLod;
 
 	private:
 		friend class SMaterial;
