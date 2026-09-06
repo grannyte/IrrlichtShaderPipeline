@@ -180,8 +180,11 @@ namespace irr
 			frame.ConstantRingOffset = 0;
 			frame.ShaderVisibleSRVNext = 0;
 			frame.VertexRingOffset = 0;
-			ID3D12DescriptorHeap* heaps[] = { frame.ShaderVisibleSRVHeap.Get() };
-			CommandList->SetDescriptorHeaps(1, heaps);
+			// Both heaps, same as CD3D12Driver's own SetDescriptorHeaps calls -- omitting the sampler
+			// heap here left it unbound on this command list, so any draw needing a sampler (i.e. any
+			// textured material) hit D3D12 EXECUTION ERROR #708 SET_DESCRIPTOR_TABLE_INVALID.
+			ID3D12DescriptorHeap* heaps[] = { frame.ShaderVisibleSRVHeap.Get(), ShaderVisibleSamplerHeap.Get() };
+			CommandList->SetDescriptorHeaps(2, heaps);
 
 			if (!Target)
 				return;

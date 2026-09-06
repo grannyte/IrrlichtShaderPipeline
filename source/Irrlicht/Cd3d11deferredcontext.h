@@ -42,6 +42,11 @@ namespace irr
 			virtual void waitForCompletion() override;
 			virtual IDeferredContext* getDeferredContextControl() override { return this; }
 
+			// No own render target: this context records command lists that execute against the
+			// immediate driver's context, so it reports the interface's "none created" values.
+			virtual core::dimension2d<u32> getRecordingSize() const override { return core::dimension2d<u32>(0, 0); }
+			virtual ITexture* getRenderTarget() const override { return nullptr; }
+
 			// Recording into a deferred context's own deferred context
 			// isn't a supported nesting -- fail loudly rather than silently
 			// constructing something half-working.

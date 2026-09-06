@@ -390,7 +390,6 @@ namespace irr
 			LayoutCache.clear();
 			ShaderModules.clear();
 			Samplers.clear(Context);
-			destroyQueryResources();
 			destroyFrameContexts();
 			destroySwapchain();
 

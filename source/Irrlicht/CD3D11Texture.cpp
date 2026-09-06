@@ -7,6 +7,7 @@
 
 #include "CD3D11Driver.h"
 #include "CD3D11Texture.h"
+#include "CD3D11CallBridge.h"
 #include "os.h"
 
 #include "CImage.h"
@@ -287,6 +288,9 @@ namespace irr
 		//! destructor
 		CD3D11Texture::~CD3D11Texture()
 		{
+			// Bridges cache raw ITexture* per slot; a leftover entry is dereferenced on the next draw.
+			CD3D11CallBridge::invalidateTextureBindingEverywhere(this);
+
 			if (dsView)
 			{
 				dsView->Release();

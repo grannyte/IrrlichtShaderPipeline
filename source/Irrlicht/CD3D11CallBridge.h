@@ -225,6 +225,9 @@ namespace irr
 			void setShaderResources(SD3D11_SAMPLER_DESC SamplerDesc[MATERIAL_MAX_TEXTURES], ITexture* shaderViews[MATERIAL_MAX_TEXTURES]);
 			//! Forget a cached texture binding, so the next material set rebinds it.
 			void invalidateTextureBinding(ITexture* texture);
+			//! Same, on every live bridge (immediate and deferred). Call before destroying a texture:
+			//! the cache holds raw pointers, so a freed one is dereferenced on the next draw.
+			static void invalidateTextureBindingEverywhere(ITexture* texture);
 			void setPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY top);
 			void setInputLayout(IVertexDescriptor* vtxDescriptor, IMaterialRenderer* r);
 

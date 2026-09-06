@@ -2,34 +2,8 @@
 // This file is part of the "Irrlicht Engine".
 // For conditions of distribution and use, see copyright notice in irrlicht.h
 
-// Deferred context for the native Vulkan driver: a real VkCommandBuffer recorded on any thread
-// and submitted from the immediate driver's thread, the counterpart of CD3D12DeferredContext and
-// the replacement for the software CCommandBufferDriver every non-D3D driver otherwise gets.
-//
-// The model is the D3D12 one, for the same reason: a Vulkan command buffer inherits no state from
-// any other, and the immediate driver's frame is one primary command buffer whose swapchain
-// transitions bracket the whole frame, so a submission made between beginScene() and endScene()
-// cannot land inside it. This context therefore draws into its OWN render target texture
-// (getRenderTarget(), created through the immediate driver so it lives in the shared cache) with
-// its own depth buffer, and the immediate driver composes the result in a later frame by drawing
-// that texture like any other.
-//
-// What is shared with the immediate driver, all borrowed and never destroyed here: the device,
-// queue and every loaded entry point (SVulkanContext), the descriptor set layouts and the built-in
-// pipeline layout, the NullTexture, and through the delegated registry every material renderer.
-// What is owned: two frame contexts (command pool + buffer, fence, descriptor pools, uniform ring,
-// immediate ring), a pipeline cache (creating a VkPipeline is thread-safe; sharing the cache's map
-// is not, so a few pipelines may be built twice), a depth pool and a render target object.
-//
-// Threading contract: record on one thread at a time, execute() from the thread that owns the
-// immediate driver (or any thread, the queue is locked -- but the fence bookkeeping is not).
-// Textures and buffers created while recording are made through the immediate driver under its
-// upload lock, so they are valid on both sides and survive this context. A texture bound from two
-// threads at once has one layout tracker (CVulkanTexture::CurrentLayout) written by both; keep a
-// texture on one side per frame, as with the D3D12 context.
-//
-// Not available from here: occlusion queries, compute dispatches and stream output. They need the
-// immediate driver's pools and its frame counter, and queryFeature() reports them absent.
+// Real VkCommandBuffer counterpart to CD3D12DeferredContext -- draws into its own render target
+// since a Vulkan command buffer can't submit mid-frame into the swapchain-bracketed primary one.
 
 #ifndef __C_VULKAN_DEFERRED_CONTEXT_H_INCLUDED__
 #define __C_VULKAN_DEFERRED_CONTEXT_H_INCLUDED__

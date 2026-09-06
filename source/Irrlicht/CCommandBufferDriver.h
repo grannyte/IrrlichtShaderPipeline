@@ -397,6 +397,10 @@ namespace irr
 			// beginRecording()/etc. control surface without a cast.
 			virtual IDeferredContext* getDeferredContextControl() override { return this; }
 
+			// Records commands for another driver to execute; it owns no render target itself.
+			virtual core::dimension2d<u32> getRecordingSize() const override { return core::dimension2d<u32>(0, 0); }
+			virtual ITexture* getRenderTarget() const override { return nullptr; }
+
 		private:
 			mutable std::mutex QueueMutex;
 			std::queue<std::function<void(IVideoDriver*)>> deferedcalls;

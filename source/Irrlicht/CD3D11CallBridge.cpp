@@ -8,6 +8,19 @@
 #include "CD3D11VertexDescriptor.h"
 
 #include <d3d11.h>
+#include <mutex>
+#include <vector>
+
+namespace
+{
+	// Function-local statics: no init-order dependency, and no member added to any class.
+	std::mutex& liveBridgeMutex() { static std::mutex m; return m; }
+	std::vector<irr::video::CD3D11CallBridge*>& liveBridges()
+	{
+		static std::vector<irr::video::CD3D11CallBridge*> v;
+		return v;
+	}
+}
 
 namespace irr
 {
@@ -50,6 +63,12 @@ namespace irr
 			ZeroMemory(SamplerStates, sizeof(SamplerStates[0]) * MATERIAL_MAX_TEXTURES);
 
 			applyInitialStates();
+
+			// Self-registration rather than a registry on the driver: no creation site can forget it.
+			{
+				std::lock_guard<std::mutex> lock(liveBridgeMutex());
+				liveBridges().push_back(this);
+			}
 		}
 
 		//! Pousse une premiere fois les etats caches vers le device.
@@ -89,6 +108,19 @@ namespace irr
 
 		CD3D11CallBridge::~CD3D11CallBridge()
 		{
+			{
+				std::lock_guard<std::mutex> lock(liveBridgeMutex());
+				std::vector<CD3D11CallBridge*>& live = liveBridges();
+				for (size_t i = 0; i < live.size(); ++i)
+				{
+					if (live[i] == this)
+					{
+						live.erase(live.begin() + i);
+						break;
+					}
+				}
+			}
+
 			// release blend states
 			core::map<SD3D11_BLEND_DESC, ID3D11BlendState*>::Iterator bldIt = BlendMap.getIterator();
 			while (!bldIt.atEnd())
@@ -667,6 +699,17 @@ namespace irr
 				if (CurrentTextures[i] == texture)
 					CurrentTextures[i] = NULL;
 			}
+		}
+
+		void CD3D11CallBridge::invalidateTextureBindingEverywhere(ITexture* texture)
+		{
+			if (!texture)
+				return;
+
+			std::lock_guard<std::mutex> lock(liveBridgeMutex());
+			std::vector<CD3D11CallBridge*>& live = liveBridges();
+			for (size_t i = 0; i < live.size(); ++i)
+				live[i]->invalidateTextureBinding(texture);
 		}
 
 		void CD3D11CallBridge::setPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY topology)

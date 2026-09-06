@@ -721,6 +721,10 @@ namespace irr
 			virtual void executeDeferredContext(IDeferredContext* context) override;
 			virtual IDeferredContext* getDeferredContextControl() override;
 
+			// The immediate driver draws to the back buffer, so it has no own render target.
+			virtual core::dimension2d<u32> getRecordingSize() const override { return core::dimension2d<u32>(0, 0); }
+			virtual ITexture* getRenderTarget() const override { return nullptr; }
+
 			// IDeferredContext
 			virtual void execute(IVideoDriver* driver = nullptr) override;
 			virtual void beginRecording() override;
