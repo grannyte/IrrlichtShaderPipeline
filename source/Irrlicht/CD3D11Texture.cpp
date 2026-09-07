@@ -648,6 +648,48 @@ namespace irr
 			createViews();
 		}
 
+		//! Mip level size, floored at 1 like D3D.
+		static inline u32 mipExtent(u32 base, u32 level)
+		{
+			const u32 v = base >> level;
+			return v ? v : 1;
+		}
+
+		//! Full chain length for a level 0 size.
+		static u32 fullMipCount(u32 width, u32 height)
+		{
+			u32 levels = 1;
+			while (width > 1 || height > 1)
+			{
+				width = width > 1 ? width >> 1 : 1;
+				height = height > 1 ? height >> 1 : 1;
+				++levels;
+			}
+			return levels;
+		}
+
+		//! 2x2 box average of a 4 byte per pixel level, the filter GenerateMips applies.
+		static void downsampleBox4(const u8* src, u32 srcW, u32 srcH, u8* dst, u32 dstW, u32 dstH)
+		{
+			for (u32 y = 0; y < dstH; ++y)
+			{
+				const u32 y0 = (2 * y < srcH) ? 2 * y : srcH - 1;
+				const u32 y1 = (2 * y + 1 < srcH) ? 2 * y + 1 : y0;
+				for (u32 x = 0; x < dstW; ++x)
+				{
+					const u32 x0 = (2 * x < srcW) ? 2 * x : srcW - 1;
+					const u32 x1 = (2 * x + 1 < srcW) ? 2 * x + 1 : x0;
+					const u8* a = src + (y0 * srcW + x0) * 4;
+					const u8* b = src + (y0 * srcW + x1) * 4;
+					const u8* c = src + (y1 * srcW + x0) * 4;
+					const u8* d = src + (y1 * srcW + x1) * 4;
+					u8* o = dst + (y * dstW + x) * 4;
+					for (u32 k = 0; k < 4; ++k)
+						o[k] = (u8)((a[k] + b[k] + c[k] + d[k] + 2) >> 2);
+				}
+			}
+		}
+
 		//! creates the hardware texture
 		bool CD3D11Texture::createTexture(u32 flags, IImage* image)
 		{
@@ -753,26 +795,54 @@ namespace irr
 
 				// Hand the pixels to CreateTexture2D when we can: it is a DEVICE call, free-threaded
 				// and context-free, so a texture created while recording never touches the immediate
-				// context. Only possible with an explicit mip count -- MipLevels 0 (auto-gen) forbids
-				// initial data -- so anything auto-mipped still falls through to copyTexture().
-				core::array<u8> initialPixels;
-				D3D11_SUBRESOURCE_DATA initialData;
-				D3D11_SUBRESOURCE_DATA* initialDataPtr = NULL;
-				if (image && desc.MipLevels == 1 && !image->isCompressedFormat(image->getColorFormat()))
+				// context.
+				const ECOLOR_FORMAT dstFormat = Driver->getColorFormatFromD3DFormat(format);
+
+				// Building the chain on the CPU keeps that true for auto-mipped textures too: GenerateMips
+				// needs MipLevels 0, which forbids initial data and puts every loader back on the context.
+				bool buildMipChain = false;
+				if (image && desc.MipLevels == 0 && desc.ArraySize == 1 && dstFormat == ECF_A8R8G8B8
+					&& !image->isCompressedFormat(image->getColorFormat()))
 				{
-					const ECOLOR_FORMAT dstFormat = Driver->getColorFormatFromD3DFormat(format);
+					desc.MipLevels = fullMipCount(desc.Width, desc.Height);
+					desc.BindFlags &= ~D3D11_BIND_RENDER_TARGET;
+					desc.MiscFlags &= ~D3D11_RESOURCE_MISC_GENERATE_MIPS;
+					HardwareMipMaps = false;
+					buildMipChain = true;
+				}
+
+				core::array<u8> initialPixels;
+				core::array<D3D11_SUBRESOURCE_DATA> initialData;
+				D3D11_SUBRESOURCE_DATA* initialDataPtr = NULL;
+				if (image && (desc.MipLevels == 1 || buildMipChain) && !image->isCompressedFormat(image->getColorFormat()))
+				{
 					const u32 bpp = IImage::getBitsPerPixelFromFormat(dstFormat) / 8;
 					if (bpp)
 					{
-						const u32 rowPitch = desc.Width * bpp;
-						initialPixels.reallocate(rowPitch * desc.Height);
-						initialPixels.set_used(rowPitch * desc.Height);
-						image->copyToScaling(initialPixels.pointer(), desc.Width, desc.Height, dstFormat, rowPitch);
+						core::array<u32> offsets;
+						u32 total = 0;
+						for (u32 m = 0; m < desc.MipLevels; ++m)
+						{
+							offsets.push_back(total);
+							total += mipExtent(desc.Width, m) * mipExtent(desc.Height, m) * bpp;
+						}
+						initialPixels.reallocate(total);
+						initialPixels.set_used(total);
+						image->copyToScaling(initialPixels.pointer(), desc.Width, desc.Height, dstFormat, desc.Width * bpp);
 
-						initialData.pSysMem = initialPixels.pointer();
-						initialData.SysMemPitch = rowPitch;
-						initialData.SysMemSlicePitch = 0;
-						initialDataPtr = &initialData;
+						for (u32 m = 1; m < desc.MipLevels; ++m)
+							downsampleBox4(initialPixels.pointer() + offsets[m - 1], mipExtent(desc.Width, m - 1), mipExtent(desc.Height, m - 1),
+								initialPixels.pointer() + offsets[m], mipExtent(desc.Width, m), mipExtent(desc.Height, m));
+
+						initialData.reallocate(desc.MipLevels);
+						initialData.set_used(desc.MipLevels);
+						for (u32 m = 0; m < desc.MipLevels; ++m)
+						{
+							initialData[m].pSysMem = initialPixels.pointer() + offsets[m];
+							initialData[m].SysMemPitch = mipExtent(desc.Width, m) * bpp;
+							initialData[m].SysMemSlicePitch = 0;
+						}
+						initialDataPtr = initialData.pointer();
 						UploadedAtCreation = true;
 					}
 				}

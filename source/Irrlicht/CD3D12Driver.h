@@ -1824,6 +1824,7 @@ namespace irr
 			//! including for materials registered after the context was created.
 			CD3D12MaterialRenderer* getNativeRenderer(s32 idx) const
 			{
+				std::shared_lock<std::shared_mutex> lck(ResourceOwner->shaderArrayLock);
 				const std::vector<CD3D12MaterialRenderer*>& renderers = ResourceOwner->NativeRenderers;
 				if (idx < 0 || static_cast<size_t>(idx) >= renderers.size())
 					return nullptr;

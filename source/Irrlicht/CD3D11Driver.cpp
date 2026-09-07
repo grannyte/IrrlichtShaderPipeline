@@ -970,7 +970,10 @@ namespace irr
 				else if (hwBuff)
 				{
 					if (hwBuff->isRequiredUpdate())
+					{
+						((CD3D11HardwareBuffer*)hwBuff.get())->setUploadDriver(this);
 						hwBuff->update(mb->getVertexBuffer(i)->getHardwareMappingHint(), mb->getVertexBuffer(i)->getVertexCount() * mb->getVertexBuffer(i)->getVertexSize(), mb->getVertexBuffer(i)->getVertices());
+					}
 				}
 
 				offsets[i] = (0);
@@ -1008,7 +1011,10 @@ namespace irr
 			else if (hwindBuff)
 			{
 				if (hwindBuff->isRequiredUpdate())
+				{
+					((CD3D11HardwareBuffer*)hwindBuff.get())->setUploadDriver(this);
 					hwindBuff->update(indexBuff->getHardwareMappingHint(), indexBuff->getIndexCount() * indexBuff->getIndexSize(), indexBuff->getIndices());
+				}
 			}
 			// set index buffer
 			if (hwindBuff)
@@ -4086,21 +4092,8 @@ namespace irr
 			u32 i;
 			u32 size;
 			os::Printer::log("Resetting D3D11 device.", ELL_INFORMATION);
-			{
-				concurrency::reader_writer_lock::scoped_lock texturelock(textureArrayLock);
-				size = Textures.size();
-				for (i = 0; i < size; ++i)
-				{
-					if (Textures[i].Surface->isRenderTarget())
-					{
-						ID3D11Resource* tex = ((CD3D11Texture*)(Textures[i].Surface))->getTextureResource();
-						if (tex)
-						{
-							tex->Release();
-						}
-					}
-				}
-			}
+			// RTTs are not touched: unlike D3D9 they need no release before ResizeBuffers, and the
+			// old Release() on each getTextureResource() (never AddRef'd) over-released them.
 
 			size = OcclusionQueries.size();
 			for (i = 0; i < size; ++i)

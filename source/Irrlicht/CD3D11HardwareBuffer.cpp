@@ -358,10 +358,11 @@ namespace irr
 		//! Copy data from system memory
 		void CD3D11HardwareBuffer::copyFromMemory(const void* sysData, u32 offset, u32 length)
 		{
-			// Uploads on the creating driver's context -- the recording context while recording.
-			// Both branches below are legal there (UpdateSubresource always; Map only because this
-			// is WRITE_DISCARD on a non-static, i.e. dynamic, buffer).
-			ID3D11DeviceContext* uploadContext = Driver ? Driver->getContext() : Context;
+			// Uploads on the DRAWING driver's context (set by drawMeshBuffer), falling back to the creator:
+			// a buffer first drawn on the immediate driver and later refilled while recording must not
+			// touch the immediate context from the recording thread.
+			CD3D11Driver* const uploader = UploadDriver ? UploadDriver : Driver;
+			ID3D11DeviceContext* uploadContext = uploader ? uploader->getContext() : Context;
 			if (!uploadContext)
 				uploadContext = Context;
 

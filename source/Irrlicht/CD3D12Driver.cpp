@@ -675,6 +675,8 @@ namespace irr
 
 		ID3D12RootSignature* CD3D12Driver::getOrCreateRootSignature(u32 layoutKey)
 		{
+			// Concurrent user-shader registrations share this cache; never called with the lock held.
+			std::lock_guard<std::shared_mutex> lck(shaderArrayLock);
 			auto cached = RootSignatureCache.find(layoutKey);
 			if (cached != RootSignatureCache.end())
 				return cached->second.Get();
@@ -3380,10 +3382,14 @@ namespace irr
 			if (vp.getWidth() <= 0 || vp.getHeight() <= 0)
 				return; // an empty viewport is rejected by D3D12, and would leave ViewPort unusable
 
-			D3D12_VIEWPORT viewport = {
-				static_cast<float>(vp.UpperLeftCorner.X), static_cast<float>(vp.UpperLeftCorner.Y),
-				static_cast<float>(vp.getWidth()), static_cast<float>(vp.getHeight()), 0.0f, 1.0f };
-			CommandList->RSSetViewports(1, &viewport);
+			// Outside a scene the list is closed (see SceneOpen): keep the rect, record nothing.
+			if (SceneOpen)
+			{
+				D3D12_VIEWPORT viewport = {
+					static_cast<float>(vp.UpperLeftCorner.X), static_cast<float>(vp.UpperLeftCorner.Y),
+					static_cast<float>(vp.getWidth()), static_cast<float>(vp.getHeight()), 0.0f, 1.0f };
+				CommandList->RSSetViewports(1, &viewport);
+			}
 
 			ViewPort = vp;
 		}
@@ -6522,6 +6528,8 @@ namespace irr
 
 			// Un renderer "etranger" (pas construit par ce driver) laisse un trou nul : il reste
 			// consultable via getMaterialRenderer(), mais getPSOForMaterial() ne peut rien en tirer.
+			// Same lock as MaterialRenderers: user shaders register from several threads at once.
+			std::lock_guard<std::shared_mutex> lck(shaderArrayLock);
 			NativeRenderers.resize(MaterialRenderers.size(), nullptr);
 			NativeRenderers[index] = dynamic_cast<CD3D12MaterialRenderer*>(renderer);
 			return index;

@@ -290,7 +290,7 @@ namespace video
 		SMaterial()
 		: MaterialType(EMT_SOLID), AmbientColor(255,255,255,255), DiffuseColor(255,255,255,255),
 			EmissiveColor(0,0,0,0), SpecularColor(255,255,255,255),
-			Shininess(0.0f), MaterialTypeParam(0.0f), MaterialTypeParam2(0.0f), Thickness(1.0f),
+			Shininess(0.0f), MaterialTypeParam(0.0f), MaterialTypeParam2(0.0f), EntityId(-1), Thickness(1.0f),
 			ZBuffer(ECFN_GREATER), AntiAliasing(EAAM_SIMPLE), ColorMask(ECP_ALL),
 			ColorMaterial(ECM_DIFFUSE), BlendOperation(EBO_NONE), BlendFactor(0.0f),
 			PolygonOffsetFactor(0), PolygonOffsetDirection(EPO_FRONT),
@@ -327,6 +327,7 @@ namespace video
 			Shininess = other.Shininess;
 			MaterialTypeParam = other.MaterialTypeParam;
 			MaterialTypeParam2 = other.MaterialTypeParam2;
+			EntityId = other.EntityId;
 			Thickness = other.Thickness;
 			for (u32 i=0; i<MATERIAL_MAX_TEXTURES; ++i)
 			{
@@ -422,6 +423,9 @@ namespace video
 		//! Second free parameter, dependent on the material type.
 		/** Mostly ignored. */
 		f32 MaterialTypeParam2;
+
+		//! Entity id handed to shader callbacks; 64-bit so it survives ids a float cannot hold. -1 = none.
+		s64 EntityId;
 
 		//! Thickness of non-3dimensional elements such as lines and points.
 		f32 Thickness;
@@ -730,6 +734,7 @@ namespace video
 				Shininess != b.Shininess ||
 				MaterialTypeParam != b.MaterialTypeParam ||
 				MaterialTypeParam2 != b.MaterialTypeParam2 ||
+				EntityId != b.EntityId ||
 				Thickness != b.Thickness ||
 				Wireframe != b.Wireframe ||
 				PointCloud != b.PointCloud ||

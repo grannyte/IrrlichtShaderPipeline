@@ -44,6 +44,9 @@ public:
 	//! Copy data from system memory
 	void copyFromMemory(const void* sysData, u32 offset, u32 length);
 
+	//! Context copyFromMemory uploads on: the driver about to draw, not the one that created the buffer.
+	void setUploadDriver(CD3D11Driver* driver) { UploadDriver = driver; }
+
 	//! Copy data from another buffer
 	void copyFromBuffer(const std::shared_ptr<IHardwareBuffer>& buffer, u32 srcOffset, u32 descOffset, u32 length);
 
@@ -74,6 +77,7 @@ private:
 	ID3D11ShaderResourceView* SRView;
 
 	CD3D11Driver* Driver;
+	CD3D11Driver* UploadDriver = nullptr;
 	std::shared_ptr<CD3D11HardwareBuffer> TempStagingBuffer;   // kept across locks; freed on resize
 	std::shared_ptr<CD3D11HardwareBuffer> AsyncStaging[ASYNC_READBACK_SLOTS];   // recreated when Size changes
 	bool StagingLocked = false;
