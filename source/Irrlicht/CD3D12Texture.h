@@ -125,7 +125,7 @@ namespace irr
 			CD3D12Texture(CD3D12Driver* driver, const core::dimension2d<u32>& size,
 				const io::path& name, ECOLOR_FORMAT format, bool renderTarget,
 				u32 sampleCount = 1, u32 sampleQuality = 0, u32 arraySlices = 1,
-				bool unorderedAccess = false);
+				bool unorderedAccess = false, E_TEXTURE_TYPE type = ETT_2D);
 
 			//! 2D array / cube / cube array / 3D texture (depth = images.size() for
 			//! ETT_3D), built from N already-loaded 2D images (one per slice/face/Z-layer).
@@ -217,6 +217,11 @@ namespace irr
 			void resolveIfNeeded(ID3D12GraphicsCommandList* cmdList);
 
 		private:
+			//! ETT_2D_ARRAY/ETT_CUBE/ETT_CUBE_ARRAY all need an ArraySize-covering view, not a plain 2D one.
+			static bool IsArrayLikeType(E_TEXTURE_TYPE type)
+			{
+				return type == ETT_2D_ARRAY || type == ETT_CUBE || type == ETT_CUBE_ARRAY;
+			}
 			bool createResource(bool asRenderTarget);
 			bool createShaderResourceView();
 			bool createRenderTargetView();

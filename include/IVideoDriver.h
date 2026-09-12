@@ -565,9 +565,11 @@ namespace irr
 			virtual ITexture* addRenderTargetTexture(const core::dimension2d<u32>& size,
 				const io::path& name = "rt", const ECOLOR_FORMAT format = ECF_UNKNOWN) = 0;
 
+			//! \param arraySlices Number of array slices; ETT_CUBE requires exactly 6.
+			//! \param type ETT_2D/ETT_2D_ARRAY/ETT_CUBE/ETT_CUBE_ARRAY; selects how the RTT is viewed.
 			virtual ITexture* addRenderTargetTexture(const core::dimension2d<u32>& size,
 				const io::path& name, const ECOLOR_FORMAT format,
-				u32 sampleCount, u32 sampleQuality, u32 arraySlices) {
+				u32 sampleCount, u32 sampleQuality, u32 arraySlices, E_TEXTURE_TYPE type = ETT_2D) {
 				return nullptr;
 			};
 

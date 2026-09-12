@@ -22,7 +22,7 @@ namespace irr
 		//! rendertarget constructor
 		CD3D11Texture::CD3D11Texture(CD3D11Driver* driver, const core::dimension2d<u32>& size,
 			const io::path& name, const ECOLOR_FORMAT format, u32 arraySlices,
-			u32 sampleCount, u32 sampleQuality, bool unorderedAccess)
+			u32 sampleCount, u32 sampleQuality, bool unorderedAccess, E_TEXTURE_TYPE type)
 			: ITexture(name), Texture(0), TextureBuffer(0),
 			Device(0), Context(0), Driver(driver),
 			RTView(0), SRView(0), UAView(0),
@@ -37,6 +37,12 @@ namespace irr
 			setDebugName("CD3D11Texture");
 #endif
 			TextureType = arraySlices > 1 ? ETT_2D_ARRAY : ETT_2D;
+			if (type == ETT_CUBE && arraySlices == 6)
+				TextureType = ETT_CUBE;
+			else if (type == ETT_CUBE_ARRAY && arraySlices % 6 == 0 && arraySlices > 0)
+				TextureType = ETT_CUBE_ARRAY;
+			else if (type == ETT_CUBE || type == ETT_CUBE_ARRAY)
+				os::Printer::log("ETT_CUBE(_ARRAY) needs arraySlices a multiple of 6, falling back to ETT_2D_ARRAY", ELL_WARNING);
 			DriverType = EDT_DIRECT3D11;
 			OriginalSize = size;
 			Size = size;
@@ -612,10 +618,9 @@ namespace irr
 				MipMaps = 0;
 			}
 
-			// If array size == 6, force cube texture
-			if (desc.ArraySize == 6)
+			if (TextureType == ETT_CUBE || TextureType == ETT_CUBE_ARRAY)
 			{
-				desc.MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE;
+				desc.MiscFlags |= D3D11_RESOURCE_MISC_TEXTURECUBE;
 			}
 
 			// If multisampled, mip levels shall be 1
@@ -1294,6 +1299,20 @@ namespace irr
 				else if (SampleCount > 1)	// only multisampled
 				{
 					srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DMS;
+				}
+				else if (TextureType == ETT_CUBE)
+				{
+					srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBE;
+					srvDesc.TextureCube.MipLevels = NumberOfMipLevels;
+					srvDesc.TextureCube.MostDetailedMip = 0;
+				}
+				else if (TextureType == ETT_CUBE_ARRAY)
+				{
+					srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBEARRAY;
+					srvDesc.TextureCubeArray.NumCubes = NumberOfArraySlices / 6;
+					srvDesc.TextureCubeArray.First2DArrayFace = 0;
+					srvDesc.TextureCubeArray.MipLevels = NumberOfMipLevels;
+					srvDesc.TextureCubeArray.MostDetailedMip = 0;
 				}
 				else if (NumberOfArraySlices > 1)	// only array
 				{

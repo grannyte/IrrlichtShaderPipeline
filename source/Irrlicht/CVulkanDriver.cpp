@@ -5234,8 +5234,9 @@ namespace irr
 
 		ITexture* CVulkanDriver::addRenderTargetTexture(const core::dimension2d<u32>& size,
 			const io::path& name, const ECOLOR_FORMAT format, u32 sampleCount, u32 sampleQuality,
-			u32 arraySlices)
+			u32 arraySlices, E_TEXTURE_TYPE type)
 		{
+			// type (ETT_CUBE/ETT_CUBE_ARRAY) is not yet honoured on this backend -- always ETT_2D(_ARRAY).
 			const ECOLOR_FORMAT actual = (format == ECF_UNKNOWN) ? ECF_A8R8G8B8 : format;
 
 			// The same two rules as CD3D12Driver::addRenderTargetTexture(): an array is never

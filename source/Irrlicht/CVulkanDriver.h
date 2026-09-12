@@ -239,7 +239,8 @@ namespace irr
 			//! this backend (no resolve pass): it is logged and a single-sample target is created.
 			virtual ITexture* addRenderTargetTexture(const core::dimension2d<u32>& size,
 				const io::path& name, const ECOLOR_FORMAT format,
-				u32 sampleCount, u32 sampleQuality, u32 arraySlices) _IRR_OVERRIDE_;
+				u32 sampleCount, u32 sampleQuality, u32 arraySlices,
+				E_TEXTURE_TYPE type = ETT_2D) _IRR_OVERRIDE_;
 
 			//! Binds one slice of a render-target array as the current colour target.
 			virtual bool setRenderTargetSlice(video::ITexture* texture, u32 arraySlice,

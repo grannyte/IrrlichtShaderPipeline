@@ -30,7 +30,8 @@ namespace irr
 			//! rendertarget constructor
 			CD3D11Texture(CD3D11Driver* driver, const core::dimension2d<u32>& size, const io::path& name,
 				const ECOLOR_FORMAT format = ECF_UNKNOWN, u32 arraySlices = 1,
-				u32 sampleCount = 1, u32 sampleQuality = 0, bool unorderedAccess = false);
+				u32 sampleCount = 1, u32 sampleQuality = 0, bool unorderedAccess = false,
+				E_TEXTURE_TYPE type = ETT_2D);
 			//! Array constructor
 			CD3D11Texture(const core::array<ITexture*>* surfaces, CD3D11Driver* driver,
 				u32 flags, const io::path& name, E_TEXTURE_TYPE Type, u32 arraySlices, void* mipmapData);

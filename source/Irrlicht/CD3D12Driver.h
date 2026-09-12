@@ -669,7 +669,8 @@ namespace irr
 			//! exactly.
 			virtual ITexture* addRenderTargetTexture(const core::dimension2d<u32>& size,
 				const io::path& name, const ECOLOR_FORMAT format,
-				u32 sampleCount, u32 sampleQuality, u32 arraySlices) _IRR_OVERRIDE_;
+				u32 sampleCount, u32 sampleQuality, u32 arraySlices,
+				E_TEXTURE_TYPE type = ETT_2D) _IRR_OVERRIDE_;
 
 			//! 2D array / cube / cube array / 3D texture, built from N already-loaded 2D images (one
 			//! per slice/face/Z-layer). Complements getTexture(files[], Type) (inherited from

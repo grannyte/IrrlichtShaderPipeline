@@ -1574,6 +1574,8 @@ namespace irr
 			CurrentDepthBuffer = 0;
 			MrtBlendActive = false;
 			Context->OMSetRenderTargets(1, &view, NULL);
+			// Shaders sizing in pixels read getCurrentRenderTargetSize(); D3D12 already sets it here.
+			CurrentRendertargetSize = texture->getSize();
 
 			if (clearTarget)
 			{
@@ -3121,9 +3123,15 @@ namespace irr
 
 		ITexture* CD3D11Driver::addRenderTargetTexture(const core::dimension2d<u32>& size,
 			const io::path& name, const ECOLOR_FORMAT format,
-			u32 sampleCount, u32 sampleQuality, u32 arraySlices)
+			u32 sampleCount, u32 sampleQuality, u32 arraySlices, E_TEXTURE_TYPE type)
 		{
-			ITexture* tex = new CD3D11Texture(this, size, name, format, arraySlices, sampleCount, sampleQuality);
+			if ((type == ETT_CUBE || type == ETT_CUBE_ARRAY) && sampleCount > 1)
+			{
+				os::Printer::log("Multisampled cube RTTs are not supported, falling back to 1 sample", ELL_WARNING);
+				sampleCount = 1;
+				sampleQuality = 0;
+			}
+			ITexture* tex = new CD3D11Texture(this, size, name, format, arraySlices, sampleCount, sampleQuality, false, type);
 			if (tex)
 			{
 				addTexture(tex);

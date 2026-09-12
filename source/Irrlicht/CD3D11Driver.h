@@ -494,7 +494,8 @@ namespace irr
 
 			virtual ITexture* addRenderTargetTexture(const core::dimension2d<u32>& size,
 				const io::path& name, const ECOLOR_FORMAT format = ECF_UNKNOWN,
-				u32 sampleCount = 1, u32 sampleQuality = 0, u32 arraySlices = 1);
+				u32 sampleCount = 1, u32 sampleQuality = 0, u32 arraySlices = 1,
+				E_TEXTURE_TYPE type = ETT_2D) _IRR_OVERRIDE_;
 
 			//! Creates a texture a compute shader can write to via dispatchComputeShaderToTexture.
 			virtual ITexture* addUAVTexture(const core::dimension2d<u32>& size,

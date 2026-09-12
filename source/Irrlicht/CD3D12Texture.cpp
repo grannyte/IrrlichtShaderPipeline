@@ -313,7 +313,7 @@ namespace irr
 
 		CD3D12Texture::CD3D12Texture(CD3D12Driver* driver, const core::dimension2d<u32>& size,
 			const io::path& name, ECOLOR_FORMAT format, bool renderTarget,
-			u32 sampleCount, u32 sampleQuality, u32 arraySlices, bool unorderedAccess)
+			u32 sampleCount, u32 sampleQuality, u32 arraySlices, bool unorderedAccess, E_TEXTURE_TYPE type)
 			: ITexture(name), Driver(driver)
 		{
 			if (unorderedAccess && renderTarget)
@@ -325,6 +325,12 @@ namespace irr
 			// rejected upstream by CD3D12Driver::addRenderTargetTexture().
 			NumberOfArraySlices = (renderTarget && arraySlices > 1) ? arraySlices : 1;
 			TextureType = (NumberOfArraySlices > 1) ? ETT_2D_ARRAY : ETT_2D;
+			if (renderTarget && type == ETT_CUBE && NumberOfArraySlices == 6)
+				TextureType = ETT_CUBE;
+			else if (renderTarget && type == ETT_CUBE_ARRAY && NumberOfArraySlices % 6 == 0 && NumberOfArraySlices > 0)
+				TextureType = ETT_CUBE_ARRAY;
+			else if (renderTarget && (type == ETT_CUBE || type == ETT_CUBE_ARRAY))
+				os::Printer::log("CD3D12Texture: ETT_CUBE(_ARRAY) necessite exactement 6 images (ou un multiple), repli sur ETT_2D_ARRAY", ELL_WARNING);
 			if (arraySlices > 1 && !renderTarget)
 				os::Printer::log("CD3D12Texture: arraySlices > 1 ignore (texture non render-target)", ELL_WARNING);
 			Source = ETS_UNKNOWN;
@@ -584,7 +590,7 @@ namespace irr
 
 			D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 			uavDesc.Format = DxgiFormat;
-			if (TextureType == ETT_2D_ARRAY)
+			if (IsArrayLikeType(TextureType))
 			{
 				uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
 				uavDesc.Texture2DArray.MipSlice = 0;
@@ -618,7 +624,7 @@ namespace irr
 			D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
 			dsvDesc.Format = DxgiFormat;
 			dsvDesc.Flags = D3D12_DSV_FLAG_NONE;
-			if (TextureType == ETT_2D_ARRAY)
+			if (IsArrayLikeType(TextureType))
 			{
 				dsvDesc.ViewDimension = (SampleCount > 1) ?
 					D3D12_DSV_DIMENSION_TEXTURE2DMSARRAY : D3D12_DSV_DIMENSION_TEXTURE2DARRAY;
@@ -649,7 +655,7 @@ namespace irr
 				return false;
 			}
 
-			if (TextureType == ETT_2D_ARRAY)
+			if (IsArrayLikeType(TextureType))
 			{
 				// A view covering all NumberOfArraySlices slices at once, so a single draw
 				// with a geometry shader writing SV_RenderTargetArrayIndex can route each

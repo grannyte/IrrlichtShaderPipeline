@@ -86,9 +86,9 @@ namespace irr
 			}
 			virtual ITexture* addRenderTargetTexture(const core::dimension2d<u32>& size,
 				const io::path& name, const ECOLOR_FORMAT format,
-				u32 sampleCount, u32 sampleQuality, u32 arraySlices) _IRR_OVERRIDE_
+				u32 sampleCount, u32 sampleQuality, u32 arraySlices, E_TEXTURE_TYPE type = ETT_2D) _IRR_OVERRIDE_
 			{
-				return ImmediateDriver->addRenderTargetTexture(size, name, format, sampleCount, sampleQuality, arraySlices);
+				return ImmediateDriver->addRenderTargetTexture(size, name, format, sampleCount, sampleQuality, arraySlices, type);
 			}
 			virtual ITexture* addUAVTexture(const core::dimension2d<u32>& size, const io::path& name,
 				const ECOLOR_FORMAT format = ECF_UNKNOWN) _IRR_OVERRIDE_

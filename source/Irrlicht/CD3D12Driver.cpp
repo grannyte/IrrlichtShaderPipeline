@@ -6395,7 +6395,7 @@ namespace irr
 
 		ITexture* CD3D12Driver::addRenderTargetTexture(const core::dimension2d<u32>& size,
 			const io::path& name, const ECOLOR_FORMAT format,
-			u32 sampleCount, u32 sampleQuality, u32 arraySlices)
+			u32 sampleCount, u32 sampleQuality, u32 arraySlices, E_TEXTURE_TYPE type)
 		{
 			// MSAA+tableau reste hors scope (meme choix que CD3D11Texture, qui ne
 			// supporte pas non plus cette combinaison) -- repli sur une seule tranche plutot que
@@ -6408,7 +6408,7 @@ namespace irr
 				arraySlices = 1;
 			}
 
-			CD3D12Texture* texture = new CD3D12Texture(ResourceOwner, size, name, format, true, sampleCount, sampleQuality, arraySlices);
+			CD3D12Texture* texture = new CD3D12Texture(ResourceOwner, size, name, format, true, sampleCount, sampleQuality, arraySlices, false, type);
 			if (!texture->hasDeviceResource())
 			{
 				os::Printer::log("CD3D12Driver::addRenderTargetTexture: creation de la ressource D3D12 impossible", name, ELL_ERROR);
