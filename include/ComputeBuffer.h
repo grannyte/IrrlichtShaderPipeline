@@ -26,17 +26,35 @@ namespace irr
 			virtual void clear() override
 			{
 				Data.clear();
+				HostReleasedCount = 0;
 			}
 
 			virtual void set_used(u32 used) override
 			{
 				Data.resize(used);
+				HostReleasedCount = 0;
 			}
 
 			virtual void reallocate(u32 size) override
 			{
 				Data.resize(size);
 				Data.shrink_to_fit();
+				HostReleasedCount = 0;
+			}
+
+			// Frees the host copy of a GPU-written buffer; the structure count stays so binds keep
+			// working. Only valid once the hardware buffer exists; downloadFromGPU restores Data.
+			void releaseHostCopy()
+			{
+				if (!HardwareBuffer || Data.empty())
+					return;
+				HostReleasedCount = (u32)Data.size();
+				std::vector<T>().swap(Data);
+			}
+
+			bool isHostCopyReleased() const
+			{
+				return HostReleasedCount != 0;
 			}
 
 			virtual u32 allocated_size() const override
@@ -67,7 +85,7 @@ namespace irr
 
 			u32 getStructureCount() const override
 			{
-				return Data.size();
+				return Data.empty() ? HostReleasedCount : (u32)Data.size();
 			}
 
 			u32 getStructureStride() const override
@@ -77,7 +95,7 @@ namespace irr
 
 			u32 getBufferSize() const override
 			{
-				return sizeof(T) * Data.size();
+				return sizeof(T) * getStructureCount();
 			}
 
 			void* getBufferPointer() const override
@@ -98,6 +116,7 @@ namespace irr
 					}
 					if (Data.size() != HardwareBuffer->size() / sizeof(T))
 						Data.resize(HardwareBuffer->size() / sizeof(T));
+					HostReleasedCount = 0;
 					memcpy(Data.data(), locked, HardwareBuffer->size());
 					HardwareBuffer->unlock();
 				}
@@ -105,6 +124,7 @@ namespace irr
 
 		protected:
 			std::vector<T> Data;
+			u32 HostReleasedCount = 0;
 		};
 	}
 }

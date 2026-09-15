@@ -4453,6 +4453,7 @@ s32 COpenGLDriver::addMaterialRenderer(IMaterialRenderer* renderer, const char* 
 
 	if (id != -1)
 	{
+		concurrency::reader_writer_lock::scoped_lock_read guard(vertexDescriptorLock);
 		for(u32 i = 0; i < VertexDescriptor.size(); ++i)
 		{
 			((COpenGLVertexDescriptor*)VertexDescriptor[i])->addLocationLayer();
@@ -5189,6 +5190,7 @@ void COpenGLDriver::removeDepthTexture(ITexture* texture)
 
 IVertexDescriptor* COpenGLDriver::addVertexDescriptor(const core::stringc& pName)
 {
+	concurrency::reader_writer_lock::scoped_lock guard(vertexDescriptorLock);
 	for(u32 i = 0; i < VertexDescriptor.size(); ++i)
 		if(pName == VertexDescriptor[i]->getName())
 			return VertexDescriptor[i];
@@ -5206,13 +5208,16 @@ void COpenGLDriver::setVertexDescriptor(IVertexDescriptor* vertexDescriptor)
 	{
 		u32 ID = 0;
 
-		for(u32 i = 0; i < VertexDescriptor.size(); ++i)
 		{
-			if(vertexDescriptor == VertexDescriptor[i])
+			concurrency::reader_writer_lock::scoped_lock_read guard(vertexDescriptorLock);
+			for(u32 i = 0; i < VertexDescriptor.size(); ++i)
 			{
-				ID = i;
-				LastVertexDescriptor = VertexDescriptor[ID];
-				break;
+				if(vertexDescriptor == VertexDescriptor[i])
+				{
+					ID = i;
+					LastVertexDescriptor = VertexDescriptor[ID];
+					break;
+				}
 			}
 		}
 

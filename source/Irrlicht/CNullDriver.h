@@ -914,6 +914,8 @@ namespace irr
 			bool AllowZWriteOnTransparent;
 
 			irr::core::array<CVertexDescriptor*> VertexDescriptor;
+			// Readers (buffer creation, deferred recording) run on PPL workers; adds are rare. Cooperative for the same reason as textureArrayLock.
+			mutable concurrency::reader_writer_lock vertexDescriptorLock;
 
 			bool FeatureEnabled[video::EVDF_COUNT];
 

@@ -2384,6 +2384,7 @@ void CD3D9Driver::drawPixel(u32 x, u32 y, const SColor & color)
 
 IVertexDescriptor* CD3D9Driver::addVertexDescriptor(const core::stringc& pName)
 {
+	concurrency::reader_writer_lock::scoped_lock guard(vertexDescriptorLock);
 	for(u32 i = 0; i < VertexDescriptor.size(); ++i)
 		if(pName == VertexDescriptor[i]->getName())
 			return VertexDescriptor[i];
@@ -2399,12 +2400,15 @@ void CD3D9Driver::setVertexDescriptor(IVertexDescriptor* vertexDescriptor)
 {
 	if (LastVertexDescriptor != vertexDescriptor)
 	{
-		for (u32 i = 0; i < VertexDescriptor.size(); ++i)
 		{
-			if (vertexDescriptor == VertexDescriptor[i])
+			concurrency::reader_writer_lock::scoped_lock_read guard(vertexDescriptorLock);
+			for (u32 i = 0; i < VertexDescriptor.size(); ++i)
 			{
-				LastVertexDescriptor = VertexDescriptor[i];
-				break;
+				if (vertexDescriptor == VertexDescriptor[i])
+				{
+					LastVertexDescriptor = VertexDescriptor[i];
+					break;
+				}
 			}
 		}
 

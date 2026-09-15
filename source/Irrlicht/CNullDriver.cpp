@@ -227,6 +227,7 @@ namespace irr
 
 		void CNullDriver::deleteVertexDescriptors()
 		{
+			concurrency::reader_writer_lock::scoped_lock guard(vertexDescriptorLock);
 			const u32 size = VertexDescriptor.size();
 
 			for (u32 i = 0; i < size; ++i)
@@ -1832,6 +1833,7 @@ namespace irr
 
 		IVertexDescriptor* CNullDriver::addVertexDescriptor(const core::stringc& pName)
 		{
+			concurrency::reader_writer_lock::scoped_lock guard(vertexDescriptorLock);
 			for (u32 i = 0; i < VertexDescriptor.size(); ++i)
 				if (pName == VertexDescriptor[i]->getName())
 					return VertexDescriptor[i];
@@ -1844,6 +1846,7 @@ namespace irr
 
 		IVertexDescriptor* CNullDriver::getVertexDescriptor(u32 id) const
 		{
+			concurrency::reader_writer_lock::scoped_lock_read guard(vertexDescriptorLock);
 			if (id < VertexDescriptor.size())
 				return VertexDescriptor[id];
 
@@ -1852,6 +1855,7 @@ namespace irr
 
 		IVertexDescriptor* CNullDriver::getVertexDescriptor(const core::stringc& pName) const
 		{
+			concurrency::reader_writer_lock::scoped_lock_read guard(vertexDescriptorLock);
 			for (u32 i = 0; i < VertexDescriptor.size(); ++i)
 				if (pName == VertexDescriptor[i]->getName())
 					return VertexDescriptor[i];
@@ -1861,6 +1865,7 @@ namespace irr
 
 		u32 CNullDriver::getVertexDescriptorCount() const
 		{
+			concurrency::reader_writer_lock::scoped_lock_read guard(vertexDescriptorLock);
 			return VertexDescriptor.size();
 		}
 
