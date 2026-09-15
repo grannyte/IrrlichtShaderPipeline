@@ -267,6 +267,18 @@ namespace irr
 			return true;
 		}
 
+		//! Stride a staging copy of this buffer must be created with.
+		u32 CD3D11HardwareBuffer::stagingStride() const
+		{
+			// CopyResource is a silent no-op outside the debug layer when only one side is
+			// structured, so a staging copy has to mirror the source's own layout.
+			if (!Buffer)
+				return 0;
+			D3D11_BUFFER_DESC desc;
+			Buffer->GetDesc(&desc);
+			return (desc.MiscFlags & D3D11_RESOURCE_MISC_BUFFER_STRUCTURED) ? desc.StructureByteStride : 0;
+		}
+
 		//! Lock function.
 		void* CD3D11HardwareBuffer::lock(bool readOnly)
 		{
@@ -293,7 +305,7 @@ namespace irr
 				// Reused across locks: creating a staging buffer per readback costs a driver
 				// allocation every frame. Resize/mapping changes null it above, so a survivor fits.
 				if (!TempStagingBuffer)
-					TempStagingBuffer = std::make_shared<CD3D11HardwareBuffer>(Driver, EHBT_SYSTEM, scene::EHM_STAGING, Size, 0, Stride);
+					TempStagingBuffer = std::make_shared<CD3D11HardwareBuffer>(Driver, EHBT_SYSTEM, scene::EHM_STAGING, Size, 0, stagingStride());
 				TempStagingBuffer->copyFromBuffer(shared_from_this(), 0, 0, Size);
 				StagingLocked = true;
 				return TempStagingBuffer->lock(readOnly);
@@ -329,7 +341,7 @@ namespace irr
 
 			// Sized to the live buffer: a resize since the last copy makes the old staging copy a lie.
 			if (!AsyncStaging[slot] || AsyncStaging[slot]->size() != Size || !AsyncStaging[slot]->getBuffer())
-				AsyncStaging[slot] = std::make_shared<CD3D11HardwareBuffer>(Driver, EHBT_SYSTEM, scene::EHM_STAGING, Size, 0, Stride);
+				AsyncStaging[slot] = std::make_shared<CD3D11HardwareBuffer>(Driver, EHBT_SYSTEM, scene::EHM_STAGING, Size, 0, stagingStride());
 			if (!AsyncStaging[slot]->getBuffer())
 				return false;
 
@@ -560,6 +572,12 @@ namespace irr
 				break;
 			case EHBT_SYSTEM:
 				desc.BindFlags = 0;
+				// Non-zero stride here means a staging copy of a structured source - see stagingStride().
+				if (Stride)
+				{
+					desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+					desc.StructureByteStride = Stride;
+				}
 				break;
 			default:
 				desc.BindFlags = 0;

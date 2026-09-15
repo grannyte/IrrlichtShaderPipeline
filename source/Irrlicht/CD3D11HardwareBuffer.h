@@ -70,6 +70,9 @@ public:
 private:
 	bool createInternalBuffer(const void* initialData);
 
+	//! Stride a staging copy of this buffer must be created with; 0 unless the source is structured.
+	u32 stagingStride() const;
+
 	ID3D11Device* Device;
 	ID3D11DeviceContext* Context;
 	ID3D11Buffer* Buffer;
