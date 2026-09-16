@@ -20,6 +20,8 @@
 #include "CD3D11ParallaxMapRenderer.h"
 #include "CD3D11VertexDescriptor.h"
 #include <iostream>
+#include <vector>
+#include <d3d11sdklayers.h>
 
 inline void unpack_texureBlendFunc(irr::video::E_BLEND_FACTOR& srcFact, irr::video::E_BLEND_FACTOR& dstFact,
 	irr::video::E_MODULATE_FUNC& modulo, irr::u32& alphaSource, const irr::f32 param)
@@ -323,6 +325,14 @@ namespace irr
 
 #ifdef _DEBUG
 				deviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
+#else
+				// Release opt-in: an invalid call is a silent no-op without the validation layer.
+				{
+					size_t envLen = 0;
+					char envVal[8] = { 0 };
+					if (getenv_s(&envLen, envVal, sizeof(envVal), "IRR_D3D11_DEBUG") == 0 && envLen > 1 && envVal[0] != '0')
+						deviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
+				}
 #endif
 
 				if (!Params.DriverMultithreaded)
@@ -380,6 +390,13 @@ namespace irr
 				const u32 featureLevelSize = sizeof(RequestedLevels) / sizeof(RequestedLevels[0]);
 
 				hr = CreateDeviceFunc(Adapter, DriverType, NULL, deviceFlags, RequestedLevels, featureLevelSize, D3D11_SDK_VERSION, &Device, &FeatureLevel, &Context);
+				if (FAILED(hr) && (deviceFlags & D3D11_CREATE_DEVICE_DEBUG))
+				{
+					// SDK layers missing: retry unvalidated rather than dropping to WARP.
+					os::Printer::log("D3D11 debug layer unavailable, creating device without it.", ELL_WARNING);
+					deviceFlags &= ~D3D11_CREATE_DEVICE_DEBUG;
+					hr = CreateDeviceFunc(Adapter, DriverType, NULL, deviceFlags, RequestedLevels, featureLevelSize, D3D11_SDK_VERSION, &Device, &FeatureLevel, &Context);
+				}
 				if (FAILED(hr))
 				{
 					// Try creating warp device
@@ -785,6 +802,34 @@ namespace irr
 			return true;
 		}
 
+		//! Copies validation-layer output into the log; a no-op unless the debug layer is on.
+		static void drainD3D11DebugMessages(ID3D11Device* device)
+		{
+			if (!device)
+				return;
+			ID3D11InfoQueue* queue = NULL;
+			if (FAILED(device->QueryInterface(__uuidof(ID3D11InfoQueue), reinterpret_cast<void**>(&queue))) || !queue)
+				return;
+			const UINT64 count = queue->GetNumStoredMessages();
+			for (UINT64 i = 0; i < count; ++i)
+			{
+				SIZE_T len = 0;
+				if (FAILED(queue->GetMessage(i, NULL, &len)) || !len)
+					continue;
+				std::vector<char> storage(len);
+				D3D11_MESSAGE* msg = reinterpret_cast<D3D11_MESSAGE*>(storage.data());
+				if (SUCCEEDED(queue->GetMessage(i, msg, &len)) && msg->pDescription)
+				{
+					core::stringc line = "D3D11 validation: ";
+					line += msg->pDescription;
+					os::Printer::log(line.c_str(),
+						msg->Severity <= D3D11_MESSAGE_SEVERITY_ERROR ? ELL_ERROR : ELL_WARNING);
+				}
+			}
+			queue->ClearStoredMessages();
+			queue->Release();
+		}
+
 		//! applications must call this method after performing any rendering. returns false if failed.
 		bool CD3D11Driver::endScene()
 		{
@@ -795,6 +840,7 @@ namespace irr
 			hr = SwapChain->Present(Params.Vsync ? 1 : 0, 0);
 
 			revertTempHWBuffers();
+			drainD3D11DebugMessages(Device);
 			if (FAILED(hr))
 			{
 				logFormatError(hr, "Could not present frame to screen");
