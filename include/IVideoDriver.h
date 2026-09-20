@@ -352,6 +352,9 @@ namespace irr
 		//! Forward declaration of the deferred context interface
 		class IDeferredContext;
 
+		//! Name of the built-in whole-frame GPU timer, always present once EVDF_GPU_TIMER is on.
+		const c8* const GPU_TIMER_WHOLE_FRAME = "WholeFrame";
+
 		//! Interface to driver which is able to perform 2d and 3d graphics functions.
 		/** This interface is one of the most important interfaces of
 		the Irrlicht Engine: All rendering and texture manipulation is done with
@@ -654,6 +657,36 @@ namespace irr
 			The value is a safe approximation, i.e. can be larger than the
 			actual value of pixels. */
 			virtual u32 getOcclusionQueryResult(std::shared_ptr<scene::ISceneNode> node) const = 0;
+
+			//! Create a named GPU timer. EVDF_GPU_TIMER.
+			virtual void addGpuTimer(const core::stringc& name) = 0;
+
+			//! Remove a GPU timer.
+			virtual void removeGpuTimer(const core::stringc& name) = 0;
+
+			//! Remove all GPU timers.
+			virtual void removeAllGpuTimers() = 0;
+
+			//! Start timing name. Must be matched by endGpuTimer() the same frame.
+			virtual void beginGpuTimer(const core::stringc& name) = 0;
+
+			//! Stop timing name.
+			virtual void endGpuTimer(const core::stringc& name) = 0;
+
+			//! Update timer. Retrieves its result from the GPU.
+			/** If the query shall not block, set the flag to false.
+			Update might not occur in this case, though */
+			virtual void updateGpuTimer(const core::stringc& name, bool block = true) = 0;
+
+			//! Update all GPU timers. Retrieves results from GPU.
+			/** If the query shall not block, set the flag to false.
+			Update might not occur in this case, though */
+			virtual void updateAllGpuTimers(bool block = true) = 0;
+
+			//! Return query result, in milliseconds of GPU time.
+			/** Value is for the most recently completed frame, lagging the way
+			getOcclusionQueryResult() does. */
+			virtual f32 getGpuTimerResult(const core::stringc& name) const = 0;
 
 			//! Sets a boolean alpha channel on the texture based on a color key.
 			/** This makes the texture fully transparent at the texels where

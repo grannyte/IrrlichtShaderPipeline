@@ -349,6 +349,7 @@ namespace irr
 			// non-blocking: a frame-old occlusion result is acceptable, and blocking here
 			// stalls the CPU on the GPU finishing every query issued last frame.
 			updateAllOcclusionQueries(false);
+			updateAllGpuTimers(false);
 			return true;
 		}
 
@@ -2044,6 +2045,57 @@ namespace irr
 		u32 CNullDriver::getOcclusionQueryResult(std::shared_ptr<scene::ISceneNode> node) const
 		{
 			return ~0;
+		}
+
+		//! Create a named GPU timer.
+		void CNullDriver::addGpuTimer(const core::stringc& name)
+		{
+			if (GpuTimers.linear_search(SGpuTimer(name)) == -1)
+				GpuTimers.push_back(SGpuTimer(name));
+		}
+
+		//! Remove a GPU timer.
+		void CNullDriver::removeGpuTimer(const core::stringc& name)
+		{
+			const s32 index = GpuTimers.linear_search(SGpuTimer(name));
+			if (index != -1)
+				GpuTimers.erase(index);
+		}
+
+		//! Remove all GPU timers.
+		void CNullDriver::removeAllGpuTimers()
+		{
+			for (s32 i = GpuTimers.size() - 1; i >= 0; --i)
+				removeGpuTimer(GpuTimers[i].Name);
+		}
+
+		//! Start timing name. No-op here; real drivers issue the GPU query.
+		void CNullDriver::beginGpuTimer(const core::stringc& name)
+		{
+		}
+
+		//! Stop timing name. No-op here; real drivers issue the GPU query.
+		void CNullDriver::endGpuTimer(const core::stringc& name)
+		{
+		}
+
+		//! Update timer. No-op here; real drivers poll the GPU query.
+		void CNullDriver::updateGpuTimer(const core::stringc& name, bool block)
+		{
+		}
+
+		//! Update all GPU timers. No-op here; real drivers poll the GPU queries.
+		void CNullDriver::updateAllGpuTimers(bool block)
+		{
+			for (u32 i = 0; i < GpuTimers.size(); ++i)
+				updateGpuTimer(GpuTimers[i].Name, block);
+		}
+
+		//! Return timer result, in milliseconds of GPU time. Always 0 here.
+		f32 CNullDriver::getGpuTimerResult(const core::stringc& name) const
+		{
+			const s32 index = GpuTimers.linear_search(SGpuTimer(name));
+			return index != -1 ? GpuTimers[index].Result : 0.f;
 		}
 
 		//! Only used by the internal engine. Used to notify the driver that

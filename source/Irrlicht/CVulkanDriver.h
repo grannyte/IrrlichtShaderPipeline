@@ -33,6 +33,7 @@
 #include "CVulkanRenderTarget.h"
 #include "CVulkanCompute.h"
 #include "CVulkanOcclusionQuery.h"
+#include "CVulkanGpuTimer.h"
 #include "CVulkanSamplerCache.h"
 #include "IDeferredContext.h"
 #include "SIrrCreationParameters.h"
@@ -288,6 +289,18 @@ namespace irr
 			virtual void updateOcclusionQuery(std::shared_ptr<irr::scene::ISceneNode> node, bool block = true) _IRR_OVERRIDE_;
 			virtual void updateAllOcclusionQueries(bool block = true) _IRR_OVERRIDE_;
 			virtual u32 getOcclusionQueryResult(std::shared_ptr<scene::ISceneNode> node) const _IRR_OVERRIDE_;
+
+			// --- IVideoDriver: GPU timers, one VK_QUERY_TYPE_TIMESTAMP pool shared by every named
+			// timer (see CVulkanGpuTimer). GPU_TIMER_WHOLE_FRAME is stamped by beginScene()/endScene()
+			// like the D3D11 driver's own whole-frame timer.
+			virtual void addGpuTimer(const core::stringc& name) _IRR_OVERRIDE_;
+			virtual void removeGpuTimer(const core::stringc& name) _IRR_OVERRIDE_;
+			virtual void removeAllGpuTimers() _IRR_OVERRIDE_;
+			virtual void beginGpuTimer(const core::stringc& name) _IRR_OVERRIDE_;
+			virtual void endGpuTimer(const core::stringc& name) _IRR_OVERRIDE_;
+			virtual void updateGpuTimer(const core::stringc& name, bool block = true) _IRR_OVERRIDE_;
+			virtual void updateAllGpuTimers(bool block = true) _IRR_OVERRIDE_;
+			virtual f32 getGpuTimerResult(const core::stringc& name) const _IRR_OVERRIDE_;
 
 			// --- IVideoDriver: compute. Every dispatch is synchronous and records on its own
 			// command buffer (beginUpload()/endUploadAndWait()), exactly like the D3D12 backend: the
@@ -824,6 +837,9 @@ namespace irr
 
 			//! Occlusion query pool and per-node records; null until initDriver().
 			CVulkanOcclusionQuery* Occlusion = nullptr;
+			//! GPU timer pool and per-name records, one range per frame-in-flight slot (CurrentFrameIndex);
+			//! null until initDriver().
+			CVulkanGpuTimer* GpuTimer = nullptr;
 			//! Bumped once per endScene(); the marker a query is stamped with, so a readback can tell
 			//! a submitted frame from the one still being recorded (waiting on that one would hang).
 			u64 FrameCounter = 1;

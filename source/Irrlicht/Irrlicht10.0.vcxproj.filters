@@ -1427,6 +1427,9 @@
     <ClInclude Include="CVulkanOcclusionQuery.h">
       <Filter>Irrlicht\video\Vulkan</Filter>
     </ClInclude>
+    <ClInclude Include="CVulkanGpuTimer.h">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClInclude>
     <ClInclude Include="CVulkanRenderTarget.h">
       <Filter>Irrlicht\video\Vulkan</Filter>
     </ClInclude>
@@ -2504,6 +2507,9 @@
       <Filter>Irrlicht\video\Vulkan</Filter>
     </ClCompile>
     <ClCompile Include="CVulkanOcclusionQuery.cpp">
+      <Filter>Irrlicht\video\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="CVulkanGpuTimer.cpp">
       <Filter>Irrlicht\video\Vulkan</Filter>
     </ClCompile>
     <ClCompile Include="CVulkanRenderTarget.cpp">

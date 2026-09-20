@@ -215,6 +215,9 @@ namespace video
 		//! not the software recorder.
 		EVDF_NATIVE_DEFERRED_CONTEXT,
 
+		//! addGpuTimer()/beginGpuTimer()/endGpuTimer()/getGpuTimerResult() on IVideoDriver.
+		EVDF_GPU_TIMER,
+
 		//! Only used for counting the elements of this enum
 		EVDF_COUNT
 	};

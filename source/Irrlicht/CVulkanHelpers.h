@@ -254,6 +254,9 @@ namespace irr
 			VkPhysicalDeviceProperties DeviceProperties = {};
 			VkQueue GraphicsQueue = VK_NULL_HANDLE;
 			u32 GraphicsQueueFamily = 0;
+			//! VkQueueFamilyProperties::timestampValidBits for GraphicsQueueFamily; 0 means the
+			//! queue cannot timestamp at all, gating EVDF_GPU_TIMER.
+			u32 GraphicsQueueTimestampValidBits = 0;
 			//! VK_KHR_dynamic_rendering (core in 1.3). When false the driver falls back to explicit
 			//! VkRenderPass/VkFramebuffer objects.
 			bool HasDynamicRendering = false;

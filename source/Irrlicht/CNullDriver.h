@@ -462,6 +462,30 @@ namespace irr
 			actual value of pixels. */
 			virtual u32 getOcclusionQueryResult(std::shared_ptr<scene::ISceneNode> node) const _IRR_OVERRIDE_;
 
+			//! Create a named GPU timer.
+			virtual void addGpuTimer(const core::stringc& name) _IRR_OVERRIDE_;
+
+			//! Remove a GPU timer.
+			virtual void removeGpuTimer(const core::stringc& name) _IRR_OVERRIDE_;
+
+			//! Remove all GPU timers.
+			virtual void removeAllGpuTimers() _IRR_OVERRIDE_;
+
+			//! Start timing name.
+			virtual void beginGpuTimer(const core::stringc& name) _IRR_OVERRIDE_;
+
+			//! Stop timing name.
+			virtual void endGpuTimer(const core::stringc& name) _IRR_OVERRIDE_;
+
+			//! Update timer, retrieving its result from the GPU.
+			virtual void updateGpuTimer(const core::stringc& name, bool block = true) _IRR_OVERRIDE_;
+
+			//! Update all GPU timers, retrieving results from GPU.
+			virtual void updateAllGpuTimers(bool block = true) _IRR_OVERRIDE_;
+
+			//! Return timer result, in milliseconds of GPU time.
+			virtual f32 getGpuTimerResult(const core::stringc& name) const _IRR_OVERRIDE_;
+
 			//! Only used by the engine internally.
 			/** Used to notify the driver that the window was resized. */
 			virtual void OnResize(const core::dimension2d<u32>& size) _IRR_OVERRIDE_;
@@ -886,6 +910,16 @@ namespace irr
 			};
 			mutable std::shared_mutex shaderArrayLock;
 			core::array<SOccQuery> OcclusionQueries;
+
+			struct SGpuTimer
+			{
+				SGpuTimer(const core::stringc& name) : Name(name), PID(0), Result(0.f) {}
+				core::stringc Name;
+				void* PID; // driver-owned opaque GPU resource; unused in CNullDriver
+				f32 Result;
+				bool operator==(const SGpuTimer& other) const { return other.Name == Name; }
+			};
+			core::array<SGpuTimer> GpuTimers;
 
 			core::array<video::IImageLoader*> SurfaceLoader;
 			core::array<video::IImageWriter*> SurfaceWriter;

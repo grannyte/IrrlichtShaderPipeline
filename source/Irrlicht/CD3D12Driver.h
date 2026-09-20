@@ -472,6 +472,17 @@ namespace irr
 			virtual void updateAllOcclusionQueries(bool block = true) _IRR_OVERRIDE_;
 			virtual u32 getOcclusionQueryResult(std::shared_ptr<scene::ISceneNode> node) const _IRR_OVERRIDE_;
 
+			// --- IVideoDriver: GPU timers ---
+			// D3D12_QUERY_TYPE_TIMESTAMP pairs, resolved per frame; see the GpuTimer* members below.
+			virtual void addGpuTimer(const core::stringc& name) _IRR_OVERRIDE_;
+			virtual void removeGpuTimer(const core::stringc& name) _IRR_OVERRIDE_;
+			virtual void removeAllGpuTimers() _IRR_OVERRIDE_;
+			virtual void beginGpuTimer(const core::stringc& name) _IRR_OVERRIDE_;
+			virtual void endGpuTimer(const core::stringc& name) _IRR_OVERRIDE_;
+			virtual void updateGpuTimer(const core::stringc& name, bool block = true) _IRR_OVERRIDE_;
+			virtual void updateAllGpuTimers(bool block = true) _IRR_OVERRIDE_;
+			virtual f32 getGpuTimerResult(const core::stringc& name) const _IRR_OVERRIDE_;
+
 			// --- IVideoDriver: screenshot capture ---
 			// Copies the back buffer that was actually presented on the last endScene() (see
 			// LastPresentedFrameIndex below, distinct from CurrentFrameIndex, which already points at
@@ -1931,6 +1942,30 @@ namespace irr
 			ComPtr<ID3D12Resource> OcclusionReadback;
 			void* OcclusionReadbackMapped = nullptr;
 			static const UINT OcclusionQueryCapacity = 256;
+
+			// --- GPU timers ---
+			// NativeFrameCount rings of GpuTimerCapacity begin/end pairs, one mapped READBACK
+			// buffer of the same layout. Direct queue only; a ring is read once its fence passes.
+			struct SD3D12GpuTimer
+			{
+				UINT Slot = 0;
+				bool BeginIssued[NativeFrameCount] = {};
+				bool EndIssued[NativeFrameCount] = {};
+			};
+			ComPtr<ID3D12QueryHeap> GpuTimerQueryHeap;
+			ComPtr<ID3D12Resource> GpuTimerReadback;
+			void* GpuTimerReadbackMapped = nullptr;
+			std::vector<UINT> FreeGpuTimerSlots;
+			UINT64 GpuTimerSlotFence[NativeFrameCount] = {}; // 0 = nothing resolvable in this ring
+			UINT64 GpuTimerFrequency = 0;                    // GetTimestampFrequency(), ticks per second
+			UINT GpuTimerWriteSlot = 0;
+			static const UINT GpuTimerCapacity = 64;
+			bool createGpuTimerResources();
+			void drainGpuTimerSlot(UINT ring, bool block);
+			//! EndQuery for a timer's begin, without beginGpuTimer()'s SceneOpen gate.
+			void stampGpuTimerBegin(const core::stringc& name);
+			UINT gpuTimerQueryIndex(UINT ring, UINT slot) const { return (ring * GpuTimerCapacity + slot) * 2; }
+			static const UINT GpuTimerQueryCount = GpuTimerCapacity * 2 * NativeFrameCount;
 
 			// DriverAttributes and the vertex descriptors (CNullDriver::VertexDescriptor, pre-filled
 			// with "standard"/"2tcoords"/"tangents"/"standardcolorf" by

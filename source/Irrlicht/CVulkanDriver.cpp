@@ -373,6 +373,8 @@ namespace irr
 			Compute = nullptr;
 			delete Occlusion;
 			Occlusion = nullptr;
+			delete GpuTimer;
+			GpuTimer = nullptr;
 			// Releases glslang's per-process pools and the DXC library handle; a later driver
 			// re-acquires both on its first compile.
 			CVulkanShaderCompiler::shutdown();
@@ -488,6 +490,12 @@ namespace irr
 				os::Printer::log("CVulkanDriver: occlusion queries unavailable", ELL_WARNING);
 			else
 				Occlusion->setPreciseCounts(HasPreciseOcclusionQuery);
+
+			GpuTimer = new CVulkanGpuTimer(Context, FrameCount);
+			if (!GpuTimer->create())
+				os::Printer::log("CVulkanDriver: GPU timers unavailable", ELL_WARNING);
+			else
+				addGpuTimer(GPU_TIMER_WHOLE_FRAME);
 
 			CurrentRenderTargetSize = core::dimension2d<u32>(SwapchainExtent.width, SwapchainExtent.height);
 			ViewPort = core::rect<s32>(0, 0, (s32)SwapchainExtent.width, (s32)SwapchainExtent.height);
@@ -769,6 +777,7 @@ namespace irr
 
 			VkPhysicalDevice fallback = VK_NULL_HANDLE;
 			u32 fallbackFamily = 0;
+			u32 fallbackTimestampValidBits = 0;
 
 			for (size_t i = 0; i < devices.size(); ++i)
 			{
@@ -806,6 +815,7 @@ namespace irr
 					{
 						Context.PhysicalDevice = devices[i];
 						Context.GraphicsQueueFamily = f;
+						Context.GraphicsQueueTimestampValidBits = families[f].timestampValidBits;
 						Context.DeviceProperties = props;
 						vk::GetPhysicalDeviceMemoryProperties(devices[i], &Context.MemoryProperties);
 						return true;
@@ -814,6 +824,7 @@ namespace irr
 					{
 						fallback = devices[i];
 						fallbackFamily = f;
+						fallbackTimestampValidBits = families[f].timestampValidBits;
 					}
 					break;
 				}
@@ -828,6 +839,7 @@ namespace irr
 
 			Context.PhysicalDevice = fallback;
 			Context.GraphicsQueueFamily = fallbackFamily;
+			Context.GraphicsQueueTimestampValidBits = fallbackTimestampValidBits;
 			vk::GetPhysicalDeviceProperties(fallback, &Context.DeviceProperties);
 			vk::GetPhysicalDeviceMemoryProperties(fallback, &Context.MemoryProperties);
 			return true;
@@ -1438,6 +1450,10 @@ namespace irr
 
 			SVulkanFrameContext& frame = Frames[CurrentFrameIndex];
 			vk::WaitForFences(Context.Device, 1, &frame.Fence, VK_TRUE, UINT64_MAX);
+			// Every query this frame index's range holds from its last use is now guaranteed
+			// complete -- harvest before anything below resets/rewrites that range.
+			if (GpuTimer && GpuTimer->isValid())
+				GpuTimer->harvestFrame(CurrentFrameIndex);
 
 			VkResult acquired = vk::AcquireNextImageKHR(Context.Device, Swapchain, UINT64_MAX,
 				frame.ImageAvailable, VK_NULL_HANDLE, &CurrentImageIndex);
@@ -1488,6 +1504,11 @@ namespace irr
 			transitionImageLayout(frame.CommandBuffer, SwapchainImages[CurrentImageIndex],
 				VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 				VK_IMAGE_ASPECT_COLOR_BIT);
+
+			// Outside any render pass instance here (beginRendering() below hasn't run yet), so the
+			// reset inside beginTimer() needs no suspend/resume.
+			if (GpuTimer && GpuTimer->isValid())
+				GpuTimer->beginTimer(frame.CommandBuffer, GPU_TIMER_WHOLE_FRAME, CurrentFrameIndex);
 
 			SceneOpen = true;
 			beginRendering(backBuffer, zBuffer, color);
@@ -1591,6 +1612,11 @@ namespace irr
 
 		bool CVulkanDriver::endScene()
 		{
+			// Before the base call below, which is what polls updateAllGpuTimers(false) -- matches
+			// the D3D11 driver's own ordering for GPU_TIMER_WHOLE_FRAME.
+			if (SceneOpen && GpuTimer && GpuTimer->isValid())
+				GpuTimer->endTimer(Frames[CurrentFrameIndex].CommandBuffer, GPU_TIMER_WHOLE_FRAME, CurrentFrameIndex);
+
 			CNullDriver::endScene();
 			if (!SceneOpen)
 				return false;
@@ -1771,6 +1797,8 @@ namespace irr
 			{
 			case EVDF_OCCLUSION_QUERY:
 				return Occlusion && Occlusion->isValid();
+			case EVDF_GPU_TIMER:
+				return GpuTimer && GpuTimer->isValid();
 			case EVDF_COMPUTING_SHADER_5_0:
 			case EVDF_BOUND_COMPUTE_PIPELINE:
 				return Compute && Compute->isReady();
@@ -4489,6 +4517,63 @@ namespace irr
 		u32 CVulkanDriver::getOcclusionQueryResult(std::shared_ptr<scene::ISceneNode> node) const
 		{
 			return Occlusion ? Occlusion->getResult(node) : ~0u;
+		}
+
+		// ================================== GPU timers ==================================
+
+		void CVulkanDriver::addGpuTimer(const core::stringc& name)
+		{
+			if (!queryFeature(EVDF_GPU_TIMER))
+				return;
+			GpuTimer->addTimer(name);
+		}
+
+		void CVulkanDriver::removeGpuTimer(const core::stringc& name)
+		{
+			if (GpuTimer)
+				GpuTimer->removeTimer(name);
+		}
+
+		void CVulkanDriver::removeAllGpuTimers()
+		{
+			if (GpuTimer)
+				GpuTimer->removeAll();
+		}
+
+		void CVulkanDriver::beginGpuTimer(const core::stringc& name)
+		{
+			if (!queryFeature(EVDF_GPU_TIMER) || !SceneOpen)
+				return;
+
+			// The reset inside beginTimer() must be recorded outside a dynamic-rendering instance,
+			// same rule runOcclusionQuery() follows for CVulkanOcclusionQuery::resetQuery().
+			suspendRendering();
+			GpuTimer->beginTimer(Frames[CurrentFrameIndex].CommandBuffer, name, CurrentFrameIndex);
+			resumeRendering();
+		}
+
+		void CVulkanDriver::endGpuTimer(const core::stringc& name)
+		{
+			if (!GpuTimer || !GpuTimer->isValid() || !SceneOpen)
+				return;
+			GpuTimer->endTimer(Frames[CurrentFrameIndex].CommandBuffer, name, CurrentFrameIndex);
+		}
+
+		void CVulkanDriver::updateGpuTimer(const core::stringc& name, bool block)
+		{
+			if (GpuTimer)
+				GpuTimer->updateResult(name, block, CurrentFrameIndex);
+		}
+
+		void CVulkanDriver::updateAllGpuTimers(bool block)
+		{
+			if (GpuTimer)
+				GpuTimer->updateAllResults(block, CurrentFrameIndex);
+		}
+
+		f32 CVulkanDriver::getGpuTimerResult(const core::stringc& name) const
+		{
+			return GpuTimer ? GpuTimer->getResult(name) : 0.f;
 		}
 
 		// ==================================== compute ====================================

@@ -259,6 +259,30 @@ namespace irr
 			actual value of pixels. */
 			virtual u32 getOcclusionQueryResult(std::shared_ptr<scene::ISceneNode> node) const;
 
+			//! Create a named GPU timer.
+			virtual void addGpuTimer(const core::stringc& name) _IRR_OVERRIDE_;
+
+			//! Remove a GPU timer.
+			virtual void removeGpuTimer(const core::stringc& name) _IRR_OVERRIDE_;
+
+			//! Remove all GPU timers.
+			virtual void removeAllGpuTimers() _IRR_OVERRIDE_;
+
+			//! Start timing name. D3D11_QUERY_TIMESTAMP End() at this call, no Begin().
+			virtual void beginGpuTimer(const core::stringc& name) _IRR_OVERRIDE_;
+
+			//! Stop timing name.
+			virtual void endGpuTimer(const core::stringc& name) _IRR_OVERRIDE_;
+
+			//! Update timer. Retrieves its result from the GPU.
+			virtual void updateGpuTimer(const core::stringc& name, bool block = true) _IRR_OVERRIDE_;
+
+			//! Update all GPU timers, retrieving results from GPU.
+			virtual void updateAllGpuTimers(bool block = true) _IRR_OVERRIDE_;
+
+			//! Return timer result, in milliseconds of GPU time.
+			virtual f32 getGpuTimerResult(const core::stringc& name) const _IRR_OVERRIDE_;
+
 			//! sets a render target
 			virtual bool setRenderTarget(video::ITexture* texture, bool clearBackBuffer,
 				bool clearZBuffer, SColor color, video::ITexture* depthStencil) _IRR_OVERRIDE_;
@@ -716,6 +740,31 @@ namespace irr
 			ID3D11Query* CompletionQuery;
 
 			void createCompletionQuery();
+
+			//! Per-timer, per-ring-slot D3D11 query pair. Stored via SGpuTimer::PID (one per name).
+			struct SGpuTimerD3D11
+			{
+				//! Deep enough that a slot normally resolves before the ring reuses it under a
+				//! real unthrottled render loop -- 4 dropped nearly every sample (measured).
+				static const u32 RingSize = 8;
+				struct Slot { ID3D11Query* Start = nullptr; ID3D11Query* End = nullptr; bool BeginIssued = false; bool EndIssued = false; };
+				Slot Slots[RingSize];
+				//! Ring slot with a begin() issued but not yet matched by end(), else -1.
+				s32 OpenSlot = -1;
+			};
+			//! One D3D11_QUERY_TIMESTAMP_DISJOINT per in-flight frame, opened in beginScene(), closed in endScene().
+			ID3D11Query* GpuDisjointQueries[SGpuTimerD3D11::RingSize];
+			//! True from Begin() until its GetData() succeeds; guards against reusing a slot too soon.
+			bool GpuTimerSlotInFlight[SGpuTimerD3D11::RingSize];
+			//! Ring slot whose disjoint query is between Begin()/End(), else -1 -- pair-safety
+			//! for a re-entered beginScene()/endScene() (double beginScene, or back-to-back).
+			s32 GpuDisjointOpenSlot;
+			u32 GpuTimerWriteSlot;
+			bool GpuDisjointQueriesCreated;
+			void ensureGpuDisjointQueries();
+			void drainGpuTimerSlot(u32 slot, bool block);
+			//! Drops slot's in-flight samples (disjoint + every timer's pair) instead of waiting on them.
+			void invalidateGpuTimerSlot(u32 slot);
 
 		public:
 			virtual IVideoDriver* createDeferredContext() override;

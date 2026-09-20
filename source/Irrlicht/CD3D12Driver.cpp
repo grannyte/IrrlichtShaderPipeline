@@ -113,6 +113,8 @@ namespace irr
 			// used to avoid -- it must not be lost when moving to CNullDriver.
 			// deleteAllTextures() is a no-op for a deferred context (its cache stays empty, it
 			// delegates everything to the immediate driver).
+			removeAllGpuTimers();
+
 			deleteAllTextures();
 			NullTexture = nullptr;
 
@@ -2062,7 +2064,63 @@ namespace irr
 			ShaderVisibleSamplerHeapStartCPU = ShaderVisibleSamplerHeap->GetCPUDescriptorHandleForHeapStart();
 			ShaderVisibleSamplerHeapStartGPU = ShaderVisibleSamplerHeap->GetGPUDescriptorHandleForHeapStart();
 
-			return createOcclusionQueryResources();
+			return createOcclusionQueryResources() && createGpuTimerResources();
+		}
+
+		bool CD3D12Driver::createGpuTimerResources()
+		{
+			D3D12_QUERY_HEAP_DESC heapDesc = {};
+			heapDesc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+			heapDesc.Count = GpuTimerQueryCount;
+			HRESULT hr = Device->CreateQueryHeap(&heapDesc, IID_PPV_ARGS(&GpuTimerQueryHeap));
+			if (FAILED(hr))
+			{
+				os::Printer::log("CD3D12Driver: CreateQueryHeap (timestamp) a echoue", ELL_ERROR);
+				return false;
+			}
+
+			D3D12_HEAP_PROPERTIES readbackHeapProps = {};
+			readbackHeapProps.Type = D3D12_HEAP_TYPE_READBACK;
+
+			D3D12_RESOURCE_DESC readbackDesc = {};
+			readbackDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+			readbackDesc.Width = static_cast<UINT64>(GpuTimerQueryCount) * sizeof(UINT64);
+			readbackDesc.Height = 1;
+			readbackDesc.DepthOrArraySize = 1;
+			readbackDesc.MipLevels = 1;
+			readbackDesc.Format = DXGI_FORMAT_UNKNOWN;
+			readbackDesc.SampleDesc = { 1, 0 };
+			readbackDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+			hr = Device->CreateCommittedResource(&readbackHeapProps, D3D12_HEAP_FLAG_NONE, &readbackDesc,
+				D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&GpuTimerReadback));
+			if (FAILED(hr))
+			{
+				os::Printer::log("CD3D12Driver: CreateCommittedResource (timer readback) a echoue", ELL_ERROR);
+				return false;
+			}
+
+			// Mapped for the driver's lifetime, same scheme as the occlusion readback above.
+			hr = GpuTimerReadback->Map(0, nullptr, &GpuTimerReadbackMapped);
+			if (FAILED(hr))
+			{
+				os::Printer::log("CD3D12Driver: Map (timer readback) a echoue", ELL_ERROR);
+				return false;
+			}
+
+			if (FAILED(DirectQueue->GetTimestampFrequency(&GpuTimerFrequency)))
+			{
+				os::Printer::log("CD3D12Driver: GetTimestampFrequency a echoue", ELL_ERROR);
+				return false;
+			}
+
+			FreeGpuTimerSlots.clear();
+			FreeGpuTimerSlots.reserve(GpuTimerCapacity);
+			for (UINT i = 0; i < GpuTimerCapacity; ++i)
+				FreeGpuTimerSlots.push_back(GpuTimerCapacity - 1 - i);
+
+			addGpuTimer(GPU_TIMER_WHOLE_FRAME);
+			return true;
 		}
 
 		bool CD3D12Driver::createOcclusionQueryResources()
@@ -4867,6 +4925,151 @@ namespace irr
 			return it->second.LastResult;
 		}
 
+		//! Create a named GPU timer.
+		void CD3D12Driver::addGpuTimer(const core::stringc& name)
+		{
+			if (!queryFeature(EVDF_GPU_TIMER) || FreeGpuTimerSlots.empty())
+				return;
+
+			CNullDriver::addGpuTimer(name);
+			const s32 index = GpuTimers.linear_search(SGpuTimer(name));
+			if ((index == -1) || GpuTimers[index].PID)
+				return;
+			SD3D12GpuTimer* data = new SD3D12GpuTimer();
+			data->Slot = FreeGpuTimerSlots.back();
+			FreeGpuTimerSlots.pop_back();
+			GpuTimers[index].PID = data;
+		}
+
+		//! Remove a GPU timer.
+		void CD3D12Driver::removeGpuTimer(const core::stringc& name)
+		{
+			const s32 index = GpuTimers.linear_search(SGpuTimer(name));
+			if (index == -1)
+				return;
+			SD3D12GpuTimer* data = reinterpret_cast<SD3D12GpuTimer*>(GpuTimers[index].PID);
+			if (data)
+			{
+				FreeGpuTimerSlots.push_back(data->Slot);
+				delete data;
+			}
+			CNullDriver::removeGpuTimer(name);
+		}
+
+		//! Remove all GPU timers.
+		void CD3D12Driver::removeAllGpuTimers()
+		{
+			for (s32 i = GpuTimers.size() - 1; i >= 0; --i)
+				removeGpuTimer(GpuTimers[i].Name);
+		}
+
+		//! Issue a timer's begin timestamp. Caller checks the scene is open; see the header.
+		void CD3D12Driver::stampGpuTimerBegin(const core::stringc& name)
+		{
+			if (!GpuTimerQueryHeap)
+				return;
+			const s32 index = GpuTimers.linear_search(SGpuTimer(name));
+			if (index == -1)
+				return;
+			SD3D12GpuTimer* data = reinterpret_cast<SD3D12GpuTimer*>(GpuTimers[index].PID);
+			if (!data)
+				return;
+			CommandList->EndQuery(GpuTimerQueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP,
+				gpuTimerQueryIndex(GpuTimerWriteSlot, data->Slot));
+			data->BeginIssued[GpuTimerWriteSlot] = true;
+			data->EndIssued[GpuTimerWriteSlot] = false;
+		}
+
+		//! Start timing name. D3D12_QUERY_TYPE_TIMESTAMP is an EndQuery-only query type.
+		void CD3D12Driver::beginGpuTimer(const core::stringc& name)
+		{
+			if (!SceneOpen || !queryFeature(EVDF_GPU_TIMER))
+				return;
+			stampGpuTimerBegin(name);
+		}
+
+		//! Stop timing name, and resolve this frame's pair into the readback ring.
+		void CD3D12Driver::endGpuTimer(const core::stringc& name)
+		{
+			if (!SceneOpen || !GpuTimerQueryHeap)
+				return;
+			const s32 index = GpuTimers.linear_search(SGpuTimer(name));
+			if (index == -1)
+				return;
+			SD3D12GpuTimer* data = reinterpret_cast<SD3D12GpuTimer*>(GpuTimers[index].PID);
+			if (!data || !data->BeginIssued[GpuTimerWriteSlot])
+				return;
+			const UINT base = gpuTimerQueryIndex(GpuTimerWriteSlot, data->Slot);
+			CommandList->EndQuery(GpuTimerQueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, base + 1);
+			CommandList->ResolveQueryData(GpuTimerQueryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, base, 2,
+				GpuTimerReadback.Get(), static_cast<UINT64>(base) * sizeof(UINT64));
+			data->EndIssued[GpuTimerWriteSlot] = true;
+		}
+
+		//! Read back every timer's pair for one ring, dropping a begin that was never ended.
+		void CD3D12Driver::drainGpuTimerSlot(UINT ring, bool block)
+		{
+			if (!GpuTimerReadbackMapped || GpuTimerSlotFence[ring] == 0)
+				return;
+
+			if (Fence->GetCompletedValue() < GpuTimerSlotFence[ring])
+			{
+				if (!block)
+					return; // "Update might not occur in this case" -- documented in IVideoDriver.h
+				Fence->SetEventOnCompletion(GpuTimerSlotFence[ring], FenceEvent);
+				::WaitForSingleObject(FenceEvent, INFINITE);
+			}
+
+			const UINT64* results = static_cast<const UINT64*>(GpuTimerReadbackMapped);
+			for (u32 i = 0; i < GpuTimers.size(); ++i)
+			{
+				SD3D12GpuTimer* data = reinterpret_cast<SD3D12GpuTimer*>(GpuTimers[i].PID);
+				if (!data)
+					continue;
+				const bool paired = data->BeginIssued[ring] && data->EndIssued[ring];
+				data->BeginIssued[ring] = false;
+				data->EndIssued[ring] = false;
+				if (!paired)
+					continue;
+				const UINT base = gpuTimerQueryIndex(ring, data->Slot);
+				const UINT64 start = results[base];
+				const UINT64 end = results[base + 1];
+				if ((end >= start) && GpuTimerFrequency)
+					GpuTimers[i].Result = static_cast<f32>((end - start) * 1000.0 / static_cast<double>(GpuTimerFrequency));
+			}
+			GpuTimerSlotFence[ring] = 0;
+		}
+
+		//! Update timer. Retrieves its result from the GPU.
+		void CD3D12Driver::updateGpuTimer(const core::stringc& name, bool block)
+		{
+			const s32 index = GpuTimers.linear_search(SGpuTimer(name));
+			if (index == -1)
+				return;
+			SD3D12GpuTimer* data = reinterpret_cast<SD3D12GpuTimer*>(GpuTimers[index].PID);
+			if (!data)
+				return;
+			for (UINT i = 0; i < NativeFrameCount; ++i)
+			{
+				if (data->BeginIssued[i] && data->EndIssued[i])
+					drainGpuTimerSlot(i, block);
+			}
+		}
+
+		//! Update all GPU timers, retrieving results from GPU.
+		void CD3D12Driver::updateAllGpuTimers(bool block)
+		{
+			for (UINT i = 0; i < NativeFrameCount; ++i)
+				drainGpuTimerSlot(i, block);
+		}
+
+		//! Return timer result, in milliseconds of GPU time.
+		f32 CD3D12Driver::getGpuTimerResult(const core::stringc& name) const
+		{
+			const s32 index = GpuTimers.linear_search(SGpuTimer(name));
+			return index != -1 ? GpuTimers[index].Result : 0.f;
+		}
+
 		// Point de branchement unique des textures sur CNullDriver (voir CD3D12Driver.h) : la
 		// base a deja lu le fichier / prepare l'IImage et gere le cache refcounte autour de cet
 		// appel -- il ne reste qu'a fabriquer la ressource GPU. Retourne nullptr (plutot qu'une
@@ -5125,6 +5328,11 @@ namespace irr
 			frame.CommandAllocator->Reset();
 			CommandList->Reset(frame.CommandAllocator.Get(), nullptr);
 
+			// Stamped ahead of the clears, as CD3D11Driver does; waitForFrame() already retired this ring.
+			GpuTimerWriteSlot = (GpuTimerWriteSlot + 1) % NativeFrameCount;
+			drainGpuTimerSlot(GpuTimerWriteSlot, true);
+			stampGpuTimerBegin(GPU_TIMER_WHOLE_FRAME);
+
 			// Phase 5 : remet a zero les curseurs des anneaux par frame (voir
 			// SD3D12FrameContext) — leur contenu de la frame precedente qui utilisait ce meme
 			// slot est deja garanti consomme par le GPU (waitForFrame() ci-dessus) avant qu'on
@@ -5240,6 +5448,7 @@ namespace irr
 					" (aucune scene ouverte) -- ignore", ELL_WARNING);
 				return false;
 			}
+			endGpuTimer(GPU_TIMER_WHOLE_FRAME);
 			SceneOpen = false;
 
 			SD3D12FrameContext& frame = Frames[CurrentFrameIndex];
@@ -5266,6 +5475,8 @@ namespace irr
 			SwapChain->Present(Params.Vsync ? 1 : 0, presentFlags);
 
 			frame.FenceValue = signalFence();
+			// This frame's ResolveQueryData calls are readable once that value is reached.
+			GpuTimerSlotFence[GpuTimerWriteSlot] = frame.FenceValue;
 
 			// memorise QUEL frame context vient d'etre presente avant que
 			// CurrentFrameIndex n'avance vers le prochain back buffer a dessiner —
@@ -5280,6 +5491,7 @@ namespace irr
 			// chainer sur la base les traiterait deux fois. getFPS() (herite) fonctionne desormais
 			// reellement.
 			FPSCounter.registerFrame(os::Timer::getRealTime(), PrimitivesDrawn);
+			updateAllGpuTimers(false);
 
 			// La frame a ete presentee avec succes, c'est ce que ce retour signifie par convention
 			// IVideoDriver::endScene().
@@ -5300,6 +5512,8 @@ namespace irr
 				return true; // DepthStencilFormat = D24_UNORM_S8_UINT
 			case EVDF_OCCLUSION_QUERY:
 				return true;
+			case EVDF_GPU_TIMER:
+				return GpuTimerQueryHeap != nullptr;
 			case EVDF_MIP_MAP:
 				return true; // generated via a pixel-shader blit, see createMipGenPipeline()
 			case EVDF_POLYGON_OFFSET:

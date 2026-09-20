@@ -21,6 +21,7 @@
 #include "CD3D11VertexDescriptor.h"
 #include <iostream>
 #include <vector>
+#include <chrono>
 #include <d3d11sdklayers.h>
 
 inline void unpack_texureBlendFunc(irr::video::E_BLEND_FACTOR& srcFact, irr::video::E_BLEND_FACTOR& dstFact,
@@ -76,6 +77,7 @@ namespace irr
 			DepthStencilFormat(DXGI_FORMAT_UNKNOWN), D3DColorFormat(DXGI_FORMAT_R8G8B8A8_UNORM),
 			NullTexture(NULL), MaxTextureUnits(MATERIAL_MAX_TEXTURES), // DirectX 11 can handle much more than this value, but keep compatibility
 			SavedImmediateContext(NULL), SavedImmediateBridge(NULL), CompletionQuery(NULL),
+			GpuDisjointOpenSlot(-1), GpuTimerWriteSlot(0), GpuDisjointQueriesCreated(false),
 			Name("Direct3D ") // which version will be added later
 		{
 #ifdef _DEBUG
@@ -83,6 +85,13 @@ namespace irr
 #endif
 			AllowZWriteOnTransparent = false;
 			disableTextures();
+
+			for (u32 i = 0; i < SGpuTimerD3D11::RingSize; ++i)
+			{
+				GpuDisjointQueries[i] = nullptr;
+				GpuTimerSlotInFlight[i] = false;
+			}
+			addGpuTimer(GPU_TIMER_WHOLE_FRAME);
 
 			// init clip planes
 			ClipPlanes.push_back(core::plane3df());
@@ -128,6 +137,12 @@ namespace irr
 			deleteMaterialRenders();
 			deleteAllTextures();
 			removeAllOcclusionQueries();
+			removeAllGpuTimers();
+			for (u32 i = 0; i < SGpuTimerD3D11::RingSize; ++i)
+			{
+				if (GpuDisjointQueries[i])
+					GpuDisjointQueries[i]->Release();
+			}
 			removeAllHardwareBuffers();
 
 			if (BridgeCalls)
@@ -773,11 +788,271 @@ namespace irr
 			}
 		}
 
+		//! Create a named GPU timer.
+		void CD3D11Driver::addGpuTimer(const core::stringc& name)
+		{
+			if (!queryFeature(EVDF_GPU_TIMER))
+				return;
+
+			CNullDriver::addGpuTimer(name);
+			const s32 index = GpuTimers.linear_search(SGpuTimer(name));
+			if ((index != -1) && (GpuTimers[index].PID == NULL))
+				GpuTimers[index].PID = new SGpuTimerD3D11();
+		}
+
+		//! Remove a GPU timer.
+		void CD3D11Driver::removeGpuTimer(const core::stringc& name)
+		{
+			const s32 index = GpuTimers.linear_search(SGpuTimer(name));
+			if (index != -1)
+			{
+				SGpuTimerD3D11* data = reinterpret_cast<SGpuTimerD3D11*>(GpuTimers[index].PID);
+				if (data)
+				{
+					for (u32 i = 0; i < SGpuTimerD3D11::RingSize; ++i)
+					{
+						if (data->Slots[i].Start) data->Slots[i].Start->Release();
+						if (data->Slots[i].End) data->Slots[i].End->Release();
+					}
+					delete data;
+				}
+				CNullDriver::removeGpuTimer(name);
+			}
+		}
+
+		//! Remove all GPU timers.
+		void CD3D11Driver::removeAllGpuTimers()
+		{
+			for (s32 i = GpuTimers.size() - 1; i >= 0; --i)
+				removeGpuTimer(GpuTimers[i].Name);
+		}
+
+		//! Lazily create the disjoint-timestamp ring; needs Device, unavailable at construction.
+		void CD3D11Driver::ensureGpuDisjointQueries()
+		{
+			if (GpuDisjointQueriesCreated || !Device)
+				return;
+			D3D11_QUERY_DESC desc;
+			desc.Query = D3D11_QUERY_TIMESTAMP_DISJOINT;
+			desc.MiscFlags = 0;
+			for (u32 i = 0; i < SGpuTimerD3D11::RingSize; ++i)
+				Device->CreateQuery(&desc, &GpuDisjointQueries[i]);
+			GpuDisjointQueriesCreated = true;
+		}
+
+		//! Start timing name. D3D11_QUERY_TIMESTAMP only supports End(), never Begin().
+		void CD3D11Driver::beginGpuTimer(const core::stringc& name)
+		{
+			if (!queryFeature(EVDF_GPU_TIMER))
+				return;
+			const s32 index = GpuTimers.linear_search(SGpuTimer(name));
+			if (index == -1)
+				return;
+			SGpuTimerD3D11* data = reinterpret_cast<SGpuTimerD3D11*>(GpuTimers[index].PID);
+			if (!data)
+				return;
+
+			// A previous begin was never matched by an end (double-begin) -- drop it rather
+			// than let it linger and be mistaken for a fresh one once the ring reuses its slot.
+			if (data->OpenSlot != -1)
+			{
+				SGpuTimerD3D11::Slot& stale = data->Slots[data->OpenSlot];
+				stale.BeginIssued = false;
+				stale.EndIssued = false;
+			}
+
+			SGpuTimerD3D11::Slot& slot = data->Slots[GpuTimerWriteSlot];
+			if (!slot.Start)
+			{
+				D3D11_QUERY_DESC desc; desc.Query = D3D11_QUERY_TIMESTAMP; desc.MiscFlags = 0;
+				Device->CreateQuery(&desc, &slot.Start);
+			}
+			if (slot.Start)
+				Context->End(slot.Start);
+			slot.BeginIssued = true;
+			slot.EndIssued = false;
+			data->OpenSlot = (s32)GpuTimerWriteSlot;
+		}
+
+		//! Stop timing name. Drops the sample instead of a mismatched End() -- see OpenSlot.
+		void CD3D11Driver::endGpuTimer(const core::stringc& name)
+		{
+			const s32 index = GpuTimers.linear_search(SGpuTimer(name));
+			if (index == -1)
+				return;
+			SGpuTimerD3D11* data = reinterpret_cast<SGpuTimerD3D11*>(GpuTimers[index].PID);
+			if (!data)
+				return;
+
+			// Only close a begin still open in THIS ring slot: a begin from a different scene
+			// (ring already advanced), or one already ended, is dropped rather than mismatched.
+			if (data->OpenSlot != (s32)GpuTimerWriteSlot)
+				return;
+
+			SGpuTimerD3D11::Slot& slot = data->Slots[GpuTimerWriteSlot];
+			if (!slot.End)
+			{
+				D3D11_QUERY_DESC desc; desc.Query = D3D11_QUERY_TIMESTAMP; desc.MiscFlags = 0;
+				Device->CreateQuery(&desc, &slot.End);
+			}
+			if (slot.End)
+				Context->End(slot.End);
+			slot.EndIssued = true;
+			data->OpenSlot = -1;
+		}
+
+		//! Drops slot's in-flight samples (disjoint + every timer's pair) instead of waiting on them.
+		void CD3D11Driver::invalidateGpuTimerSlot(u32 slot)
+		{
+			for (u32 i = 0; i < GpuTimers.size(); ++i)
+			{
+				SGpuTimerD3D11* data = reinterpret_cast<SGpuTimerD3D11*>(GpuTimers[i].PID);
+				if (!data)
+					continue;
+				if (data->OpenSlot == (s32)slot)
+					data->OpenSlot = -1;
+				data->Slots[slot].BeginIssued = false;
+				data->Slots[slot].EndIssued = false;
+			}
+			GpuTimerSlotInFlight[slot] = false;
+		}
+
+		//! Resolve every timer's slot against slot's disjoint query, dropping an unpaired begin/end.
+		void CD3D11Driver::drainGpuTimerSlot(u32 slot, bool block)
+		{
+			if (!GpuDisjointQueries[slot])
+				return;
+
+			// Bounded even when block==true: occlusion's own updateOcclusionQuery(block=true)
+			// spins unbounded on GetData, but a query with no matching End() would spin forever.
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(50);
+
+			D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjointData;
+			HRESULT hr;
+			if (block)
+			{
+				do { hr = Context->GetData(GpuDisjointQueries[slot], &disjointData, sizeof(disjointData), 0); }
+				while (hr == S_FALSE && std::chrono::steady_clock::now() < deadline);
+			}
+			else
+				hr = Context->GetData(GpuDisjointQueries[slot], &disjointData, sizeof(disjointData), D3D11_ASYNC_GETDATA_DONOTFLUSH);
+			if (hr != S_OK)
+				return; // not ready, or gave up: every timer here keeps its previous Result
+
+			// The disjoint query resolves before the GPU reaches late-frame stamps: keep the slot until all are in.
+			if (!block)
+			{
+				for (u32 i = 0; i < GpuTimers.size(); ++i)
+				{
+					SGpuTimerD3D11* data = reinterpret_cast<SGpuTimerD3D11*>(GpuTimers[i].PID);
+					if (!data || !data->Slots[slot].BeginIssued || !data->Slots[slot].EndIssued)
+						continue;
+					if (Context->GetData(data->Slots[slot].End, NULL, 0, D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK)
+						return;
+				}
+			}
+			GpuTimerSlotInFlight[slot] = false;
+
+			for (u32 i = 0; i < GpuTimers.size(); ++i)
+			{
+				SGpuTimerD3D11* data = reinterpret_cast<SGpuTimerD3D11*>(GpuTimers[i].PID);
+				if (!data)
+					continue;
+				SGpuTimerD3D11::Slot& s = data->Slots[slot];
+				if (!s.BeginIssued || !s.EndIssued)
+					continue;
+				s.BeginIssued = false;
+				s.EndIssued = false;
+				if (disjointData.Disjoint)
+					continue;
+
+				UINT64 start = 0, end = 0;
+				HRESULT hrS, hrE;
+				if (block)
+				{
+					do { hrS = Context->GetData(s.Start, &start, sizeof(start), 0); }
+					while (hrS == S_FALSE && std::chrono::steady_clock::now() < deadline);
+					do { hrE = Context->GetData(s.End, &end, sizeof(end), 0); }
+					while (hrE == S_FALSE && std::chrono::steady_clock::now() < deadline);
+				}
+				else
+				{
+					hrS = Context->GetData(s.Start, &start, sizeof(start), D3D11_ASYNC_GETDATA_DONOTFLUSH);
+					hrE = Context->GetData(s.End, &end, sizeof(end), D3D11_ASYNC_GETDATA_DONOTFLUSH);
+				}
+				if ((hrS == S_OK) && (hrE == S_OK) && (end >= start) && disjointData.Frequency)
+					GpuTimers[i].Result = static_cast<f32>((end - start) * 1000.0 / static_cast<double>(disjointData.Frequency));
+			}
+		}
+
+		//! Update timer. Retrieves its result from the GPU.
+		void CD3D11Driver::updateGpuTimer(const core::stringc& name, bool block)
+		{
+			const s32 index = GpuTimers.linear_search(SGpuTimer(name));
+			if (index == -1)
+				return;
+			SGpuTimerD3D11* data = reinterpret_cast<SGpuTimerD3D11*>(GpuTimers[index].PID);
+			if (!data)
+				return;
+			// Oldest to newest: if two slots resolve in this same call, the newest one's Result
+			// is written last and wins, instead of an index-order scan clobbering it with stale data.
+			for (u32 n = 0; n < SGpuTimerD3D11::RingSize; ++n)
+			{
+				const u32 i = (GpuTimerWriteSlot + 1 + n) % SGpuTimerD3D11::RingSize;
+				if (data->Slots[i].BeginIssued && data->Slots[i].EndIssued)
+					drainGpuTimerSlot(i, block);
+			}
+		}
+
+		//! Update all GPU timers, retrieving results from GPU.
+		void CD3D11Driver::updateAllGpuTimers(bool block)
+		{
+			// Oldest to newest, same reason as updateGpuTimer.
+			for (u32 n = 0; n < SGpuTimerD3D11::RingSize; ++n)
+				drainGpuTimerSlot((GpuTimerWriteSlot + 1 + n) % SGpuTimerD3D11::RingSize, block);
+		}
+
+		//! Return timer result, in milliseconds of GPU time.
+		f32 CD3D11Driver::getGpuTimerResult(const core::stringc& name) const
+		{
+			const s32 index = GpuTimers.linear_search(SGpuTimer(name));
+			return index != -1 ? GpuTimers[index].Result : 0.f;
+		}
+
 		//! applications must call this method before performing any rendering. returns false if failed.
 		bool CD3D11Driver::beginScene(bool backBuffer, bool zBuffer, SColor color,
 			const SExposedVideoData& videoData, core::rect<s32>* sourceRect)
 		{
 			CNullDriver::beginScene(backBuffer, zBuffer, color, videoData, sourceRect);
+
+			ensureGpuDisjointQueries();
+
+			// Re-entered without endScene() (double beginScene, or back-to-back SceneEnd()+
+			// SceneBegin() finding one open) -- close and drop it, never leave it unended.
+			if (GpuDisjointOpenSlot != -1)
+			{
+				if (GpuDisjointQueries[GpuDisjointOpenSlot])
+					Context->End(GpuDisjointQueries[GpuDisjointOpenSlot]);
+				invalidateGpuTimerSlot((u32)GpuDisjointOpenSlot);
+				GpuDisjointOpenSlot = -1;
+			}
+
+			GpuTimerWriteSlot = (GpuTimerWriteSlot + 1) % SGpuTimerD3D11::RingSize;
+			if (GpuTimerSlotInFlight[GpuTimerWriteSlot])
+			{
+				// Non-blocking: one poll, then drop rather than wait -- a hang here would stall
+				// every frame the GPU falls more than RingSize frames behind.
+				drainGpuTimerSlot(GpuTimerWriteSlot, false);
+				if (GpuTimerSlotInFlight[GpuTimerWriteSlot])
+					invalidateGpuTimerSlot(GpuTimerWriteSlot);
+			}
+			if (GpuDisjointQueries[GpuTimerWriteSlot])
+			{
+				Context->Begin(GpuDisjointQueries[GpuTimerWriteSlot]);
+				GpuTimerSlotInFlight[GpuTimerWriteSlot] = true;
+				GpuDisjointOpenSlot = (s32)GpuTimerWriteSlot;
+			}
+			beginGpuTimer(GPU_TIMER_WHOLE_FRAME);
 
 			if (backBuffer && DefaultBackBuffer)
 			{
@@ -833,6 +1108,16 @@ namespace irr
 		//! applications must call this method after performing any rendering. returns false if failed.
 		bool CD3D11Driver::endScene()
 		{
+			endGpuTimer(GPU_TIMER_WHOLE_FRAME);
+			// Only End() a disjoint query this driver knows is open -- never one beginScene()
+			// already closed itself (re-entry recovery) or never opened.
+			if (GpuDisjointOpenSlot == (s32)GpuTimerWriteSlot && GpuDisjointQueries[GpuTimerWriteSlot])
+			{
+				Context->End(GpuDisjointQueries[GpuTimerWriteSlot]);
+				GpuDisjointOpenSlot = -1;
+			}
+
+			// polls updateAllOcclusionQueries(false)/updateAllGpuTimers(false)
 			CNullDriver::endScene();
 
 			HRESULT hr = S_OK;
@@ -918,6 +1203,8 @@ namespace irr
 				return false;
 			}
 			case EVDF_OCCLUSION_QUERY:
+				return true;
+			case EVDF_GPU_TIMER:
 				return true;
 
 			// --- The D3D11.x additions, see doc/d3d11-feature-api.md ---
