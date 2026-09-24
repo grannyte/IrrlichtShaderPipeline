@@ -35,6 +35,9 @@ public:
 
 	bool update(const scene::E_HARDWARE_MAPPING mapping, const u32 size, const void* data) _IRR_OVERRIDE_;
 
+	//! Partial UpdateSubresource on a DEFAULT-usage buffer; any other shape re-uploads whole.
+	bool updateRange(const scene::E_HARDWARE_MAPPING mapping, const u32 size, const void* data) _IRR_OVERRIDE_;
+
 	//! Lock function.
 	void* lock(bool readOnly = false) override;
 

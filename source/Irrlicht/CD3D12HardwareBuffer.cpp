@@ -507,10 +507,62 @@ namespace irr
 			return Driver->getCurrentFrameIndex() % static_cast<UINT>(Resources.size());
 		}
 
+		bool CD3D12HardwareBuffer::recordPendingCopy(u32 offset, const void* data, u32 length)
+		{
+			ID3D12Device2* device = Driver ? Driver->getDevice() : nullptr;
+			if (!device || !data || length == 0 || Resources.empty() || !Resources[0] || offset + length > Size)
+				return false;
+
+			D3D12_HEAP_PROPERTIES uploadHeapProps = {};
+			uploadHeapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+			D3D12_RESOURCE_DESC uploadDesc = {};
+			uploadDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+			uploadDesc.Width = length;
+			uploadDesc.Height = 1;
+			uploadDesc.DepthOrArraySize = 1;
+			uploadDesc.MipLevels = 1;
+			uploadDesc.Format = DXGI_FORMAT_UNKNOWN;
+			uploadDesc.SampleDesc = { 1, 0 };
+			uploadDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+			ComPtr<ID3D12Resource> uploadBuffer;
+			if (FAILED(device->CreateCommittedResource(&uploadHeapProps, D3D12_HEAP_FLAG_NONE, &uploadDesc,
+				D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&uploadBuffer))))
+				return false;
+			void* mapped = nullptr;
+			D3D12_RANGE noRead = { 0, 0 };
+			if (FAILED(uploadBuffer->Map(0, &noRead, &mapped)) || !mapped)
+				return false;
+			memcpy(mapped, data, length);
+			uploadBuffer->Unmap(0, nullptr);
+
+			{
+				CD3D12Driver::PendingComputeScope pending(Driver);
+				ID3D12GraphicsCommandList* cmdList = pending.commandList();
+				if (!cmdList)
+					return false;
+				const D3D12_RESOURCE_STATES restore = CurrentState;
+				transitionTo(cmdList, D3D12_RESOURCE_STATE_COPY_DEST);
+				cmdList->CopyBufferRegion(Resources[0].Get(), offset, uploadBuffer.Get(), 0, length);
+				transitionTo(cmdList, restore);
+			}
+			// Stamped with the next frame fence, which is signalled only after the pending list is submitted.
+			Driver->retireResource(std::move(uploadBuffer));
+			return true;
+		}
+
 		bool CD3D12HardwareBuffer::update(const scene::E_HARDWARE_MAPPING mapping, const u32 size, const void* data)
 		{
 			if (IsDefaultHeapPath)
 			{
+				// Same size: the compute copy rides the driver's pending compute list, no recreate, no wait.
+				if (Type == EHBT_COMPUTE && size == Size && data && recordPendingCopy(0, data, size))
+				{
+					Mapping = mapping;
+					RequiredUpdate = false;
+					return true;
+				}
+
 				// EHM_STATIC / EHBT_COMPUTE: no directly mapped pointer, so this recreates the
 				// resource entirely via the default-heap+copy path -- consistent with these
 				// buffers being expected to change rarely (see the .h file header comment).
@@ -565,6 +617,65 @@ namespace irr
 			memcpy(MappedData[slot], data, size);
 			Mapping = mapping;
 			RequiredUpdate = false;
+			return true;
+		}
+
+		bool CD3D12HardwareBuffer::updateRange(const scene::E_HARDWARE_MAPPING mapping, const u32 size, const void* data)
+		{
+			const u32 begin = RangeBegin;
+			const u32 end = core::min_(RangeEnd, size);
+			ID3D12Device2* device = Driver ? Driver->getDevice() : nullptr;
+			if (!IsDefaultHeapPath || Type != EHBT_COMPUTE || !RangedUpdate || !data || !device || size != Size
+				|| begin >= end || Resources.empty() || !Resources[0])
+				return update(mapping, size, data);
+
+			const u32 length = end - begin;
+			if (recordPendingCopy(begin, (const u8*)data + begin, length))
+			{
+				Mapping = mapping;
+				RequiredUpdate = false;
+				RangedUpdate = false;
+				return true;
+			}
+
+			D3D12_HEAP_PROPERTIES uploadHeapProps = {};
+			uploadHeapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+			D3D12_RESOURCE_DESC uploadDesc = {};
+			uploadDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+			uploadDesc.Width = length;
+			uploadDesc.Height = 1;
+			uploadDesc.DepthOrArraySize = 1;
+			uploadDesc.MipLevels = 1;
+			uploadDesc.Format = DXGI_FORMAT_UNKNOWN;
+			uploadDesc.SampleDesc = { 1, 0 };
+			uploadDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+			ComPtr<ID3D12Resource> uploadBuffer;
+			HRESULT hr = device->CreateCommittedResource(&uploadHeapProps, D3D12_HEAP_FLAG_NONE, &uploadDesc,
+				D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&uploadBuffer));
+			if (FAILED(hr))
+				return update(mapping, size, data);
+
+			void* mapped = nullptr;
+			D3D12_RANGE noRead = { 0, 0 };
+			if (FAILED(uploadBuffer->Map(0, &noRead, &mapped)) || !mapped)
+				return update(mapping, size, data);
+			memcpy(mapped, (const u8*)data + begin, length);
+			uploadBuffer->Unmap(0, nullptr);
+
+			CD3D12Driver::UploadScope upload(Driver);
+			ID3D12GraphicsCommandList* cmdList = upload.commandList();
+			if (!cmdList)
+				return false;
+			const D3D12_RESOURCE_STATES restore = CurrentState;
+			transitionTo(cmdList, D3D12_RESOURCE_STATE_COPY_DEST);
+			cmdList->CopyBufferRegion(Resources[0].Get(), begin, uploadBuffer.Get(), 0, length);
+			transitionTo(cmdList, restore);
+			upload.endAndWait();
+
+			Mapping = mapping;
+			RequiredUpdate = false;
+			RangedUpdate = false;
 			return true;
 		}
 

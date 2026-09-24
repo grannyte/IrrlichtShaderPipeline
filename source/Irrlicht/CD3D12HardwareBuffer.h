@@ -79,6 +79,11 @@ namespace irr
 			virtual ~CD3D12HardwareBuffer();
 
 			bool update(const scene::E_HARDWARE_MAPPING mapping, const u32 size, const void* data) _IRR_OVERRIDE_;
+			//! Default-heap compute path: copies only the pending range in place instead of recreating.
+			bool updateRange(const scene::E_HARDWARE_MAPPING mapping, const u32 size, const void* data) _IRR_OVERRIDE_;
+			//! Records a copy of `length` bytes into the default-heap resource at `offset` on the
+			//! driver's pending compute list; false (nothing recorded) when that list is unavailable.
+			bool recordPendingCopy(u32 offset, const void* data, u32 length);
 			void* lock(bool readOnly = false) override;
 			void unlock() override;
 

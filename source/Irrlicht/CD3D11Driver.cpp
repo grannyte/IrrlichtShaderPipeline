@@ -1568,6 +1568,9 @@ namespace irr
 
 			if (!buffer->getHardwareBuffer())
 				createHardwareBuffer(buffer);
+			else if (buffer->getHardwareBuffer()->isRangedUpdate())
+				buffer->getHardwareBuffer()->updateRange(buffer->getHardwareMappingHint(),
+					buffer->getStructureCount() * buffer->getStructureStride(), buffer->getBufferPointer());
 			else if (buffer->getHardwareBuffer()->isRequiredUpdate())
 				buffer->getHardwareBuffer()->update(buffer->getHardwareMappingHint(),
 					buffer->getStructureCount() * buffer->getStructureStride(), buffer->getBufferPointer());

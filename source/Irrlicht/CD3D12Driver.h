@@ -767,9 +767,36 @@ namespace irr
 				ID3D12GraphicsCommandList* CmdList;
 			};
 
+			//! Records GPU-only compute work (dispatches, compute-buffer copies) on the owner's pending
+			//! compute list, without submitting or waiting. The list goes to the queue ahead of anything
+			//! else submitted after it -- an UploadScope, a frame or deferred-context list, a fence
+			//! signal -- so ordering matches an UploadScope's, minus the per-call CPU wait.
+			class PendingComputeScope
+			{
+			public:
+				explicit PendingComputeScope(CD3D12Driver* driver);
+				PendingComputeScope(const PendingComputeScope&) = delete;
+				PendingComputeScope& operator=(const PendingComputeScope&) = delete;
+
+				//! nullptr if the list could not be opened: record nothing.
+				ID3D12GraphicsCommandList* commandList() const { return CmdList; }
+
+			private:
+				std::unique_lock<std::mutex> Lock;
+				ID3D12GraphicsCommandList* CmdList;
+			};
+
+			//! Submits the pending compute list, if anything is recorded on it; `wait` also blocks until
+			//! the GPU has run it. Takes UploadMutex.
+			void flushPendingCompute(bool wait = false);
+
 		private:
 			ID3D12GraphicsCommandList* beginUpload();
 			void endUploadAndWait();
+			//! UploadMutex held by the caller for the three below.
+			ID3D12GraphicsCommandList* beginPendingComputeLocked();
+			void flushPendingComputeLocked();
+			void waitUploadFenceLocked(UINT64 value);
 		public:
 
 			//! Needed by CD3D12HardwareBuffer/CD3D12Texture to create their ID3D12Resource objects and
@@ -1153,8 +1180,9 @@ namespace irr
 			//! The shared tail of every compute dispatch: prepares the slots' buffers, transitions
 			//! them, fills the three descriptor tables (16 SRV, 16 UAV, 8 CBV) from
 			//! ComputeDescriptorHeap with null descriptors in the unbound slots, runs the material's
-			//! OnSetConstants(), then Dispatch()es -- or ExecuteIndirect()s with `indirectArgs` -- on
-			//! an UploadScope list, UAV barriers after, and waits.
+			//! OnSetConstants(), then Dispatch()es -- or ExecuteIndirect()s with `indirectArgs` -- with
+			//! UAV barriers after. The immediate driver records on the pending compute list and does
+			//! not wait; a deferred context still runs it on an UploadScope and waits.
 			void dispatchBoundResources(const core::vector3d<u32>& groupCount,
 				CD3D12HardwareBuffer* indirectArgs, u32 indirectOffset);
 
@@ -1745,12 +1773,26 @@ namespace irr
 			SD3D12ComputeSlot ComputeUAV[EMCS_MAX_COMPUTE_UAV_SLOTS];
 
 			//! Shader-visible heap the compute dispatches take their tables from: a ring of
-			//! ComputeDescriptorsPerDispatch-sized blocks, rewound when full (safe, every dispatch
-			//! is waited on before the next). Separate from the per-frame heaps on purpose: growing
-			//! those mid-scene rebinds heaps behind the frame command list's back.
+			//! ComputeDescriptorsPerDispatch-sized blocks; a block is reused only once the submission
+			//! that read it has completed (ComputeDescriptorBlockFence). Separate from the per-frame
+			//! heaps: growing those mid-scene rebinds heaps behind the frame command list's back.
 			static const UINT ComputeDescriptorsPerDispatch =
 				EMCS_MAX_COMPUTE_SRV_SLOTS + EMCS_MAX_COMPUTE_UAV_SLOTS + MaxUserShaderCBVSlotsPerStage;
-			static const UINT ComputeDescriptorBlocks = 64;
+			static const UINT ComputeDescriptorBlocks = 1024;
+			//! UploadFence value each block's last reader was submitted with; PendingBlockFence while
+			//! that reader is still on the unsubmitted pending list.
+			static const UINT64 PendingBlockFence = ~0ull;
+			UINT64 ComputeDescriptorBlockFence[ComputeDescriptorBlocks] = {};
+			std::vector<UINT> PendingComputeBlocks;
+
+			//! The pending compute list (see PendingComputeScope), on the immediate driver only. Its
+			//! allocators rotate, each reused once its last submission's UploadFence value is reached.
+			static const UINT PendingComputeAllocatorCount = 8;
+			ComPtr<ID3D12CommandAllocator> PendingComputeAllocators[PendingComputeAllocatorCount];
+			UINT64 PendingComputeAllocatorFence[PendingComputeAllocatorCount] = {};
+			UINT PendingComputeAllocatorIndex = 0;
+			ComPtr<ID3D12GraphicsCommandList> PendingComputeList;
+			bool PendingComputeOpen = false;
 			ComPtr<ID3D12DescriptorHeap> ComputeDescriptorHeap;
 			D3D12_CPU_DESCRIPTOR_HANDLE ComputeDescriptorHeapStartCPU = {};
 			D3D12_GPU_DESCRIPTOR_HANDLE ComputeDescriptorHeapStartGPU = {};

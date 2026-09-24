@@ -5223,6 +5223,8 @@ namespace irr
 
 		UINT64 CD3D12Driver::signalFence()
 		{
+			// Retired resources are stamped with this value; pending compute may still read them.
+			flushPendingCompute();
 			UINT64 value = ++FenceValue;
 			DirectQueue->Signal(Fence.Get(), value);
 			return value;
@@ -5248,6 +5250,7 @@ namespace irr
 			if (!SceneOpen)
 				return; // command list fermee : rien d'enregistre, rien a soumettre
 
+			flushPendingCompute();
 			CommandList->Close();
 			ID3D12CommandList* lists[] = { CommandList.Get() };
 			DirectQueue->ExecuteCommandLists(1, lists);
@@ -5302,6 +5305,8 @@ namespace irr
 			// getPrimitiveCountDrawn() sont herites).
 			CNullDriver::beginScene(backBuffer, zBuffer, color, videoData, sourceRect);
 
+			// Compute recorded between scenes took its constants from this frame's ring, reset below.
+			flushPendingCompute(true);
 			waitForFrame(CurrentFrameIndex);
 
 			// La frame qui vient de se terminer sur le GPU libere ses ressources retirees. C'est le
@@ -5467,6 +5472,8 @@ namespace irr
 				CommandList->ResourceBarrier(1, &toPresent);
 			}
 
+			// This frame's draws read what its compute wrote.
+			flushPendingCompute();
 			CommandList->Close();
 			ID3D12CommandList* lists[] = { CommandList.Get() };
 			DirectQueue->ExecuteCommandLists(1, lists);
@@ -5848,6 +5855,9 @@ namespace irr
 			auto hardware = buffer->getHardwareBuffer();
 			if (!hardware || hardware->getDriverType() != EDT_DIRECT3D12)
 				hardware = createHardwareBuffer(buffer);
+			else if (hardware->isRangedUpdate())
+				hardware->updateRange(buffer->getHardwareMappingHint(),
+					buffer->getStructureCount() * buffer->getStructureStride(), buffer->getBufferPointer());
 			else if (hardware->isRequiredUpdate())
 				hardware->update(buffer->getHardwareMappingHint(),
 					buffer->getStructureCount() * buffer->getStructureStride(), buffer->getBufferPointer());
@@ -6094,20 +6104,39 @@ namespace irr
 				}
 			}
 
-			// Synchronous and on its own command list, like the texture uploads: IVideoDriver's
-			// compute entry points may be called outside beginScene()/endScene(), and the caller
-			// reads the result back right after through IComputeBuffer::downloadFromGPU().
-			UploadScope upload(this);
-			ID3D12GraphicsCommandList* cmdList = upload.commandList();
-			if (!cmdList)
-				return;
+			// The immediate driver records on the pending compute list: no submit, no wait. Every
+			// readback goes through an UploadScope, which submits that list first. A deferred
+			// context keeps the synchronous upload list.
+			const bool pending = ResourceOwner == this;
+			std::unique_ptr<UploadScope> upload;
+			std::unique_lock<std::mutex> pendingLock;
+			if (pending)
+				pendingLock = std::unique_lock<std::mutex>(UploadMutex);
+			else
+				upload.reset(new UploadScope(this));
 
-			// A block of the dedicated heap, rewound when the ring is out: the previous blocks were
-			// consumed by dispatches that have completed.
+			// A block of the dedicated heap, reused only once its last reader has completed.
 			if (ComputeDescriptorNext + ComputeDescriptorsPerDispatch > ComputeDescriptorsPerDispatch * ComputeDescriptorBlocks)
 				ComputeDescriptorNext = 0;
 			const UINT baseSlot = ComputeDescriptorNext;
 			ComputeDescriptorNext += ComputeDescriptorsPerDispatch;
+			const UINT block = baseSlot / ComputeDescriptorsPerDispatch;
+			if (pending)
+			{
+				if (ComputeDescriptorBlockFence[block] == PendingBlockFence)
+					flushPendingComputeLocked();
+				waitUploadFenceLocked(ComputeDescriptorBlockFence[block]);
+				ComputeDescriptorBlockFence[block] = 0;
+			}
+
+			ID3D12GraphicsCommandList* cmdList = pending ? beginPendingComputeLocked() : upload->commandList();
+			if (!cmdList)
+				return;
+			if (pending)
+			{
+				ComputeDescriptorBlockFence[block] = PendingBlockFence;
+				PendingComputeBlocks.push_back(block);
+			}
 
 			ID3D12DescriptorHeap* heaps[] = { ComputeDescriptorHeap.Get() };
 			cmdList->SetDescriptorHeaps(1, heaps);
@@ -6212,9 +6241,9 @@ namespace irr
 			else
 				cmdList->Dispatch(groupCount.X, groupCount.Y, groupCount.Z);
 
-			// UAV barriers after the dispatch, so a later dispatch or copy on this queue sees the
-			// writes whatever state it asks for next; a UAV texture goes back to being sampleable
-			// by the next draw, since endAndWait() below blocks until the dispatch has finished.
+			// UAV barriers after the dispatch, so a later dispatch or copy on this list sees the writes
+			// whatever state it asks for next; a UAV texture goes back to being sampleable, and this
+			// list reaches the queue ahead of the frame list that samples it.
 			std::vector<D3D12_RESOURCE_BARRIER> barriers;
 			for (u32 u = 0; u < EMCS_MAX_COMPUTE_UAV_SLOTS; ++u)
 			{
@@ -6233,7 +6262,8 @@ namespace irr
 				if (uavTextures[u])
 					uavTextures[u]->transitionTo(cmdList, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-			upload.endAndWait();
+			if (upload)
+				upload->endAndWait();
 			ActiveMaterialRendererIndex = -1;
 		}
 
@@ -6245,9 +6275,9 @@ namespace irr
 				ComputeUAV[i] = SD3D12ComputeSlot();
 		}
 
-		// Every dispatch here is submitted and waited on with UAV barriers after it, so there is no
-		// GPU hazard left to order. What remains is the D3D11 meaning of the call: the buffer stops
-		// being a UAV, so the next dispatch may read it through an SRV slot.
+		// Every dispatch here records UAV barriers after itself, so there is no GPU hazard left to
+		// order. What remains is the D3D11 meaning of the call: the buffer stops being a UAV, so the
+		// next dispatch may read it through an SRV slot.
 		void CD3D12Driver::computeBarrier(scene::IComputeBuffer* buffer)
 		{
 			if (!buffer)
@@ -6305,8 +6335,8 @@ namespace irr
 			upload.endAndWait();
 		}
 
-		// Applied at once rather than on the next bind as D3D11 does: every dispatch here has been
-		// waited on, so nothing can still be counting into it, and an unbound buffer is no problem.
+		// Applied at once rather than on the next bind as D3D11 does: the UploadScope below submits
+		// every earlier dispatch first, so nothing can still be counting into it.
 		void CD3D12Driver::resetStructureCount(scene::IComputeBuffer* appendBuffer, u32 value)
 		{
 			if (!appendBuffer)
@@ -6529,6 +6559,8 @@ namespace irr
 					" (endUploadAndWait() manquant ?)", ELL_ERROR);
 				return nullptr;
 			}
+			// Compute recorded earlier must reach the queue first; the wait below then covers it too.
+			ResourceOwner->flushPendingComputeLocked();
 			UploadAllocator->Reset();
 			UploadCommandList->Reset(UploadAllocator.Get(), nullptr);
 			UploadInProgress = true;
@@ -6559,6 +6591,100 @@ namespace irr
 				::WaitForSingleObject(UploadFenceEvent, INFINITE);
 			}
 			UploadInProgress = false;
+		}
+
+		CD3D12Driver::PendingComputeScope::PendingComputeScope(CD3D12Driver* driver)
+			: Lock(driver->ResourceOwner->UploadMutex)
+			, CmdList(driver->ResourceOwner->beginPendingComputeLocked())
+		{
+		}
+
+		ID3D12GraphicsCommandList* CD3D12Driver::beginPendingComputeLocked()
+		{
+			if (PendingComputeOpen)
+				return PendingComputeList.Get();
+			if (!Device || !DirectQueue || !UploadFence)
+				return nullptr;
+
+			const UINT slot = PendingComputeAllocatorIndex;
+			ComPtr<ID3D12CommandAllocator>& allocator = PendingComputeAllocators[slot];
+			if (!allocator)
+			{
+				HRESULT hr = Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator));
+				if (FAILED(hr))
+				{
+					logD3D12Failure("CD3D12Driver: CreateCommandAllocator (pending compute)", hr, Device.Get());
+					allocator.Reset();
+					return nullptr;
+				}
+			}
+			waitUploadFenceLocked(PendingComputeAllocatorFence[slot]);
+			allocator->Reset();
+
+			if (!PendingComputeList)
+			{
+				HRESULT hr = Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr,
+					IID_PPV_ARGS(&PendingComputeList));
+				if (FAILED(hr))
+				{
+					logD3D12Failure("CD3D12Driver: CreateCommandList (pending compute)", hr, Device.Get());
+					PendingComputeList.Reset();
+					return nullptr;
+				}
+			}
+			else if (FAILED(PendingComputeList->Reset(allocator.Get(), nullptr)))
+				return nullptr;
+
+			PendingComputeOpen = true;
+			return PendingComputeList.Get();
+		}
+
+		void CD3D12Driver::flushPendingComputeLocked()
+		{
+			if (!PendingComputeOpen)
+				return;
+			PendingComputeOpen = false;
+
+			if (FAILED(PendingComputeList->Close()))
+			{
+				os::Printer::log("CD3D12Driver: pending compute list failed to close, its work is dropped", ELL_ERROR);
+				for (UINT block : PendingComputeBlocks)
+					ComputeDescriptorBlockFence[block] = 0;
+				PendingComputeBlocks.clear();
+				return;
+			}
+			ID3D12CommandList* lists[] = { PendingComputeList.Get() };
+			DirectQueue->ExecuteCommandLists(1, lists);
+
+			const UINT64 value = ++UploadFenceValue;
+			DirectQueue->Signal(UploadFence.Get(), value);
+			PendingComputeAllocatorFence[PendingComputeAllocatorIndex] = value;
+			PendingComputeAllocatorIndex = (PendingComputeAllocatorIndex + 1) % PendingComputeAllocatorCount;
+			for (UINT block : PendingComputeBlocks)
+				ComputeDescriptorBlockFence[block] = value;
+			PendingComputeBlocks.clear();
+		}
+
+		void CD3D12Driver::waitUploadFenceLocked(UINT64 value)
+		{
+			if (value == 0 || !UploadFence || UploadFence->GetCompletedValue() >= value)
+				return;
+			UploadFence->SetEventOnCompletion(value, UploadFenceEvent);
+			::WaitForSingleObject(UploadFenceEvent, INFINITE);
+		}
+
+		void CD3D12Driver::flushPendingCompute(bool wait)
+		{
+			if (ResourceOwner != this)
+			{
+				ResourceOwner->flushPendingCompute(wait);
+				return;
+			}
+			std::lock_guard<std::mutex> lock(UploadMutex);
+			const bool recorded = PendingComputeOpen;
+			flushPendingComputeLocked();
+			if (wait && recorded)
+				waitUploadFenceLocked(UploadFenceValue);
 		}
 
 		void CD3D12Driver::transitionTexture(CD3D12Texture* texture, D3D12_RESOURCE_STATES newState)

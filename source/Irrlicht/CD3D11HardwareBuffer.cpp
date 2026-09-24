@@ -267,6 +267,20 @@ namespace irr
 			return true;
 		}
 
+		bool CD3D11HardwareBuffer::updateRange(const scene::E_HARDWARE_MAPPING mapping, const u32 size, const void* data)
+		{
+			const u32 begin = RangeBegin;
+			const u32 end = core::min_(RangeEnd, size);
+			if (!Buffer || !RangedUpdate || !data || size != Size || mapping != Mapping
+				|| Mapping != scene::EHM_DYNAMIC || begin >= end)
+				return update(mapping, size, data);
+
+			copyFromMemory((const u8*)data + begin, begin, end - begin);
+			RequiredUpdate = false;
+			RangedUpdate = false;
+			return true;
+		}
+
 		//! Stride a staging copy of this buffer must be created with.
 		u32 CD3D11HardwareBuffer::stagingStride() const
 		{
@@ -384,7 +398,7 @@ namespace irr
 				box.left = offset;
 				box.top = 0;
 				box.front = 0;
-				box.right = length;
+				box.right = offset + length;
 				box.bottom = 1;
 				box.back = 1;
 				uploadContext->UpdateSubresource(Buffer, 0, &box, sysData, 0, 0);

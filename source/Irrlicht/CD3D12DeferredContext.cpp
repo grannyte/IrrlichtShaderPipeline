@@ -334,6 +334,7 @@ namespace irr
 				return;
 			}
 
+			target->flushPendingCompute();
 			ID3D12CommandList* lists[] = { CommandList.Get() };
 			target->DirectQueue->ExecuteCommandLists(1, lists);
 
